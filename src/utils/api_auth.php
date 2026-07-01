@@ -2,6 +2,7 @@
 // src/utils/api_auth.php
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/api_keys_schema.php';
 
 function api_json_error(int $code, string $msg): void {
     header('Content-Type: application/json');
@@ -32,6 +33,7 @@ function api_require_key(array $requiredScopes = []) {
     if (!$token) api_json_error(401, 'Missing API key');
     $hash = hash('sha256', $token);
     try {
+        pa_ensure_api_keys_schema($pdo);
         $st = $pdo->prepare('SELECT * FROM api_keys WHERE key_hash=? AND (revoked_at IS NULL)');
         $st->execute([$hash]);
         $row = $st->fetch(PDO::FETCH_ASSOC);

@@ -64,6 +64,7 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
     // API keys and usage
+    require_once __DIR__ . '/../utils/api_keys_schema.php';
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS api_keys (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -89,6 +90,7 @@ try {
             CONSTRAINT fk_api_usage_key FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
+    try { pa_ensure_api_keys_schema($pdo); } catch (Throwable $e) {}
     // Two-Factor Authentication tables
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS user_2fa (

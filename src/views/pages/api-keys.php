@@ -3,12 +3,20 @@
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
+require_once __DIR__ . '/../../utils/api_keys_schema.php';
 
 if (empty($_SESSION['user'])) { echo '<p>Unauthorized</p>'; return; }
 $isAdmin = (($_SESSION['user']['role'] ?? 'user') === 'admin');
 if (!$isAdmin) { echo '<p>Only admins can manage API keys.</p>'; return; }
 
-$keys = $pdo->query("SELECT id, name, key_prefix, scopes, allowed_ips, created_at, last_used_at, revoked_at FROM api_keys ORDER BY created_at DESC")->fetchAll();
+try {
+  pa_ensure_api_keys_schema($pdo);
+  $keys = $pdo->query("SELECT id, name, key_prefix, scopes, allowed_ips, created_at, last_used_at, revoked_at FROM api_keys ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+  @error_log('[API Keys Page] Failed to load API keys: ' . $e->getMessage());
+  $keys = [];
+  $loadError = 'API key storage needs repair. Run the latest database migrations, then reload this page.';
+}
 $flash = $_SESSION['flash_api_key'] ?? null; unset($_SESSION['flash_api_key']);
 ?>
 <section>
@@ -19,6 +27,9 @@ $flash = $_SESSION['flash_api_key'] ?? null; unset($_SESSION['flash_api_key']);
   </div>
 
   <h2>API Keys</h2>
+  <?php if (!empty($loadError)): ?>
+    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fff3f3;color:#991b1b;border:1px solid #fecaca"><?php echo htmlspecialchars($loadError); ?></div>
+  <?php endif; ?>
   <?php if ($flash): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfeff;color:#164e63;border:1px solid #a5f3fc">
       New key generated. Copy it now — it will not be shown again:<br>

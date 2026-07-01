@@ -259,7 +259,8 @@ function migration_schema_health(PDO $pdo): void
         'quotes' => ['organization_id', 'created_by'],
         'contracts' => ['organization_id', 'created_by'],
         'invoices' => ['organization_id', 'created_by', 'collection_mode'],
-        'api_keys' => ['name', 'key_hash', 'scopes', 'revoked_at'],
+        'api_keys' => ['name', 'key_prefix', 'key_hash', 'scopes', 'allowed_ips', 'created_at', 'last_used_at', 'revoked_at'],
+        'api_usage' => ['api_key_id', 'used_at'],
         'client_onboarding_invitations' => ['organization_id', 'invited_email', 'token_hash', 'status'],
         'client_onboarding_submissions' => ['invitation_id', 'proposed_data', 'status'],
     ];

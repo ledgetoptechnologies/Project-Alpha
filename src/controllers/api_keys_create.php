@@ -2,6 +2,7 @@
 // src/controllers/api_keys_create.php
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../utils/api_keys_schema.php';
 
 if (empty($_SESSION['user']) || (($_SESSION['user']['role'] ?? 'user') !== 'admin')) {
   header('Location: /?page=api-keys&error=' . urlencode('Only admins can create API keys'));
@@ -16,6 +17,7 @@ if ($name === '') {
 }
 
 try {
+  pa_ensure_api_keys_schema($pdo);
   $prefix = substr(bin2hex(random_bytes(6)), 0, 12);
   $secret = 'pa_live_' . $prefix . '_' . bin2hex(random_bytes(32));
   $hash = hash('sha256', $secret);
