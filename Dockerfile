@@ -194,7 +194,11 @@ RUN echo "$APP_VERSION" > /var/www/APP_VERSION \
 COPY cron/crontab /etc/cron.d/project-alpha
 RUN sed -i 's/\r$//' /etc/cron.d/project-alpha && chmod 0644 /etc/cron.d/project-alpha
 
+RUN mkdir -p /usr/local/lib/project-alpha
+COPY cron/entrypoint-encryption-key.sh /usr/local/lib/project-alpha/cron-encryption-key.sh
 COPY cron/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/cron-encryption-key.sh /usr/local/bin/entrypoint.sh \
+    && chmod 0644 /usr/local/lib/project-alpha/cron-encryption-key.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 CMD ["entrypoint.sh"]

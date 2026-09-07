@@ -49,8 +49,12 @@ RUN chown -R root:root /var/www && chmod -R 755 /var/www
 COPY crontab /etc/cron.d/project-alpha
 RUN sed -i 's/\r$//' /etc/cron.d/project-alpha && chmod 0644 /etc/cron.d/project-alpha
 
-# Entrypoint script (waits for DB, exports env vars, starts cron)
+# Entrypoint and its shared key resolver (waits for DB, exports env vars, starts cron)
+RUN mkdir -p /usr/local/lib/project-alpha
+COPY entrypoint-encryption-key.sh /usr/local/lib/project-alpha/cron-encryption-key.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/cron-encryption-key.sh /usr/local/bin/entrypoint.sh \
+    && chmod 0644 /usr/local/lib/project-alpha/cron-encryption-key.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 CMD ["entrypoint.sh"]

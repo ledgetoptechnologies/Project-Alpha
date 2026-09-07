@@ -22,7 +22,7 @@ $accessDetail = null;
 $projectSources = [];
 $status = [];
 $directoryError = false;
-$portalStatus = ['configured'=>false,'ready'=>false,'profile'=>null,'counts'=>['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'failed'=>0,'failed_revocations'=>0],'preflight'=>['ready'=>false,'operations_delivery_ready'=>false,'checks'=>[],'issues'=>[],'receiver_verification'=>'']];
+$portalStatus = ['configured'=>false,'ready'=>false,'profile'=>null,'counts'=>['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_revocations'=>0],'delivery_diagnostics'=>['oldest_pending_age_seconds'=>null,'retries'=>[]],'scheduler'=>['reconciliation'=>['state'=>'unknown','last_run'=>null],'delivery'=>['state'=>'unknown','last_run'=>null]],'preflight'=>['ready'=>false,'operations_delivery_ready'=>false,'checks'=>[],'issues'=>[],'receiver_verification'=>'']];
 $portalStatusError = false;
 
 try {
@@ -125,7 +125,7 @@ if (!empty($config['enabled'])) {
   <?php if($portalStatusError):?>
     <div class="settings-alert settings-alert-danger" role="alert">Connected workspace synchronization status could not be loaded. Apply the current database migrations, then reload this page.</div>
   <?php else:?>
-    <?php $portalCounts=(array)$portalStatus['counts'];$portalPreflight=(array)($portalStatus['preflight']??[]);$portalIssues=(array)($portalPreflight['issues']??[]);?>
+    <?php $portalCounts=(array)$portalStatus['counts'];$portalDiagnostics=(array)($portalStatus['delivery_diagnostics']??[]);$portalRetries=(array)($portalDiagnostics['retries']??[]);$portalScheduler=(array)($portalStatus['scheduler']??[]);$portalPreflight=(array)($portalStatus['preflight']??[]);$portalIssues=(array)($portalPreflight['issues']??[]);$oldestQueuedAge=isset($portalDiagnostics['oldest_pending_age_seconds'])&&$portalDiagnostics['oldest_pending_age_seconds']!==null?(int)$portalDiagnostics['oldest_pending_age_seconds']:null;$formatQueuedAge=static function(?int$seconds):string{if($seconds===null)return'None';if($seconds<60)return'Under a minute';if($seconds<3600)return floor($seconds/60).' minutes';if($seconds<86400)return floor($seconds/3600).' hours';return floor($seconds/86400).' days';};$schedulerLabel=static function(string$state):string{return match($state){'ran'=>'Observed','preflight_not_ready'=>'Preflight not ready','running'=>'Running','failed'=>'Failed',default=>'Not yet observed'};};?>
     <?php if(!empty($portalStatus['transition_message'])):?><div class="settings-alert settings-alert-warning" role="status"><?=$h($portalStatus['transition_message'])?></div><?php endif;?>
     <div class="settings-form-grid">
       <div><span class="label">External application connection</span><strong><?=!empty($portalPreflight['operations_delivery_ready'])?'Ready':'Paused'?></strong></div>
@@ -135,8 +135,13 @@ if (!empty($config['enabled'])) {
       <div><span class="label">Eligible contacts</span><strong><?=(int)($portalCounts['eligible']??0)?></strong></div>
       <div><span class="label">Needs review</span><strong><?=(int)($portalCounts['review_required']??0)?></strong></div>
       <div><span class="label">Revoked</span><strong><?=(int)($portalCounts['revoked']??0)?></strong></div>
-      <div><span class="label">Queued / failed</span><strong><?=(int)($portalCounts['pending']??0)?> / <?=(int)($portalCounts['failed']??0)?></strong></div>
+      <div><span class="label">Total pending / retrying (subset) / terminal failed</span><strong><?=(int)($portalCounts['pending']??0)?> / <?=(int)($portalCounts['retrying']??0)?> / <?=(int)($portalCounts['failed']??0)?></strong></div>
+      <div><span class="label">Oldest queued age</span><strong><?=$h($formatQueuedAge($oldestQueuedAge))?></strong></div>
+      <div><span class="label">Scheduled reconciliation</span><strong><?=$h($schedulerLabel((string)($portalScheduler['reconciliation']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['reconciliation']['last_run']??'No run recorded'))?></small></div>
+      <div><span class="label">Scheduled delivery</span><strong><?=$h($schedulerLabel((string)($portalScheduler['delivery']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['delivery']['last_run']??'No run recorded'))?></small></div>
     </div>
+    <?php if($portalRetries):?><div class="settings-alert settings-alert-warning" role="status"><strong>Workspace-event retries:</strong><div class="pa-table-wrap"><table class="pa-table"><thead><tr><th>Safe code</th><th>HTTP status</th><th>Highest attempt</th><th>Records</th></tr></thead><tbody><?php foreach($portalRetries as$retry):?><tr><td><code><?=$h((string)($retry['code']??'delivery_retry'))?></code></td><td><?=$h(isset($retry['http_status'])&&$retry['http_status']!==null?(string)$retry['http_status']:'None')?></td><td><?=(int)($retry['attempts']??0)?></td><td><?=(int)($retry['count']??0)?></td></tr><?php endforeach;?></tbody></table></div><small>Only fixed sender codes and numeric statuses are shown; receiver bodies, addresses, delivery IDs, workspace identifiers, and credentials are never displayed.</small></div><?php endif;?>
+    <p style="color:var(--muted);font-size:13px">Retrying is included in total pending. Scheduled reconciliation and delivery are evidence recorded by the cron process, separate from this page's web-process readiness check.</p>
     <p><strong>One outbound connection.</strong> Workspace records and ordinary integration updates use the signed event URL and credentials configured above. API-key pull reconciliation remains a receiver-driven recovery path.</p>
     <?php if($portalIssues):?>
       <div class="settings-alert settings-alert-warning" role="status"><strong>Workspace publisher still needs:</strong> <?=$h(implode(', ',$portalIssues))?>.</div>
