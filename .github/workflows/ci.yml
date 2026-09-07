@@ -15,6 +15,9 @@ jobs:
       - name: Validate canonical Compose configuration
         run: docker compose config >/tmp/compose.yml
 
+      - name: Verify scheduled-worker shared encryption key
+        run: bash cron/tests/entrypoint-encryption-key-test.sh
+
       - name: Build CI images
         run: |
           docker build --target test -t ghcr.io/ledgetoptechnologies/project-alpha:latest .

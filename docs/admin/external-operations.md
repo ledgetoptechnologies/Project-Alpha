@@ -250,6 +250,46 @@ The daily snapshot is reconciliation and recovery, not a replacement for the
 event path. Account email, display name, PA role, active state, and explicit-access
 changes refresh or revoke the entitlement projection through the same outbox.
 
+## Diagnosing queued workspace deliveries
+
+Connection readiness on this settings page describes the **web process**. It
+does not prove that the scheduled worker has the same configuration or that the
+receiver accepted the workspace snapshot. A workspace created in Project Alpha
+is not proof of an active workspace in the connected application.
+
+If the web process is ready but scheduled deliveries remain queued:
+
+1. Inspect **Settings → Logs & diagnostics → cron.log**. Distinguish a retry
+   from a terminal failure; zero terminal failures does not mean no attempts
+   have failed. Do not repeatedly save or recreate the connection to clear a
+   retry. Preserve the original endpoint, keys, delivery IDs and pending records.
+2. Verify that both web and cron were recreated from the intended release. The
+   web footer proves only the served web revision. Confirm the cron service is
+   running its scheduled workspace reconciliation and delivery jobs.
+3. If cron reports `prerequisites_missing` or
+   `external-operations-delivery-unavailable` while the web process is ready,
+   check the shared configuration volume and encryption configuration. Both
+   services must use the same `/var/www/config` volume and the same effective
+   `APP_ENCRYPTION_KEY`. These codes indicate unavailable delivery configuration;
+   they do not by themselves prove a particular missing setting or key mismatch.
+4. An explicitly supplied encryption key takes precedence over the persisted
+   key file. Cron must not invent an independent temporary key when the shared
+   file is delayed. Check for a missing mount, an empty/unreadable key file, or
+   a different explicitly configured key. Preserve the working web key and its
+   secure backup. Never print key values, environment dumps or credentials in
+   logs, screenshots, support tickets or chat.
+5. After correcting the deployment configuration, recreate only the affected
+   scheduled worker. Verify successful deliveries, declining pending counts,
+   receiver snapshot activation, and preserved administrator revocations.
+   Existing retryable records should keep their identities and original route;
+   terminal failures require a separately reviewed recovery, not deletion or
+   blanket replay.
+
+Do not use credential rotation as a diagnostic step: changing a key can make
+existing encrypted settings unreadable or strand pending deliveries. A
+transport error, receiver HTTP rejection, and local configuration failure are
+different conditions and should be investigated separately.
+
 ## Sync Contract v2 foundation
 
 The provider-neutral v2 bootstrap foundation is implemented in parallel at `GET /api/v2/ops/snapshot` for API keys with `ops.sync.read`, but it returns 404 unless `APP_SYNC_CONTRACT_V2_ENABLED=true`. It does not change the v1 route or its event delivery. See [Sync Contract v2](../reference/sync-contract-v2.html) for its identity, cursor, resource-version, fixture, and production-gate rules. Keep the foundation disabled until all covered mutations use the documented atomic event contract and the remaining production gates pass.

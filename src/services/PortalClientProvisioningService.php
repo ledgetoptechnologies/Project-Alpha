@@ -20,6 +20,20 @@ final class PortalClientProvisioningService
 {
     public const DEFAULT_CAPABILITIES = ['workspace.view', 'directory.read', 'delivery.view'];
     private const BOUND_PROFILE_KEY = 'external_ops_client_portal_profile_id';
+    /** Only these fixed sender codes may leave the diagnostics boundary. */
+    private const SAFE_DELIVERY_ERROR_CODES = [
+        'dns_no_public_address',
+        'redirect_rejected',
+        'external-operations-delivery-unavailable',
+        'external-operations-application-mismatch',
+        'portal-projection-envelope-invalid',
+        'portal-projection-kind-invalid',
+        'curl_unavailable',
+        'http_429',
+        'http_4xx',
+        'http_5xx',
+        'transport_failed',
+    ];
 
     /**
      * Upgrade an already-enabled External Operations connection into the
@@ -169,7 +183,8 @@ final class PortalClientProvisioningService
     {
         $profile = $this->boundProfile($pdo);
         if (!$profile && $applicationKey !== '') $profile = $this->profile($pdo, $applicationKey);
-        $counts = ['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'failed'=>0,'failed_revocations'=>0];
+        $counts = ['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_revocations'=>0];
+        $deliveryDiagnostics = ['oldest_pending_age_seconds'=>null,'retries'=>[]];
         if ($profile) {
             foreach ([
                 'active_roots' => "SELECT COUNT(*) FROM portal_client_access_roots WHERE access_state='active'",
@@ -179,11 +194,14 @@ final class PortalClientProvisioningService
                 'revoked' => "SELECT COUNT(*) FROM portal_client_login_eligibility WHERE eligibility_status='revoked'",
                 'active_workspaces' => 'SELECT COUNT(*) FROM portal_integration_profile_workspaces pw JOIN portal_v2_workspaces w ON w.id=pw.workspace_id WHERE pw.profile_id='.(int)$profile['id'].' AND pw.active=1 AND w.active=1',
                 'pending' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NULL',
+                'retrying' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NULL AND attempts>0',
                 'failed' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL',
                 'failed_revocations' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL AND is_revocation=1',
             ] as $key => $sql) $counts[$key] = (int)$pdo->query($sql)->fetchColumn();
             $counts['historical_remaining'] = $this->historicalRemaining($pdo, $profile);
+            $deliveryDiagnostics = $this->deliveryDiagnostics($pdo, (int)$profile['id']);
         }
+        $scheduler = $this->schedulerEvidence($pdo);
         $delivery = new PortalProjectionDeliveryConfigService();
         $runtime = $delivery->runtime($pdo);
         $config = (new ExternalOpsConfigService())->load($pdo);
@@ -226,10 +244,80 @@ final class PortalClientProvisioningService
                 'contact_assignment_projection_enabled' => !empty($profile['contact_assignment_projection_enabled']),
             ] : null,
             'counts' => $counts,
+            'delivery_diagnostics' => $deliveryDiagnostics,
+            'scheduler' => $scheduler,
             'preflight' => $preflight,
             'transition_state' => $transition,
             'transition_message' => $transitionMessage,
         ];
+    }
+
+    /**
+     * Return aggregate, non-secret retry evidence. Never expose a receiver body,
+     * delivery ID, destination, workspace, or an unrecognised persisted error.
+     *
+     * @return array{oldest_pending_age_seconds:?int,retries:list<array{code:string,http_status:?int,attempts:int,count:int}>}
+     */
+    private function deliveryDiagnostics(PDO $pdo, int $profileId): array
+    {
+        $oldest = $pdo->prepare('SELECT MIN(created_at) FROM portal_projection_outbox WHERE integration_profile_id=? AND delivered_at IS NULL AND dead_lettered_at IS NULL');
+        $oldest->execute([$profileId]);
+        $oldestAt = $oldest->fetchColumn();
+        $oldestAge = null;
+        if (is_string($oldestAt) && $oldestAt !== '') {
+            $timestamp = strtotime($oldestAt . ' UTC');
+            if ($timestamp !== false) $oldestAge = max(0, time() - $timestamp);
+        }
+
+        $cases = implode(' ', array_map(static fn(string $code): string => "WHEN '{$code}' THEN '{$code}'", self::SAFE_DELIVERY_ERROR_CODES));
+        $statement = $pdo->prepare("SELECT CASE last_error_code {$cases} ELSE 'delivery_retry' END AS safe_code,last_http_status,MAX(attempts) AS attempts,COUNT(*) AS record_count FROM portal_projection_outbox WHERE integration_profile_id=? AND delivered_at IS NULL AND dead_lettered_at IS NULL AND attempts>0 GROUP BY safe_code,last_http_status ORDER BY record_count DESC,attempts DESC,safe_code,last_http_status LIMIT 5");
+        $statement->execute([$profileId]);
+        $groups = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $code = (string)($row['safe_code'] ?? 'delivery_retry');
+            $status = isset($row['last_http_status']) && $row['last_http_status'] !== null ? (int)$row['last_http_status'] : null;
+            $key = $code . '|' . ($status === null ? 'none' : (string)$status);
+            if (!isset($groups[$key])) $groups[$key] = ['code'=>$code,'http_status'=>$status,'attempts'=>0,'count'=>0];
+            $groups[$key]['attempts'] = max($groups[$key]['attempts'], (int)$row['attempts']);
+            $groups[$key]['count'] += (int)$row['record_count'];
+        }
+        usort($groups, static fn(array $left, array $right): int => $right['count'] <=> $left['count'] ?: $right['attempts'] <=> $left['attempts']);
+        return ['oldest_pending_age_seconds'=>$oldestAge,'retries'=>array_slice(array_values($groups), 0, 5)];
+    }
+
+    /**
+     * Scheduled runs are evidence from the cron process, independent of this
+     * web request's readiness. The stored messages remain private; only a
+     * small allowlisted state is returned.
+     *
+     * @return array{reconciliation:array{state:string,last_run:?string},delivery:array{state:string,last_run:?string}}
+     */
+    private function schedulerEvidence(PDO $pdo): array
+    {
+        $evidence = [
+            'reconciliation'=>['state'=>'unknown','last_run'=>null],
+            'delivery'=>['state'=>'unknown','last_run'=>null],
+        ];
+        try {
+            $statement = $pdo->prepare('SELECT job_name,status,last_run,result FROM cron_job_runs WHERE job_name IN (?,?)');
+            $statement->execute(['portal_client_provisioning_backfill','portal_projection_outbox']);
+            foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $key = (string)$row['job_name'] === 'portal_client_provisioning_backfill' ? 'reconciliation' : 'delivery';
+                $lastRun = trim((string)($row['last_run'] ?? ''));
+                if ($lastRun === '' || strtotime($lastRun . ' UTC') === false) continue;
+                $state = match ((string)($row['status'] ?? '')) {
+                    'failed' => 'failed',
+                    'running' => 'running',
+                    'success', 'completed' => 'ran',
+                    default => 'unknown',
+                };
+                if ($state === 'ran' && $key === 'reconciliation' && str_contains((string)($row['result'] ?? ''), 'ready no')) $state = 'preflight_not_ready';
+                $evidence[$key] = ['state'=>$state,'last_run'=>$lastRun];
+            }
+        } catch (Throwable) {
+            // Older schemas and isolated tests may not have cron history yet.
+        }
+        return $evidence;
     }
 
     public function retryFailedRevocations(PDO $pdo,string $applicationKey,int $actorId):int
