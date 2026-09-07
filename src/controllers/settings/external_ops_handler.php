@@ -55,6 +55,30 @@ try {
             if ($pdo->inTransaction()) $pdo->rollBack();
             throw $error;
         }
+    } elseif ($action === 'generate-ed25519-signing-key') {
+        $created = (new ExternalOpsConfigService())->generateEd25519Key($pdo);
+        audit_log($pdo, 'external_ops.signing_key.generated', 'settings', null, ['key_id' => $created['key_id']]);
+        $message = 'A staged Ed25519 public key was created. Register that public key at the receiver, then activate it here.';
+    } elseif ($action === 'activate-ed25519-signing-key') {
+        if (empty($_POST['receiver_key_registered'])) {
+            throw new DomainException('Confirm that the receiver has registered this exact Ed25519 public key before activation.');
+        }
+        $keyId = trim((string)($_POST['signing_key_id'] ?? ''));
+        (new ExternalOpsConfigService())->activateEd25519Key($pdo, $keyId);
+        audit_log($pdo, 'external_ops.signing_key.activated', 'settings', null, ['key_id' => $keyId]);
+        $message = 'Ed25519 signing was activated on the existing External Operations connection.';
+    } elseif ($action === 'activate-hmac-signing') {
+        if (empty($_POST['confirm_hmac_fallback'])) {
+            throw new DomainException('Confirm the receiver still accepts the configured HMAC key before switching signing methods.');
+        }
+        (new ExternalOpsConfigService())->activateHmacSigning($pdo);
+        audit_log($pdo, 'external_ops.signing_hmac.activated', 'settings', null, []);
+        $message = 'HMAC-SHA256 signing was reactivated on the existing External Operations connection.';
+    } elseif ($action === 'retire-ed25519-signing-key') {
+        $keyId = trim((string)($_POST['signing_key_id'] ?? ''));
+        (new ExternalOpsConfigService())->retireEd25519Key($pdo, $keyId);
+        audit_log($pdo, 'external_ops.signing_key.retired', 'settings', null, ['key_id' => $keyId]);
+        $message = 'The staged Ed25519 private key was removed. Its public-key record remains for audit.';
     } elseif ($action === 'reconcile-client-portal') {
         $summary=(new ExternalOpsSyncOrchestrator())->run($pdo,100,50,50,null,null,20);
         $reconciliation=$summary['reconciliation'];$portal=$summary['portal'];

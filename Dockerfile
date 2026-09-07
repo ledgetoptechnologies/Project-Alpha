@@ -69,6 +69,7 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
 # PHP 8.5's bundled DOM depends on bundled Lexbor and should not be rebuilt here.
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" gd mbstring zip pdo_mysql mysqli curl xmlwriter \
+    && php -m | grep -qx sodium \
     && a2enmod rewrite
 
 # Create php ini file for error logging and future php customization
@@ -172,7 +173,8 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
         default-mysql-client cron curl tzdata zlib1g-dev libzip-dev libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN docker-php-ext-install -j"$(nproc)" zip pdo_mysql mysqli curl
+RUN docker-php-ext-install -j"$(nproc)" zip pdo_mysql mysqli curl \
+    && php -m | grep -qx sodium
 
 WORKDIR /var/www
 

@@ -80,7 +80,7 @@ final class ManagedDeliveryIntentSender
         $maxAttempts = max(1, min(50, (int)$claim['delivery_max_attempts']));
         try {
             $contract = $service->deliveryContractForClaim($pdo, $claim);
-            $response = $this->send($contract, $claim, $transport);
+            $response = $this->send($pdo, $contract, $claim, $transport);
             $status = (int)($response['status'] ?? 0);
             $receipt = empty($response['error']) ? $this->acceptedReceipt($claim, $status, (string)($response['body'] ?? '')) : null;
             if ($receipt !== null) {
@@ -121,7 +121,7 @@ final class ManagedDeliveryIntentSender
         ];
         $body = $this->externalOpsEnvelope($contract, 'preflight', $intent);
         $url = $contract['url'];
-        $headers = $this->externalOpsHeaders($contract, $body);
+        $headers = $this->externalOpsHeaders($pdo, $contract, $body);
         $transport ??= [$this, 'curlTransport'];
         $response = $transport($url, $headers, $body, $contract['timeout']);
         if ((int)($response['status'] ?? 0) !== 200 || !empty($response['error'])) throw new RuntimeException('managed_delivery_preflight_rejected');
@@ -194,7 +194,7 @@ final class ManagedDeliveryIntentSender
     }
 
     /** @param array<string,mixed> $contract @param array<string,mixed> $claim */
-    private function send(array $contract, array $claim, callable $transport): array
+    private function send(PDO $pdo, array $contract, array $claim, callable $transport): array
     {
         $intentBody = (string)$claim['payload_json'];
         if (strlen($intentBody) > 32768) throw new RuntimeException('managed_delivery_payload_too_large');
@@ -203,7 +203,7 @@ final class ManagedDeliveryIntentSender
         if (!is_array($intent)) throw new RuntimeException('managed_delivery_payload_invalid');
         $kind = ($claim['intent_type'] ?? 'provision') === 'revoke' ? 'revoke' : 'provision';
         $body = $this->externalOpsEnvelope($contract, $kind, $intent);
-        $headers = $this->externalOpsHeaders($contract, $body);
+        $headers = $this->externalOpsHeaders($pdo, $contract, $body);
         return $transport($url, $headers, $body, $contract['timeout']);
     }
 
@@ -238,19 +238,22 @@ final class ManagedDeliveryIntentSender
     }
 
     /** @param array<string,mixed> $contract @return list<string> */
-    private function externalOpsHeaders(array $contract, string $body): array
+    private function externalOpsHeaders(PDO $pdo, array $contract, string $body): array
     {
         $timestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');
         $decoded = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
         $eventId = is_array($decoded) ? (string)($decoded['event_id'] ?? '') : '';
-        return [
+        $headers = [
             'Content-Type: application/json',
             'CF-Access-Client-Id: ' . (string)($contract['authHeaders']['CF-Access-Client-Id'] ?? ''),
             'CF-Access-Client-Secret: ' . (string)($contract['authHeaders']['CF-Access-Client-Secret'] ?? ''),
             'X-PA-Event-ID: ' . $eventId,
             'X-PA-Timestamp: ' . $timestamp,
-            'X-PA-Signature: sha256=' . hash_hmac('sha256', $timestamp . '.' . $body, (string)$contract['secret']),
         ];
+        $signingHeaders = (string)($contract['signingMode'] ?? ExternalOpsSigner::HMAC_SHA256) === ExternalOpsSigner::HMAC_SHA256
+            ? ExternalOpsSigner::headersFromCredentials(['hmac_secret' => (string)($contract['secret'] ?? '')], $timestamp, $body)
+            : (new ExternalOpsConfigService())->signingHeaders($pdo, $timestamp, $body);
+        return array_merge($headers, $signingHeaders);
     }
 
     /** @param mixed $decoded @return array<string,mixed>|null */

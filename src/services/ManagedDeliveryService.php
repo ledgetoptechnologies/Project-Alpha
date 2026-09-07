@@ -36,7 +36,7 @@ final class ManagedDeliveryService
         }
         $enabled = filter_var($values[self::ENABLED_KEY] ?? '0', FILTER_VALIDATE_BOOLEAN);
         $externalOps = (new ExternalOpsConfigService())->load($pdo);
-        $issues = ExternalOpsConfigService::deliveryIssues($externalOps);
+        $issues = (array)($externalOps['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($externalOps));
         if (empty($externalOps['configured_enabled'])) {
             array_unshift($issues, 'enabled External Operations connection');
         }
@@ -59,7 +59,7 @@ final class ManagedDeliveryService
         $enabled = !empty($input['enabled']);
         $guest = !empty($input['guest_links_enabled']);
         $externalOps = (new ExternalOpsConfigService())->load($pdo);
-        if ($enabled && (empty($externalOps['configured_enabled']) || ExternalOpsConfigService::deliveryIssues($externalOps) !== [])) {
+        if ($enabled && (empty($externalOps['configured_enabled']) || (array)($externalOps['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($externalOps)) !== [])) {
             throw new DomainException('Complete and enable the External Operations connection before enabling managed delivery.');
         }
         $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
@@ -90,10 +90,12 @@ final class ManagedDeliveryService
             'profileId' => null,
             'url' => (string)$externalOps['webhook_url'],
             'applicationKey' => (string)$externalOps['application_key'],
-            'keyId' => self::EXTERNAL_OPS_KEY_ID,
+            'keyId' => (string)($externalOps['signing_key_id'] ?? self::EXTERNAL_OPS_KEY_ID),
+            'signingMode' => (string)($externalOps['signing_mode'] ?? ExternalOpsSigner::HMAC_SHA256),
+            'signingPublicKey' => (string)($externalOps['signing_public_key'] ?? ''),
             'secret' => (string)$externalOps['hmac_secret'],
             'authHeaders' => $authHeaders,
-            'contractHash' => self::contractHash(0, (string)$externalOps['application_key'], (string)$externalOps['webhook_url'], self::EXTERNAL_OPS_KEY_ID, $authHeaders, (string)$externalOps['hmac_secret']),
+            'contractHash' => self::contractHash(0, (string)$externalOps['application_key'], (string)$externalOps['webhook_url'], (string)($externalOps['signing_key_id'] ?? self::EXTERNAL_OPS_KEY_ID), $authHeaders, (string)$externalOps['hmac_secret'], (string)($externalOps['signing_mode'] ?? ExternalOpsSigner::HMAC_SHA256), (string)($externalOps['signing_public_key'] ?? '')),
             'timeout' => max(2, min(30, (int)$externalOps['timeout_seconds'])),
             'maxAttempts' => max(1, min(50, (int)$externalOps['max_attempts'])),
         ];
@@ -284,10 +286,18 @@ final class ManagedDeliveryService
     }
 
     /** @param array<string,string> $authHeaders */
-    private static function contractHash(int $profileId, string $applicationKey, string $url, string $keyId, array $authHeaders, string $secret): string
+    private static function contractHash(int $profileId, string $applicationKey, string $url, string $keyId, array $authHeaders, string $secret, string $signingMode = ExternalOpsSigner::HMAC_SHA256, string $signingPublicKey = ''): string
     {
         ksort($authHeaders, SORT_STRING);
-        return hash('sha256', $profileId . "\n" . $applicationKey . "\n" . $url . "\n" . $keyId . "\n" . json_encode($authHeaders, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . hash('sha256', $secret));
+        $legacy = $profileId . "\n" . $applicationKey . "\n" . $url . "\n" . $keyId . "\n"
+            . json_encode($authHeaders, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . hash('sha256', $secret);
+        // Existing HMAC claims must keep their exact contract epoch after an
+        // Ed25519-capable release. The extended identity is only necessary
+        // once an Ed25519 public key is actually active.
+        if ($signingMode === ExternalOpsSigner::HMAC_SHA256) {
+            return hash('sha256', $legacy);
+        }
+        return hash('sha256', $legacy . "\n" . $signingMode . "\n" . $signingPublicKey);
     }
 
     private function scopeExists(PDO $pdo, string $type, string $publicId): bool
