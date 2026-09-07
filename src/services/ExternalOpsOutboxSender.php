@@ -22,7 +22,7 @@ final class ExternalOpsOutboxSender
         if (empty($config['enabled'])) {
             return ['processed' => 0, 'delivered' => 0, 'failed' => 0];
         }
-        $issues = ExternalOpsConfigService::deliveryIssues($config);
+        $issues = (array)($config['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($config));
         if ($issues !== []) {
             throw new RuntimeException(
                 'External operations outbound delivery is paused. Complete: ' . implode(', ', $issues) . '.'
@@ -56,15 +56,17 @@ final class ExternalOpsOutboxSender
             $summary['processed']++;
             $body = (string)$row['payload_json'];
             $timestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');
-            $signature = hash_hmac('sha256', $timestamp . '.' . $body, (string)$config['hmac_secret']);
             $headers = [
                 'Content-Type: application/json',
                 'CF-Access-Client-Id: ' . (string)$config['access_client_id'],
                 'CF-Access-Client-Secret: ' . (string)$config['access_client_secret'],
                 'X-PA-Event-ID: ' . (string)$row['event_id'],
                 'X-PA-Timestamp: ' . $timestamp,
-                'X-PA-Signature: sha256=' . $signature,
             ];
+            $signingHeaders = (string)($config['signing_mode'] ?? ExternalOpsSigner::HMAC_SHA256) === ExternalOpsSigner::HMAC_SHA256
+                ? ExternalOpsSigner::headersFromCredentials(['hmac_secret' => (string)$config['hmac_secret']], $timestamp, $body)
+                : (new ExternalOpsConfigService())->signingHeaders($pdo, $timestamp, $body);
+            $headers = array_merge($headers, $signingHeaders);
 
             try {
                 $remainingSeconds = max(2, (int)ceil($deadline - microtime(true)));

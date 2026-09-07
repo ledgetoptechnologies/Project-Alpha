@@ -37,9 +37,10 @@ final class PortalClientProvisioningService
         $config = (new ExternalOpsConfigService())->load($pdo);
         $applicationKey = (string)($config['application_key'] ?? '');
         $before = $this->status($pdo, $applicationKey);
+        $deliveryIssues = (array)($config['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($config));
         if (!empty($before['ready'])
             || empty($config['configured_enabled'])
-            || ExternalOpsConfigService::deliveryIssues($config) !== []) {
+            || $deliveryIssues !== []) {
             return [
                 'attempted' => false,
                 'ready' => !empty($before['ready']),
@@ -59,7 +60,7 @@ final class PortalClientProvisioningService
     /**
      * Keep the portal producer on the one administrator-managed External
      * Operations connection. Portal records use the same signed-event URL,
-     * Access service identity, and HMAC secret as every other outbound event.
+     * Access service identity, and active signing method as every other outbound event.
      *
      * @param array<string,mixed> $externalConfig
      */
@@ -105,7 +106,8 @@ final class PortalClientProvisioningService
 
         // The ordinary connection readiness gate owns all outbound credentials.
         // Never require or persist a second portal-only destination or secret.
-        if (ExternalOpsConfigService::deliveryIssues($externalConfig) !== []) {
+        $deliveryIssues = (array)($externalConfig['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($externalConfig));
+        if ($deliveryIssues !== []) {
             return $existing ? (int)$existing['id'] : null;
         }
 
@@ -697,11 +699,12 @@ final class PortalClientProvisioningService
             && hash_equals((string)$profile['application_key'], $applicationKey)
             && $receiver !== ''
             && hash_equals(trim((string)($profile['portal_route'] ?? '')), $receiver);
+        $deliveryReady = !empty($config['delivery_ready']);
         $checks = [
             ['key'=>'external_connection','label'=>'enabled external application connection','ready'=>!empty($config['configured_enabled'])],
             ['key'=>'signed_event_receiver','label'=>'valid signed event URL','ready'=>$receiver !== ''],
             ['key'=>'service_authentication','label'=>'service authentication ID and secret','ready'=>trim((string)($config['access_client_id'] ?? '')) !== '' && trim((string)($config['access_client_secret'] ?? '')) !== ''],
-            ['key'=>'event_signing_secret','label'=>'HMAC secret','ready'=>strlen(trim((string)($config['hmac_secret'] ?? ''))) >= 32],
+            ['key'=>'event_signing','label'=>'ready outbound signing method','ready'=>$deliveryReady],
             ['key'=>'producer_contract','label'=>'portal producer saved for this connection','ready'=>$contractMatches],
             ['key'=>'producer_enabled','label'=>'portal projection producer enabled','ready'=>(bool)$profile && !empty($profile['enabled']) && !empty($profile['portal_projection_enabled'])],
             ['key'=>'producer_delivery','label'=>'portal projection delivery enabled','ready'=>(bool)$profile && !empty($profile['delivery_enabled'])],

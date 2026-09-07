@@ -89,6 +89,52 @@ final class ManagedDeliveryIntegrationTest extends TestCase
         self::assertSame(1,$accepted['accepted']);
     }
 
+    public function testPreUpgradeHmacClaimsRemainDispatchableAndRevocable(): void
+    {
+        $pdo = $this->database();
+        $service = new ManagedDeliveryService();
+        $sender = new ManagedDeliveryIntentSender();
+        $provisionId = 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1';
+        $revokeId = 'b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2';
+        $scope = str_repeat('a', 32);
+        $audience = str_repeat('b', 32);
+
+        $service->queue($pdo, [
+            'delivery_id' => $provisionId,
+            'scope_type' => 'project',
+            'scope_public_id' => $scope,
+            'audience_type' => 'principal',
+            'audience_public_id' => $audience,
+        ], 7);
+        $legacyHash = hash('sha256', implode("\n", [
+            '0',
+            'project-alpha',
+            'https://ops.example/v1/project-alpha/events',
+            'external_ops_hmac_v1',
+            json_encode([
+                'CF-Access-Client-Id' => 'opaque-id',
+                'CF-Access-Client-Secret' => 'opaque-secret',
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            hash('sha256', str_repeat('s', 32)),
+        ]));
+        $storedHash = (string)$pdo->query("SELECT signing_contract_hash FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn();
+        self::assertSame($legacyHash, $storedHash, 'The existing HMAC contract epoch must remain byte-for-byte stable.');
+
+        $transport = static function (string $url, array $headers, string $body): array {
+            $event = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+            return ['status' => 200, 'body' => json_encode([
+                'ok' => true,
+                'event_id' => $event['event_id'],
+                'status' => 'completed',
+                'result' => ['receiptId' => $event['intent_kind'] === 'revoke' ? 'revoke_hmac_legacy' : 'hmac_legacy', 'status' => 'accepted'],
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        };
+        self::assertSame(1, $sender->deliverDeliveryId($pdo, $provisionId, $transport)['accepted']);
+        $service->queueRevocation($pdo, $provisionId, $revokeId, 7);
+        self::assertSame($legacyHash, (string)$pdo->query("SELECT signing_contract_hash FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
+        self::assertSame(1, $sender->deliverDeliveryId($pdo, $revokeId, $transport)['accepted']);
+    }
+
     public function testProvisionDuplicateReplayAndRevocationRetainReceipts(): void
     {
         $pdo = $this->database();

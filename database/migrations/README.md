@@ -85,3 +85,10 @@ identity instead of creating a second source record or an orphan-principal
 conflict. A principal authorization-version fence prevents restore from
 undoing a security change made while the client was archived, and shared
 principals retain access only for their other active client associations.
+
+Migration `0086_external_operations_ed25519_signing.sql` marks version 2 of
+the encrypted External Operations credential envelope. It preserves HMAC-SHA256
+delivery unchanged and does not enable Ed25519, create another receiver, or
+store private key material outside the encrypted credentials value. Ed25519 is
+staged and explicitly activated by an administrator only after the existing
+receiver has registered the displayed public key.

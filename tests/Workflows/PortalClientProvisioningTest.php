@@ -366,6 +366,47 @@ SQL);
         }
     }
 
+    public function testEd25519PublicConnectionReadinessDoesNotRequirePrivateKeyOrHmac(): void
+    {
+        $publicKey = rtrim(strtr(base64_encode(str_repeat('p', 32)), '+/', '-_'), '=');
+        $config = [
+            'enabled' => 1,
+            'configured_enabled' => 1,
+            'delivery_ready' => 1,
+            // This is exactly the public shape returned by ExternalOpsConfigService::load().
+            // Private signing bytes must never be copied into this portal service.
+            'delivery_issues' => [],
+            'application_key' => 'generic_operations',
+            'label' => 'Generic operations',
+            'webhook_url' => 'https://operations.example.test/events',
+            'access_client_id' => 'access-id',
+            'access_client_secret' => 'access-secret',
+            'signing_mode' => 'ed25519',
+            'signing_key_id' => 'pa_ed25519_0123456789abcdef',
+            'signing_public_key' => $publicKey,
+            'timeout_seconds' => 15,
+            'max_attempts' => 12,
+        ];
+        self::assertArrayNotHasKey('private_key_b64', $config);
+        self::assertArrayNotHasKey('hmac_secret', $config);
+
+        $profileId = $this->service->configureConnection($this->pdo, $config, 7);
+        self::assertNotNull($profileId);
+
+        $preflight = new \ReflectionMethod($this->service, 'activationPreflight');
+        $status = $preflight->invoke($this->service, $config, [
+            'application_key' => 'generic_operations',
+            'portal_route' => 'https://operations.example.test/events',
+            'enabled' => 1,
+            'portal_projection_enabled' => 1,
+            'delivery_enabled' => 1,
+        ], ['outbound_enabled' => true, 'hooks_enabled' => true]);
+        self::assertTrue($status['operations_delivery_ready']);
+        self::assertTrue($status['checks'][3]['ready']);
+        self::assertSame('ready outbound signing method', $status['checks'][3]['label']);
+        self::assertSame([], $status['issues']);
+    }
+
     public function testSingleConnectionKeepsServiceAssignmentsDefaultOffAndExplicitlyEnablesThem(): void
     {
         $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('a',32)]]],function():void{

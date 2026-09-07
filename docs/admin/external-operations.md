@@ -52,7 +52,7 @@ enable the outbound outbox sender. The pull snapshot remains available when
 outbound delivery is disabled or paused, provided its normal API key and stable
 application key requirements are met.
 
-Open **Settings > System & Integrations > Custom integrations**. This single surface contains the deployment-specific display label, signed-event URL, service authentication credentials, HMAC secret, explicit Project Alpha account access, and synchronization health. Set a stable application key such as `external_application`; use the same key in the provisioning receiver and snapshot importer. No application key or display label is fixed by Project Alpha. The open-source display-name fallback is **External operations**; a deployment may replace it with its own product name.
+Open **Settings > System & Integrations > Custom integrations**. This single surface contains the deployment-specific display label, signed-event URL, service authentication credentials, HMAC secret, outbound signing controls, explicit Project Alpha account access, and synchronization health. Set a stable application key such as `external_application`; use the same key in the provisioning receiver and snapshot importer. No application key or display label is fixed by Project Alpha. The open-source display-name fallback is **External operations**; a deployment may replace it with its own product name.
 
 Portal projection profiles, workspace/principal records, scoped allowlists,
 runtime gates, recovery, and signing remain backend compatibility contracts and
@@ -112,11 +112,12 @@ The consuming portal verifies a live assertion and owns the issuer/subject
 binding. Matching names, addresses, CRM contacts, primary contacts, and public
 links are never identity bindings or grants.
 
-Outbound delivery is ready only when the administrator has requested it and all
-five delivery values are available: application key, signed event URL, Access
-service-token ID, Access service-token secret, and HMAC secret. The encrypted
-credential payload must also be readable with the deployment's persisted
-application encryption key. Timeout and maximum-attempt settings are bounded
+Outbound delivery is ready only when the administrator has requested it and the
+application key, signed event URL, Access service-token ID, Access service-token
+secret, and a ready signing method are available. The compatible default signing
+method is HMAC-SHA256 with its secret; an activated Ed25519 key may replace it on
+the same connection. The encrypted credential payload must also be readable with
+the deployment's persisted application encryption key. Timeout and maximum-attempt settings are bounded
 but are not readiness predicates. Keep outbound delivery disabled until the
 receiver contract is deployed. If an older or partial configuration has the
 enable flag set but is incomplete, Project Alpha pauses outbound delivery while
@@ -129,13 +130,26 @@ Use a dedicated Project Alpha API key with only the stable `ops.sync.read` scope
 
 Secrets are encrypted with Project Alpha's persisted application encryption key. Passwords, pay rates, financial details, API secrets, private tokens, and integration secrets are never included in the operational projection.
 
+### Ed25519 signing upgrade
+
+HMAC-SHA256 remains the compatible default. Migration `0086_external_operations_ed25519_signing.sql` adds only a non-secret envelope marker; it does not enable a connection or change an existing HMAC sender. An installation may instead use Ed25519 on the same External Operations connection when its PHP runtime provides `ext-sodium`.
+
+1. Generate a **staged Ed25519 key** in Custom integrations.
+2. Register the displayed key ID and public key with the existing receiver. Project Alpha never displays or exports the private key.
+3. Confirm that registration in the UI and activate the staged key. Activation is refused while ordinary, portal, or managed-delivery rows remain unresolved, so an accepted retry cannot be re-signed with a replacement key.
+4. Keep HMAC available only as a deliberate fallback. Returning to it requires explicit confirmation and the same empty-outbox safety check.
+5. Retire an unused staged key when it is no longer needed; retirement permanently removes its encrypted private material while retaining the public audit record.
+
+Ed25519 uses the unchanged canonical input `timestamp + "." + raw_request_body`. It sends `X-PA-Signature-Ed25519: ed25519=<base64url-without-padding signature>`; the receiver selects its active or overlap public key from its registry. HMAC retains the existing byte-for-byte `X-PA-Signature: sha256=<hex>` header. A receiver must register the public key before activation; no second URL or portal signer is created.
+
 ## Delivery contract
 
-Project Alpha writes signed, idempotent change events for Business Units, Projects, Team membership, Operations, Operation assignments, Tasks, Task assignments, and entitlements. Events include an event ID, source timestamp, schema version, configured application key, and HMAC signature. The receiver ignores duplicates and out-of-order changes.
+Project Alpha writes signed, idempotent change events for Business Units, Projects, Team membership, Operations, Operation assignments, Tasks, Task assignments, and entitlements. Events include an event ID, source timestamp, schema version, configured application key, and the selected HMAC or Ed25519 signature. The receiver ignores duplicates and out-of-order changes.
 
 The minute-scheduled outbox sender delivers queued events with the configured
-Cloudflare Access service-token headers and Project Alpha event headers. The HMAC
-signature is SHA-256 over `timestamp + "." + raw_request_body`. Failed deliveries
+Cloudflare Access service-token headers and Project Alpha event headers. HMAC is
+SHA-256 over `timestamp + "." + raw_request_body`; Ed25519 signs the same input.
+Failed deliveries
 remain in the outbox for the existing retry schedule; a successful retry keeps the
 same event identity so receiver-side idempotency remains effective.
 
@@ -162,7 +176,7 @@ is a receiver-driven recovery path, not another outbound destination.
 
 Before reconciliation, the portal preflight checks the enabled External
 Operations connection, its exact signed event URL, service authentication,
-HMAC secret, saved producer state, delivery switch, outbound runtime, and
+ready signing method, saved producer state, delivery switch, outbound runtime, and
 authoritative hooks. The page reports only fixed prerequisite names and boolean
 state; it never displays a URL, token, or secret value. There is no separate
 Project Alpha-to-portal connection or signing capability.
@@ -180,7 +194,7 @@ changing its URL, application key, or credentials. That retires the bound portal
 state and queues its workspace tombstones. Re-enable the unchanged connection
 long enough to drain those records to the original receiver. Project Alpha
 blocks changes to the signed-event URL, application key, Access service token,
-or HMAC secret while any deliverable portal outbox row remains unresolved,
+or active signing contract while any deliverable portal outbox row remains unresolved,
 including a dead-lettered revocation. Dead-lettered normal events are resolved
 through the existing retirement audit step and are never replayed against the
 replacement contract. Only after the queue reaches zero may an administrator
@@ -199,7 +213,7 @@ would activate a second portal producer, so the single-producer rule is not
 limited to the simplified External Operations page.
 
 The optional service-assignment producer uses this same External Operations
-profile, receiver origin, Access headers, HMAC keys, workspace allowlist, and
+profile, receiver origin, Access headers, active signing method, workspace allowlist, and
 durable outbox. It is disabled by default and requires the receiver to grant
 `portal.service-assignments.publish` before activation. Catalog visibility,
 billing records, portal eligibility, workspace membership, and portal

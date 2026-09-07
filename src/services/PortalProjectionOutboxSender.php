@@ -44,7 +44,7 @@ final class PortalProjectionOutboxSender
     private function sendClaim(PDO $pdo,array $claim,callable $transport):array
     {
         $config=(new ExternalOpsConfigService())->load($pdo);
-        $issues=ExternalOpsConfigService::deliveryIssues($config);
+        $issues=(array)($config['delivery_issues']??ExternalOpsConfigService::deliveryIssues($config));
         if(empty($config['configured_enabled'])||$issues!==[])throw new RuntimeException('external-operations-delivery-unavailable');
         if(!hash_equals((string)$config['application_key'],(string)$claim['application_key']))throw new RuntimeException('external-operations-application-mismatch');
         $route=(string)$config['webhook_url'];PortalProjectionDeliveryConfigService::validateDestination($route);
@@ -52,8 +52,12 @@ final class PortalProjectionOutboxSender
         $projectionKind=(string)($claim['route_type']??'');if(!in_array($projectionKind,['portal','catalog','service_assignments'],true))throw new RuntimeException('portal-projection-kind-invalid');
         $deliveryId=(string)$claim['delivery_id'];$occurredAt=(string)($projection['occurredAt']??(new DateTimeImmutable('now',new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z'));
         $event=['event_id'=>$deliveryId,'event_type'=>'portal.projection','occurred_at'=>$occurredAt,'schema_version'=>1,'application_key'=>(string)$config['application_key'],'projection_kind'=>$projectionKind,'projection'=>$projection];
-        $body=json_encode($event,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);$timestamp=(new DateTimeImmutable('now',new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');$signature=hash_hmac('sha256',$timestamp.'.'.$body,(string)$config['hmac_secret']);
-        $headers=['Content-Type: application/json','CF-Access-Client-Id: '.(string)$config['access_client_id'],'CF-Access-Client-Secret: '.(string)$config['access_client_secret'],'X-PA-Event-ID: '.$deliveryId,'X-PA-Timestamp: '.$timestamp,'X-PA-Signature: sha256='.$signature];
+        $body=json_encode($event,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);$timestamp=(new DateTimeImmutable('now',new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');
+        $headers=['Content-Type: application/json','CF-Access-Client-Id: '.(string)$config['access_client_id'],'CF-Access-Client-Secret: '.(string)$config['access_client_secret'],'X-PA-Event-ID: '.$deliveryId,'X-PA-Timestamp: '.$timestamp];
+        $signingHeaders=(string)($config['signing_mode']??ExternalOpsSigner::HMAC_SHA256)===ExternalOpsSigner::HMAC_SHA256
+            ? ExternalOpsSigner::headersFromCredentials(['hmac_secret'=>(string)$config['hmac_secret']],$timestamp,$body)
+            : (new ExternalOpsConfigService())->signingHeaders($pdo,$timestamp,$body);
+        $headers=array_merge($headers,$signingHeaders);
         return$transport($route,$headers,$body,max(2,min(30,(int)$config['timeout_seconds'])));
     }
 

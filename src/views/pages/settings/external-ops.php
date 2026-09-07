@@ -97,6 +97,29 @@ if (!empty($config['enabled'])) {
   </form>
 </div>
 
+<?php $signingKeys=(array)($config['signing_keys']??[]);$activeSigningMode=(string)($config['signing_mode']??'hmac-sha256'); ?>
+<div class="settings-card" id="outbound-signing">
+  <div class="settings-section-heading"><h3>Outbound signing</h3><p>This is the signing method for the same External Operations connection above. It does not create another endpoint, application profile, or client-portal connection.</p></div>
+  <div class="settings-form-grid">
+    <div><span class="label">Active method</span><strong><?=$h($activeSigningMode==='ed25519'?'Ed25519':'HMAC-SHA256')?></strong></div>
+    <div><span class="label">Active key ID</span><strong><?=$h((string)($config['signing_key_id']??'external_ops_hmac_v1'))?></strong></div>
+    <?php if($activeSigningMode==='ed25519'):?><div style="grid-column:1/-1"><span class="label">Active public key</span><code style="display:block;overflow-wrap:anywhere;white-space:normal"><?=$h((string)($config['signing_public_key']??''))?></code></div><?php endif;?>
+  </div>
+  <p style="color:var(--muted);font-size:13px">Private signing keys are encrypted and never displayed or exported. Generate a staged key, register its public key with the existing receiver, then explicitly activate it after all pending deliveries have been resolved.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+    <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Generate a new staged Ed25519 key? Project Alpha will display only its public key.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="generate-ed25519-signing-key"><button class="btn">Generate staged Ed25519 key</button></form>
+    <?php if($activeSigningMode==='ed25519'):?><form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Switch back to the configured HMAC key? This is blocked while the current signing contract has pending delivery.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="activate-hmac-signing"><label class="check-row"><input type="checkbox" name="confirm_hmac_fallback" value="1" required> Receiver still accepts HMAC</label><button class="btn">Use HMAC-SHA256</button></form><?php endif;?>
+  </div>
+  <?php foreach($signingKeys as $signingKey): if(($signingKey['state']??'')!=='staged')continue; ?>
+    <div class="settings-alert settings-alert-info" style="margin-top:10px"><strong>Staged Ed25519 key: <?=$h((string)$signingKey['key_id'])?></strong><br><span class="label">Public key</span><code style="display:block;overflow-wrap:anywhere;white-space:normal"><?=$h((string)$signingKey['public_key_b64'])?></code>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Activate this Ed25519 key on the existing connection? This is blocked while any signed delivery remains unresolved.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="activate-ed25519-signing-key"><input type="hidden" name="signing_key_id" value="<?=$h((string)$signingKey['key_id'])?>"><label class="check-row"><input type="checkbox" name="receiver_key_registered" value="1" required> Receiver has registered this exact public key</label><button class="btn btn-primary">Activate Ed25519</button></form>
+        <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Retire this unused staged key? Its private material will be removed permanently.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="retire-ed25519-signing-key"><input type="hidden" name="signing_key_id" value="<?=$h((string)$signingKey['key_id'])?>"><button class="btn">Retire staged key</button></form>
+      </div>
+    </div>
+  <?php endforeach; ?>
+</div>
+
 <div class="settings-card" id="connected-workspace-synchronization">
   <div class="settings-section-heading"><h3>Connected workspace synchronization</h3><p>Project Alpha publishes eligible client identities and organization structure as signed events through this external application connection. The connected application can use those records to provision its own client-facing workspaces. Sign-in and resource access remain controlled by that application.</p></div>
   <?php if($portalStatusError):?>
