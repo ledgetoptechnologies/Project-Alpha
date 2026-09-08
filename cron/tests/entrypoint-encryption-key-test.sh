@@ -70,20 +70,21 @@ unrepairable_permissions_fail_closed() {
   fi
 }
 
-ineffective_permissions_repair_fails_closed() {
+ineffective_permissions_repair_warns_and_preserves_the_key() {
   local config_dir="${TEST_DIR}/permission-repair-ineffective" output
   mkdir -p "$config_dir"
   printf '%s\n' 'ineffective-repair-sentinel-secret' > "${config_dir}/.encryption_key"
   chmod 644 "${config_dir}/.encryption_key"
   if [ "$(stat -c '%a' "${config_dir}/.encryption_key")" = '644' ]; then
     unset APP_ENCRYPTION_KEY
-    if output="$(
+    if ! output="$(
       chmod() { return 0; }
       cron_load_app_encryption_key "$config_dir" 0 0 2>&1
     )"; then
-      fail 'cron accepted a broad key when chmod reported success without changing it'
+      fail 'cron rejected a regular key solely because the storage driver retained its ACL-derived mode'
     fi
-    [[ "$output" == *'unsafe permissions'* ]] || fail 'ineffective chmod diagnostic was unclear'
+    [[ "$output" == *'storage driver retained group/other mode bits'* ]] || fail 'ineffective chmod warning was unclear'
+    [[ "$output" == *'Loaded and verified APP_ENCRYPTION_KEY'* ]] || fail 'cron did not finish loading the key after the storage-driver warning'
     [[ "$output" != *'ineffective-repair-sentinel-secret'* ]] || fail 'ineffective chmod leaked the key'
   fi
 }
@@ -203,7 +204,7 @@ explicit_key_is_persisted_atomically_when_absent
 matching_explicit_key_is_accepted
 broad_persisted_key_is_restricted_for_web_and_cron
 unrepairable_permissions_fail_closed
-ineffective_permissions_repair_fails_closed
+ineffective_permissions_repair_warns_and_preserves_the_key
 mismatched_explicit_key_fails_without_leaking_either_key
 existing_shared_key_is_loaded
 delayed_shared_key_is_loaded

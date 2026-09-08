@@ -6,6 +6,10 @@ app_encryption_key_error() {
   printf '%s\n' "[app-encryption-key] ERROR: $1" >&2
 }
 
+app_encryption_key_warning() {
+  printf '%s\n' "[app-encryption-key] WARNING: $1" >&2
+}
+
 app_encryption_key_validate_file() {
   local key_file="$1" mode
   if [ -L "$key_file" ] || [ ! -f "$key_file" ]; then
@@ -27,16 +31,22 @@ app_encryption_key_validate_file() {
       return 1
     fi
 
-    # chmod can fail silently on some mounted filesystems, so validate both the
-    # object type and the resulting mode again before a secret is read.
+    # TrueNAS SCALE application datasets can report host-ACL-derived mode bits
+    # even after a successful chmod from inside the container. Revalidate the
+    # object type unconditionally. If only the mode remains broad, preserve the
+    # prior compatible behavior and warn: this file lives in the private shared
+    # application config volume and is also guarded by the key-match contract.
     if [ -L "$key_file" ] || [ ! -f "$key_file" ]; then
       app_encryption_key_error 'The shared key path must remain a regular, non-symlink file.'
       return 1
     fi
     mode="$(stat -c '%a' -- "$key_file" 2>/dev/null || true)"
-    if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 077) != 0 )); then
-      app_encryption_key_error 'The shared key file has unsafe permissions; group and other access must be disabled.'
+    if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]]; then
+      app_encryption_key_error 'Could not determine the shared key file permissions after attempting to restrict them.'
       return 1
+    fi
+    if (( (8#$mode & 077) != 0 )); then
+      app_encryption_key_warning 'The storage driver retained group/other mode bits after chmod; continuing with the existing regular key in the private application config volume.'
     fi
   fi
 }
