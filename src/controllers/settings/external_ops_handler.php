@@ -83,6 +83,12 @@ try {
         $summary=(new ExternalOpsSyncOrchestrator())->run($pdo,100,50,50,null,null,20);
         $reconciliation=$summary['reconciliation'];$portal=$summary['portal'];
         $message=sprintf('Workspace sync considered %d roots, completed %d, with %d remaining; %d workspace events delivered and %d retrying.',$reconciliation['considered'],$reconciliation['completed'],$reconciliation['remaining'],$portal['delivered'],$portal['failed']);
+    } elseif ($action === 'recover-client-portal-deliveries') {
+        $summary=(new PortalClientProvisioningService())->recoverFailedPortalWorkspaces($pdo,(string)$config['application_key'],$actorUserId,25);
+        $message=sprintf('Queued fresh complete snapshots for %d workspace(s), covering %d terminal delivery record(s). Original failures remain in the audit history until the replacement activations are acknowledged.',$summary['queued'],$summary['failed_records']);
+    } elseif ($action === 'retry-client-portal-backfill') {
+        $retried=(new PortalClientProvisioningService())->retryFailedBackfillRoots($pdo,(string)$config['application_key'],$actorUserId,25);
+        $message=sprintf('%d terminal historical workspace root(s) were requeued for bounded reconciliation.',$retried);
     } elseif ($action === 'retry-client-portal-revocations') {
         $retried=(new PortalClientProvisioningService())->retryFailedRevocations($pdo,(string)$config['application_key'],$actorUserId);
         $message=sprintf('%d failed workspace revocation(s) were requeued against the unchanged retired receiver contract.',$retried);

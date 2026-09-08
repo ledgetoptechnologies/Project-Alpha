@@ -65,7 +65,24 @@ final class PortalProjectionOutboxSender
     private function finish(PDO $pdo,array $claim,bool $delivered,int $status,?string $errorCode,bool $dead):void
     {
         $attempt=(int)$claim['attempts']+1;$now=self::dbNow();$base=min(3600,30*(2**min(7,max(0,$attempt-1))));$next=(new DateTimeImmutable('now',new DateTimeZone('UTC')))->modify('+'.($base+random_int(0,max(1,(int)floor($base*.25)))).' seconds')->format('Y-m-d H:i:s.u');
-        $pdo->beginTransaction();try{PortalProjectionService::lockProfileContract($pdo,(int)$claim['integration_profile_id']);$pdo->prepare('UPDATE portal_projection_outbox SET attempts=?,next_attempt_at=?,delivered_at=?,dead_lettered_at=?,last_http_status=?,last_error_code=?,claim_token=NULL,claimed_at=NULL WHERE id=? AND claim_token=? AND delivered_at IS NULL AND dead_lettered_at IS NULL')->execute([$attempt,$next,$delivered?$now:null,$dead?$now:null,$status?:null,$errorCode,(int)$claim['id'],(string)$claim['claim_token']]);$pdo->commit();}catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+        $pdo->beginTransaction();try{
+            PortalProjectionService::lockProfileContract($pdo,(int)$claim['integration_profile_id']);
+            $updated=$pdo->prepare('UPDATE portal_projection_outbox SET attempts=?,next_attempt_at=?,delivered_at=?,dead_lettered_at=?,last_http_status=?,last_error_code=?,claim_token=NULL,claimed_at=NULL WHERE id=? AND claim_token=? AND delivered_at IS NULL AND dead_lettered_at IS NULL');
+            $updated->execute([$attempt,$next,$delivered?$now:null,$dead?$now:null,$status?:null,$errorCode,(int)$claim['id'],(string)$claim['claim_token']]);
+            if($updated->rowCount()===1&&(string)($claim['route_type']??'')==='portal'&&str_starts_with((string)($claim['delivery_kind']??''),'snapshot.')){
+                $payload=json_decode((string)$claim['payload_json'],true,64,JSON_THROW_ON_ERROR);$generation=is_array($payload)?(string)($payload['sourceGeneration']??''):'';
+                if($generation!==''){
+                    if($dead){
+                        $recovery=$pdo->prepare("UPDATE portal_projection_recoveries SET state='failed',failed_at=?,last_error_code=? WHERE integration_profile_id=? AND workspace_public_id=? AND source_generation=? AND state='queued'");
+                        $recovery->execute([$now,$errorCode?:'terminal_failure',(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id'],$generation]);
+                    }elseif($delivered&&(string)$claim['delivery_kind']==='snapshot.activate'){
+                        $recovery=$pdo->prepare("UPDATE portal_projection_recoveries SET state='complete',completed_at=?,failed_at=NULL,last_error_code=NULL WHERE activation_delivery_id=? AND integration_profile_id=? AND workspace_public_id=? AND source_generation=? AND state='queued'");
+                        $recovery->execute([$now,(string)$claim['delivery_id'],(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id'],$generation]);
+                    }
+                }
+            }
+            $pdo->commit();
+        }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
     }
 
     /** @param array<string,mixed> $claim */

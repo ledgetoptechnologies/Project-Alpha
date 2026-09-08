@@ -122,13 +122,14 @@ final class PortalV2CompatibilityTest extends TestCase
         $root=dirname(__DIR__,2);$page=(string)file_get_contents($root.'/src/views/pages/settings/external-ops.php');$registry=(string)file_get_contents($root.'/src/views/pages/settings/registry.php');$handler=(string)file_get_contents($root.'/src/controllers/settings/external_ops_handler.php');
         self::assertStringContainsString('External application connection',$page);self::assertStringContainsString('Custom-integration access',$page);self::assertStringContainsString('Synchronization status',$page);
         self::assertStringContainsString('Connected workspace synchronization',$page);self::assertStringContainsString('reconcile-client-portal',$page);
+        self::assertStringContainsString('recover-client-portal-deliveries',$page);self::assertStringContainsString('retry-client-portal-backfill',$page);
         self::assertStringContainsString('External application connection',$page);self::assertStringContainsString('Workspace event routing',$page);
         self::assertStringNotContainsString('Client portal provisioning',$page);self::assertStringNotContainsString('Operations routes',$page);
         self::assertStringContainsString('API-key pull synchronization is separate',$page);self::assertStringContainsString('Project Alpha reports only its own producer prerequisites',$page);
         foreach(['Portal projection runtime','Advanced integration profiles','Workspaces and portal principals','Scoped client access','Profile workspace allowlist','Manager appointment','Projection recovery','viewer.share.create']as$surface)self::assertStringNotContainsString($surface,$page);
         foreach(['name="portal_route"','name="delivery_key_id"','name="delivery_secret"','name="profile_id"','name="workspace_public_id"','name="principal_id"']as$field)self::assertStringNotContainsString($field,$page);
         self::assertStringNotContainsString("'tab' => 'client-portal-access'",$registry);self::assertStringNotContainsString("'tab' => 'integration-advanced'",$registry);
-        foreach(['save-portal-profile','save-portal-workspace','save-portal-principal','save-portal-entitlement','set-portal-workspace-link','appoint-portal-manager','offboard-portal-manager','save-viewer-share-entitlement','queue-portal-snapshot']as$action)self::assertStringContainsString($action,$handler);
+        foreach(['save-portal-profile','save-portal-workspace','save-portal-principal','save-portal-entitlement','set-portal-workspace-link','appoint-portal-manager','offboard-portal-manager','save-viewer-share-entitlement','queue-portal-snapshot','recover-client-portal-deliveries','retry-client-portal-backfill']as$action)self::assertStringContainsString($action,$handler);
         $acl=(string)file_get_contents($root.'/src/utils/acl_middleware.php');self::assertStringContainsString("'organization/organization-departments'         => 'organizations.manage'",$acl);
     }
 

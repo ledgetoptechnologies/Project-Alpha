@@ -143,6 +143,12 @@ final class MigrationLibraryTest extends TestCase
         $this->assertContains('portal_client_provisioning_backfill', migration_required_tables_for_version([
             'portal_client_provisioning_backfill',
         ], 83));
+        $this->assertSame([], migration_required_tables_for_version([
+            'portal_projection_recoveries',
+        ], 86));
+        $this->assertContains('portal_projection_recoveries', migration_required_tables_for_version([
+            'portal_projection_recoveries',
+        ], 87));
 
         $columns = [
             'invoices' => ['organization_id', 'generation_key'],
@@ -150,6 +156,7 @@ final class MigrationLibraryTest extends TestCase
             'contract_settlement_terms' => ['organization_id'],
             'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],
             'portal_client_provisioning_backfill' => ['integration_profile_id', 'root_type', 'contract_fingerprint'],
+            'portal_projection_recoveries' => ['integration_profile_id', 'workspace_public_id', 'activation_delivery_id', 'state'],
             'archived_clients' => ['public_id', 'client_type', 'portal_principal_id', 'portal_identity_binding_ids_json', 'portal_principal_authorization_version', 'portal_principal_disabled_for_archive', 'portal_principal_was_present', 'portal_entitlement_ids_json', 'portal_affected_workspace_ids_json'],
         ];
         $this->assertSame(
@@ -162,6 +169,7 @@ final class MigrationLibraryTest extends TestCase
         );
         $pre85 = $columns;
         unset($pre85['archived_clients']);
+        unset($pre85['portal_projection_recoveries']);
         $through79 = $pre85;
         unset($through79['portal_integration_profiles']);
         unset($through79['portal_client_provisioning_backfill']);
@@ -176,6 +184,9 @@ final class MigrationLibraryTest extends TestCase
         $this->assertSame($through82, migration_required_columns_for_version($columns, 82));
         $this->assertSame($pre85, migration_required_columns_for_version($columns, 83));
         $this->assertSame($pre85, migration_required_columns_for_version($columns, 84));
-        $this->assertSame($columns, migration_required_columns_for_version($columns, 85));
+        $through86=$columns;unset($through86['portal_projection_recoveries']);
+        $this->assertSame($through86, migration_required_columns_for_version($columns, 85));
+        $this->assertSame($through86,migration_required_columns_for_version($columns,86));
+        $this->assertSame($columns,migration_required_columns_for_version($columns,87));
     }
 }

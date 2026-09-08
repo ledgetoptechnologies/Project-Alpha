@@ -40,6 +40,7 @@ CREATE TABLE portal_client_login_eligibility(client_id INTEGER PRIMARY KEY,porta
 CREATE TABLE portal_client_provisioning_backfill(integration_profile_id INTEGER,root_type TEXT,root_public_id TEXT,contract_fingerprint TEXT,state TEXT,attempts INTEGER DEFAULT 0,next_attempt_at TEXT,last_error_code TEXT,completed_at TEXT,PRIMARY KEY(integration_profile_id,root_type,root_public_id));
 CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT,PRIMARY KEY(organization_id,config_key));
  CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,delivery_id TEXT,workspace_public_id TEXT,schema_version INTEGER,source_sequence INTEGER,delivery_kind TEXT,route_type TEXT,is_revocation INTEGER DEFAULT 0,destination_url TEXT,signing_key_id TEXT,payload_json TEXT,attempts INTEGER DEFAULT 0,next_attempt_at TEXT DEFAULT '2000-01-01 00:00:00',claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+ CREATE TABLE portal_projection_recoveries(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT DEFAULT 'portal',failed_row_cutoff_id INTEGER,source_generation TEXT,activation_delivery_id TEXT UNIQUE,state TEXT DEFAULT 'queued',requested_by INTEGER,completed_at TEXT,failed_at TEXT,last_error_code TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
  CREATE TABLE cron_job_runs(job_name TEXT PRIMARY KEY,last_run TEXT,status TEXT,result TEXT);
 CREATE TABLE portal_projection_state(integration_profile_id INTEGER,workspace_public_id TEXT,source_generation TEXT,source_sequence INTEGER,last_snapshot_hash TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id));
 CREATE TABLE portal_projection_resource_state(integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT,resource_type TEXT,resource_public_id TEXT,source_version TEXT,payload_hash TEXT,record_json TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id,route_type,resource_type,resource_public_id));
@@ -714,6 +715,118 @@ SQL);
             $this->service->configureConnection($this->pdo,$config,7);
             self::assertNull($this->pdo->query("SELECT delivered_at FROM portal_projection_outbox WHERE delivery_id='stable-dead-letter'")->fetchColumn()?:null);
             self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.retired_events_resolved'")->fetchColumn());
+        });
+    }
+
+    public function testAuditedRecoveryQueuesFreshSnapshotAndResolvesOnlyAfterActivationAcknowledgement():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-recovery','Recovery Person','recovery@example.test',NULL,'consumer',0,NULL,'v1')");
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed']);
+            $workspace=(string)$this->pdo->query("SELECT public_id FROM portal_v2_workspaces WHERE root_public_id='client-recovery'")->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_http_status=403,last_error_code='http_4xx' WHERE route_type='portal'");
+            $failedBefore=(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_outbox WHERE dead_lettered_at IS NOT NULL")->fetchColumn();
+
+            $status=$this->service->status($this->pdo,'generic_operations');
+            self::assertSame($failedBefore,$status['counts']['failed']);
+            self::assertSame($failedBefore,$status['counts']['failed_portal']);
+            self::assertSame([['route'=>'portal','code'=>'http_4xx','http_status'=>403,'attempts'=>12,'count'=>$failedBefore,'workspaces'=>1]],$status['delivery_diagnostics']['terminal']);
+
+            $queued=$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            self::assertSame(['queued'=>1,'failed_records'=>$failedBefore],$queued);
+            $recovery=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetch(PDO::FETCH_ASSOC);
+            self::assertSame('queued',$recovery['state']);self::assertSame($workspace,$recovery['workspace_public_id']);
+            self::assertSame($failedBefore,(int)$recovery['failed_row_cutoff_id']);
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.recovery_queued'")->fetchColumn());
+            self::assertSame($failedBefore,$this->service->status($this->pdo,'generic_operations')['counts']['failed'],'Queued work is not proof of receiver recovery.');
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('A queued recovery must not be duplicated.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable failed workspace',$error->getMessage());}
+
+            $summary=(new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,10,static fn():array=>['status'=>204],20);
+            self::assertGreaterThanOrEqual(2,$summary['delivered']);
+            $recovery=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetch(PDO::FETCH_ASSOC);
+            self::assertSame('complete',$recovery['state']);self::assertNotNull($recovery['completed_at']);
+            self::assertSame(0,$this->service->status($this->pdo,'generic_operations')['counts']['failed']);
+            self::assertSame($failedBefore,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_outbox WHERE dead_lettered_at IS NOT NULL AND delivered_at IS NULL")->fetchColumn(),'Original terminal records remain immutable evidence.');
+        });
+    }
+
+    public function testOrdinaryManualSyncDoesNotReplayOrHideTerminalPortalPayloads():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-manual-terminal','Manual Person','manual@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_error_code='http_4xx'");
+            $before=(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
+
+            $summary=(new ExternalOpsSyncOrchestrator())->run($this->pdo,25,50,50,static fn():array=>['status'=>204],static fn():array=>['status'=>204],20);
+
+            self::assertTrue($summary['ready']);self::assertSame(0,$summary['reconciliation']['considered']);
+            self::assertSame(0,$summary['portal']['processed']);
+            self::assertSame($before,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_recoveries')->fetchColumn());
+            self::assertGreaterThan(0,$this->service->status($this->pdo,'generic_operations')['counts']['failed_portal']);
+        });
+    }
+
+    public function testRecoveryIsCurrentContractActiveWorkspaceOnlyAndNeverConsumesRevocations():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-current','Current Person','current@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $workspace=(string)$this->pdo->query("SELECT public_id FROM portal_v2_workspaces WHERE root_public_id='client-current'")->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET delivered_at=CURRENT_TIMESTAMP");
+            $profileId=(int)$this->pdo->query('SELECT id FROM portal_integration_profiles')->fetchColumn();
+            $insert=$this->pdo->prepare("INSERT INTO portal_projection_outbox(integration_profile_id,delivery_id,workspace_public_id,schema_version,source_sequence,delivery_kind,route_type,is_revocation,destination_url,payload_json,attempts,dead_lettered_at,last_error_code)VALUES(?,?,?,?,?,'event','portal',?,?, '{}',12,CURRENT_TIMESTAMP,'transport_failed')");
+            $insert->execute([$profileId,'recoverable',$workspace,4,50,0,'https://operations.example.test/events']);
+            $insert->execute([$profileId,'revocation',$workspace,4,51,1,'https://operations.example.test/events']);
+            $insert->execute([$profileId,'old-contract',$workspace,4,52,0,'https://old.example.test/events']);
+
+            self::assertSame(['queued'=>1,'failed_records'=>1],$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25));
+            self::assertSame(1,$this->service->status($this->pdo,'generic_operations')['counts']['failed_revocations']);
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_recoveries WHERE state='queued'")->fetchColumn());
+            self::assertSame(1,$this->service->retryFailedRevocations($this->pdo,'generic_operations',7));
+            self::assertNull($this->pdo->query("SELECT dead_lettered_at FROM portal_projection_outbox WHERE delivery_id='revocation'")->fetchColumn());
+            self::assertNotNull($this->pdo->query("SELECT dead_lettered_at FROM portal_projection_outbox WHERE delivery_id='old-contract'")->fetchColumn());
+        });
+    }
+
+    public function testTerminalReplacementFailureIsRetryableAsAnotherFreshGeneration():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-retry-recovery','Retry Person','retry@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_error_code='transport_failed'");
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=11 WHERE dead_lettered_at IS NULL");
+
+            $summary=(new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,1,static fn():array=>['status'=>400],20);
+            self::assertSame(1,$summary['dead_lettered']);
+            self::assertSame('failed',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame(1,$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25)['queued']);
+            self::assertSame(2,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_recoveries')->fetchColumn());
+        });
+    }
+
+    public function testTerminalBackfillRetryIsBoundedAuditedAndPreservesRevocationState():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $profileId=(int)$this->pdo->query('SELECT id FROM portal_integration_profiles')->fetchColumn();
+            $fingerprint=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events'],JSON_THROW_ON_ERROR));
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-failed','Failed Person','failed@example.test',NULL,'consumer',0,NULL,'v1')");
+            $insert=$this->pdo->prepare("INSERT INTO portal_client_provisioning_backfill VALUES(?,? ,?,?, 'failed',5,NULL,'projection_failure:abc',NULL)");
+            $insert->execute([$profileId,'standalone_client','client-failed',$fingerprint]);
+            $this->pdo->exec("INSERT INTO portal_client_login_eligibility(client_id,manual_state,eligibility_status)VALUES(44,'revoked','revoked')");
+
+            self::assertSame(1,$this->service->retryFailedBackfillRoots($this->pdo,'generic_operations',7,25));
+            $row=$this->pdo->query("SELECT * FROM portal_client_provisioning_backfill WHERE root_public_id='client-failed'")->fetch(PDO::FETCH_ASSOC);
+            self::assertSame('retry',$row['state']);self::assertSame(0,(int)$row['attempts']);self::assertSame('operator_retry_requested',$row['last_error_code']);
+            self::assertSame('revoked',$this->pdo->query('SELECT manual_state FROM portal_client_login_eligibility WHERE client_id=44')->fetchColumn());
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.backfill_requeued'")->fetchColumn());
         });
     }
 

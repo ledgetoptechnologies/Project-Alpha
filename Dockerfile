@@ -100,11 +100,14 @@ RUN echo "$APP_VERSION" > /var/www/APP_VERSION
 
 # Entry script
 WORKDIR /var/www
+RUN mkdir -p /usr/local/lib/project-alpha
+COPY ./cron/entrypoint-encryption-key.sh /usr/local/lib/project-alpha/app-encryption-key.sh
 COPY ./docker/start.sh /usr/local/bin/start.sh
 COPY ./docker/migrate.sh /usr/local/bin/migrate.sh
 COPY ./docker/enable-mysql-encryption.sh /usr/local/bin/enable-mysql-encryption.sh
 # Normalize Windows CRLF to LF to avoid "env: 'bash\r'" errors
-RUN sed -i 's/\r$//' /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh \
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/app-encryption-key.sh /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh \
+    && chmod 0644 /usr/local/lib/project-alpha/app-encryption-key.sh \
     && chmod +x /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh
 
 EXPOSE 80

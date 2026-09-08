@@ -56,9 +56,10 @@ final class PortalProjectionService
             PortalIntegrationContract::validatePortalDelivery($payload,$schemaVersion>=3,$schemaVersion===4);
             $this->enqueue($pdo, $profile, $workspacePublicId, $schemaVersion, $sequence, 'snapshot.page', 'portal', $payload);
         }
+        $activationDeliveryId = self::uuid();
         $activation = [
             'schemaVersion'=>$schemaVersion, 'applicationKey'=>(string)$profile['application_key'],
-            'deliveryId'=>self::uuid(), 'occurredAt'=>$now, 'sourceGeneration'=>$generation,
+            'deliveryId'=>$activationDeliveryId, 'occurredAt'=>$now, 'sourceGeneration'=>$generation,
             'sourceSequence'=>$sequence, 'workspaceId'=>$workspacePublicId, 'kind'=>'snapshot.activate',
             'snapshotHash'=>$snapshotHash, 'pageCount'=>count($pages), 'recordCount'=>count($records),
         ];
@@ -67,7 +68,7 @@ final class PortalProjectionService
         $pdo->prepare('UPDATE portal_projection_state SET last_snapshot_hash=? WHERE integration_profile_id=? AND workspace_public_id=?')
             ->execute([$snapshotHash,(int)$profile['id'],$workspacePublicId]);
         $this->replaceResourceState($pdo,$profileId,$workspacePublicId,'portal',$this->portalResourceRecords($workspace,$projection,$schemaVersion));
-        return ['sourceGeneration'=>$generation,'sourceSequence'=>$sequence,'snapshotHash'=>$snapshotHash,'pageCount'=>count($pages),'recordCount'=>count($records)];
+        return ['sourceGeneration'=>$generation,'sourceSequence'=>$sequence,'snapshotHash'=>$snapshotHash,'pageCount'=>count($pages),'recordCount'=>count($records),'activationDeliveryId'=>$activationDeliveryId];
     }
 
     /** Queue a complete, bounded Service Library generation. Caller owns the transaction. */

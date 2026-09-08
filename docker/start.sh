@@ -11,22 +11,10 @@ if [ -z "${APP_ENCRYPTION_KEY:-}" ]; then
   APP_ENCRYPTION_KEY_WAS_SET=0
 fi
 
-# Auto-generate encryption key if not provided (persists in config volume)
 CONFIG_DIR="/var/www/config"
-if [ -z "${APP_ENCRYPTION_KEY:-}" ]; then
-  KEY_FILE="${CONFIG_DIR}/.encryption_key"
-  if [ -f "$KEY_FILE" ]; then
-    export APP_ENCRYPTION_KEY="$(cat "$KEY_FILE")"
-    echo "Loaded encryption key from ${KEY_FILE}"
-  else
-    echo "APP_ENCRYPTION_KEY not set — auto-generating and persisting to ${KEY_FILE}"
-    mkdir -p "$CONFIG_DIR"
-    export APP_ENCRYPTION_KEY="$(php -r 'echo base64_encode(random_bytes(32));')"
-    echo "$APP_ENCRYPTION_KEY" > "$KEY_FILE"
-    chmod 600 "$KEY_FILE"
-    chown www-data:www-data "$KEY_FILE" 2>/dev/null || true
-  fi
-fi
+source /usr/local/lib/project-alpha/app-encryption-key.sh
+app_encryption_key_prepare_web "$CONFIG_DIR"
+chown www-data:www-data "${CONFIG_DIR}/.encryption_key" 2>/dev/null || true
 
 # Also write the key to a .env file in the config volume so PHP can read it
 # (app.php reads .env from /var/www/config/.env)
