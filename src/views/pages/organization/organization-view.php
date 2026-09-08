@@ -126,7 +126,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
 <style>
   .org-view { max-width: 1440px; margin: 0 auto; padding-bottom: 32px; }
   .org-view__header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
-  .org-view__title { margin: 0; font-size: 30px; line-height: 1.15; }
+  .org-view__title { margin: 0; font-size: 30px; line-height: 1.15; overflow-wrap:anywhere; }
   .org-view__meta { margin-top: 6px; color: var(--muted); font-size: 13px; }
   .org-view__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .org-view__button { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: inherit; text-decoration: none; font-size: 13px; cursor: pointer; }
@@ -139,7 +139,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
   .org-view__sidebar { display: grid; gap: 14px; position: sticky; top: 16px; }
   .org-view__main { min-width: 0; }
   .org-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; box-shadow: 0 6px 18px rgba(11,18,32,0.05); }
-  .org-card + .org-card { margin-top: 18px; }
+  /* The sidebar is already a grid with a gap; a card margin here doubled that spacing. */
   .org-card__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
   .org-card__title { margin: 0; font-size: 17px; }
   .org-detail-list { display: grid; gap: 12px; margin: 0; }
@@ -158,12 +158,44 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
   .org-dept-card__body { display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;padding:14px 16px; }
   .org-dept-card__section-title { font-weight:700;margin-bottom:8px; }
   .org-dept-card__actions { display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end; }
+  .org-departments { background:#fff;border-radius:8px;padding:16px;box-shadow:0 6px 18px rgba(11,18,32,0.06);margin:24px 0; }
+  .org-departments__head { display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px; }
+  .org-departments__grid { display:grid;gap:14px; }
+  .org-dept-contact-row { display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid #eef2f7;border-radius:8px;padding:8px;min-width:0; }
+  .org-dept-contact-row__identity { min-width:0;overflow-wrap:anywhere; }
+  .org-dept-contact-row__email { color:var(--muted);font-size:12px;overflow-wrap:anywhere; }
+  .org-dept-contact-row__actions { display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0; }
+  .org-dept-contact-assignment { display:flex;gap:8px;margin-top:10px;min-width:0; }
+  .org-dept-contact-assignment select { flex:1 1 12rem;min-width:0;padding:8px;border:1px solid #ddd;border-radius:8px; }
+  .org-dept-contact-assignment label { display:flex;align-items:center;gap:5px;font-size:12px;color:#374151;white-space:nowrap; }
+  .org-danger-zone { margin-top:18px;border-color:#fecaca;background:#fffafa; }
+  .org-danger-zone__head { display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap; }
+  .org-danger-zone__description { color:var(--muted);font-size:13px; }
+  .org-danger-zone .org-view__button--danger { border-color:#fca5a5;color:#b91c1c; }
+  .org-department-modal { display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px; }
+  .org-department-modal__dialog { background:#fff;border-radius:12px;padding:22px;max-width:640px;width:min(640px,100%);max-height:calc(100dvh - 40px);overflow-y:auto;box-shadow:0 24px 60px rgba(15,23,42,0.22); }
   @media (max-width: 960px) {
     .org-view__header { display: grid; }
     .org-view__actions { justify-content: flex-start; }
     .org-view__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .org-view__layout { grid-template-columns: 1fr; }
     .org-view__sidebar { position: static; order: -1; }
+  }
+  @media (max-width: 600px) {
+    .org-view { padding-bottom:24px; }
+    .org-view__stats { grid-template-columns:1fr; }
+    .org-departments__head { align-items:stretch;flex-direction:column; }
+    .org-departments__head .org-view__button { width:100%;text-align:center; }
+    .org-dept-card__header { flex-direction:column; }
+    .org-dept-card__actions { justify-content:flex-start; }
+    .org-dept-card__body { grid-template-columns:minmax(0,1fr);padding:14px; }
+    .org-dept-contact-row { align-items:flex-start;flex-direction:column; }
+    .org-dept-contact-row__actions { justify-content:flex-start; }
+    .org-dept-contact-assignment { align-items:stretch;flex-direction:column; }
+    .org-dept-contact-assignment select { flex-basis:auto;width:100%; }
+    .org-dept-contact-assignment label { white-space:normal; }
+    .org-department-modal { padding:10px; }
+    .org-department-modal__dialog { max-height:calc(100dvh - 20px);padding:16px; }
   }
 </style>
 
@@ -212,18 +244,6 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
     <div class="org-view__stat"><span>Departments</span><strong><?php echo count($departments); ?></strong></div>
     <div class="org-view__stat"><span>Tax Exempt</span><strong><?php echo !empty($org['tax_exempt_file']) ? 'Yes' : 'No'; ?></strong></div>
   </div>
-
-  <?php if($portalLoginConfigured):$portalRootActive=(string)($portalRootAccess['access_state']??'active')==='active';?>
-    <div class="org-card" style="margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-      <div><h3 class="org-card__title" style="margin-bottom:5px">Client portal login</h3><div style="color:var(--muted);font-size:13px"><?=$portalRootActive?'Allowed for eligible organization contacts. Each person still needs a verified sign-in and an explicit content grant.':'Revoked for this organization. Project Alpha records are preserved.'?></div></div>
-      <?php if($canManagePortalLogin):?>
-        <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('<?=$portalRootActive?'Revoke portal login for this organization and tombstone its workspace?':'Restore portal login and re-evaluate eligible organization contacts?'?>')">
-          <input type="hidden" name="csrf" value="<?=htmlspecialchars(csrf_token(),ENT_QUOTES,'UTF-8')?>"><input type="hidden" name="action" value="set-client-portal-root"><input type="hidden" name="return_to" value="organization-view"><input type="hidden" name="organization_id" value="<?=$id?>"><input type="hidden" name="root_type" value="organization"><input type="hidden" name="root_public_id" value="<?=htmlspecialchars((string)$org['public_id'],ENT_QUOTES,'UTF-8')?>"><input type="hidden" name="access_state" value="<?=$portalRootActive?'revoked':'active'?>">
-          <button class="org-view__button"><?=$portalRootActive?'Revoke portal login':'Restore portal login'?></button>
-        </form>
-      <?php endif;?>
-    </div>
-  <?php endif;?>
 
   <div class="org-view__layout">
     <aside class="org-view__sidebar">
@@ -406,8 +426,8 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
         require __DIR__ . '/../../components/links_section.php';
       ?>
 
-  <div style="background:#fff;border-radius:8px;padding:16px;box-shadow:0 6px 18px rgba(11,18,32,0.06);margin:24px 0">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px">
+  <div class="org-departments">
+    <div class="org-departments__head">
       <div>
         <h3 style="margin:0 0 4px">Departments</h3>
         <p style="margin:0;color:var(--muted);font-size:13px">Optional groups inside this organization for teams, locations, or departments.</p>
@@ -420,7 +440,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
         No departments yet. Add one only when this organization needs separate groups or link rules.
       </div>
     <?php else: ?>
-      <div style="display:grid;gap:14px">
+      <div class="org-departments__grid">
         <?php foreach ($departments as $department): ?>
           <?php
             $deptId = (int)$department['id'];
@@ -482,13 +502,13 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                 <?php else: ?>
                   <div style="display:grid;gap:6px">
                     <?php foreach ($departmentContacts[$deptId] as $contact): ?>
-                      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid #eef2f7;border-radius:8px;padding:8px">
-                        <span>
+                      <div class="org-dept-contact-row">
+                        <span class="org-dept-contact-row__identity">
                           <strong><?php echo e((string)$contact['name']); ?></strong>
                           <?php if (!empty($contact['is_primary'])): ?><span style="margin-left:6px;padding:2px 6px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700">Primary</span><?php endif; ?>
-                          <?php if (!empty($contact['email'])): ?><span style="color:var(--muted);font-size:12px"> <?php echo e((string)$contact['email']); ?></span><?php endif; ?>
+                          <?php if (!empty($contact['email'])): ?><span class="org-dept-contact-row__email"> <?php echo e((string)$contact['email']); ?></span><?php endif; ?>
                         </span>
-                        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                        <div class="org-dept-contact-row__actions">
                           <?php if (empty($contact['is_primary'])): ?>
                             <form method="post" action="/?page=organization/organization-departments" style="margin:0">
                               <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
@@ -512,18 +532,18 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                     <?php endforeach; ?>
                   </div>
                 <?php endif; ?>
-                <form method="post" action="/?page=organization/organization-departments" style="display:flex;gap:8px;margin-top:10px">
+                <form method="post" action="/?page=organization/organization-departments" class="org-dept-contact-assignment">
                   <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
                   <input type="hidden" name="action" value="assign_contact">
                   <input type="hidden" name="organization_id" value="<?php echo (int)$id; ?>">
                   <input type="hidden" name="department_id" value="<?php echo $deptId; ?>">
-                  <select name="client_id" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px">
+                  <select name="client_id">
                     <option value="">Assign org contact...</option>
                     <?php foreach ($clients as $client): ?>
                       <option value="<?php echo (int)$client['id']; ?>"><?php echo e((string)$client['name']); ?></option>
                     <?php endforeach; ?>
                   </select>
-                  <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#374151;white-space:nowrap">
+                  <label>
                     <input type="checkbox" name="is_primary" value="1">
                     Primary
                   </label>
@@ -575,10 +595,27 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
 
     </main>
   </div>
+
+  <?php if($portalLoginConfigured):$portalRootActive=(string)($portalRootAccess['access_state']??'active')==='active';?>
+    <section class="org-card org-danger-zone" aria-labelledby="organizationPortalAccessTitle">
+      <div class="org-danger-zone__head">
+        <div>
+          <h3 class="org-card__title" id="organizationPortalAccessTitle" style="margin-bottom:5px">Portal access</h3>
+          <div class="org-danger-zone__description"><?=$portalRootActive?'Revoke portal login only when this organization should no longer be able to use it. Eligible contacts still need a verified sign-in and explicit content grant.':'Portal login is revoked. Project Alpha records are preserved.'?></div>
+        </div>
+        <?php if($canManagePortalLogin):?>
+          <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('<?=$portalRootActive?'Revoke portal login for this organization and tombstone its workspace?':'Restore portal login and re-evaluate eligible organization contacts?'?>')">
+            <input type="hidden" name="csrf" value="<?=htmlspecialchars(csrf_token(),ENT_QUOTES,'UTF-8')?>"><input type="hidden" name="action" value="set-client-portal-root"><input type="hidden" name="return_to" value="organization-view"><input type="hidden" name="organization_id" value="<?=$id?>"><input type="hidden" name="root_type" value="organization"><input type="hidden" name="root_public_id" value="<?=htmlspecialchars((string)$org['public_id'],ENT_QUOTES,'UTF-8')?>"><input type="hidden" name="access_state" value="<?=$portalRootActive?'revoked':'active'?>">
+            <button class="org-view__button org-view__button--danger"><?=$portalRootActive?'Revoke portal login':'Restore portal login'?></button>
+          </form>
+        <?php endif;?>
+      </div>
+    </section>
+  <?php endif;?>
 </section>
 
-<div id="departmentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;padding:22px;max-width:640px;width:min(640px,100%);box-shadow:0 24px 60px rgba(15,23,42,0.22)">
+<div id="departmentModal" class="org-department-modal" role="dialog" aria-modal="true" aria-labelledby="departmentModalTitle" aria-hidden="true">
+  <div class="org-department-modal__dialog" tabindex="-1">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px">
       <h3 id="departmentModalTitle" style="margin:0">Add Department</h3>
       <button type="button" onclick="closeDepartmentModal()" aria-label="Close add department" style="border:0;background:#fff;font-size:24px;line-height:1;cursor:pointer;color:#6b7280">&times;</button>

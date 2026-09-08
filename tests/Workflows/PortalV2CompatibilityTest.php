@@ -119,7 +119,7 @@ final class PortalV2CompatibilityTest extends TestCase
 
     public function testTechnicalPortalAuthorityStaysBackendOnlyAndOutOfNormalSettings():void
     {
-        $root=dirname(__DIR__,2);$page=(string)file_get_contents($root.'/src/views/pages/settings/external-ops.php');$registry=(string)file_get_contents($root.'/src/views/pages/settings/registry.php');$handler=(string)file_get_contents($root.'/src/controllers/settings/external_ops_handler.php');
+        $root=dirname(__DIR__,2);$page=(string)file_get_contents($root.'/src/views/pages/settings/external-ops.php').file_get_contents($root.'/src/views/pages/settings/external-ops-recovery-actions.php');$registry=(string)file_get_contents($root.'/src/views/pages/settings/registry.php');$handler=(string)file_get_contents($root.'/src/controllers/settings/external_ops_handler.php');
         self::assertStringContainsString('External application connection',$page);self::assertStringContainsString('Custom-integration access',$page);self::assertStringContainsString('Synchronization status',$page);
         self::assertStringContainsString('Connected workspace synchronization',$page);self::assertStringContainsString('reconcile-client-portal',$page);
         self::assertStringContainsString('recover-client-portal-deliveries',$page);self::assertStringContainsString('retry-client-portal-backfill',$page);
