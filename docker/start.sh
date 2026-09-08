@@ -14,7 +14,12 @@ fi
 CONFIG_DIR="/var/www/config"
 source /usr/local/lib/project-alpha/app-encryption-key.sh
 app_encryption_key_prepare_web "$CONFIG_DIR"
-chown www-data:www-data "${CONFIG_DIR}/.encryption_key" 2>/dev/null || true
+# Do not follow a volume-provided link while adjusting the preferred owner.
+# Some volume drivers do not allow chown, in which case the already validated
+# owner-only file remains usable by the root entrypoint and Apache inherits the
+# loaded value through its environment.
+chown -h www-data:www-data "${CONFIG_DIR}/.encryption_key" 2>/dev/null || true
+app_encryption_key_validate_file "${CONFIG_DIR}/.encryption_key"
 
 # Also write the key to a .env file in the config volume so PHP can read it
 # (app.php reads .env from /var/www/config/.env)

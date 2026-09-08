@@ -34,6 +34,60 @@ matching_explicit_key_is_accepted() {
   assert_equal 'matching-explicit-key' "$APP_ENCRYPTION_KEY"
 }
 
+broad_persisted_key_is_restricted_for_web_and_cron() {
+  local config_dir="${TEST_DIR}/permission-repair"
+  mkdir -p "$config_dir"
+  printf '%s\n' 'repairable-persisted-key' > "${config_dir}/.encryption_key"
+  chmod 644 "${config_dir}/.encryption_key"
+  if [ "$(stat -c '%a' "${config_dir}/.encryption_key")" = '644' ]; then
+    export APP_ENCRYPTION_KEY='repairable-persisted-key'
+    app_encryption_key_prepare_web "$config_dir" >/dev/null
+    assert_equal '600' "$(stat -c '%a' "${config_dir}/.encryption_key")"
+
+    chmod 640 "${config_dir}/.encryption_key"
+    unset APP_ENCRYPTION_KEY
+    cron_load_app_encryption_key "$config_dir" 0 0 >/dev/null
+    assert_equal 'repairable-persisted-key' "$APP_ENCRYPTION_KEY"
+    assert_equal '600' "$(stat -c '%a' "${config_dir}/.encryption_key")"
+  fi
+}
+
+unrepairable_permissions_fail_closed() {
+  local config_dir="${TEST_DIR}/permission-repair-failure" output
+  mkdir -p "$config_dir"
+  printf '%s\n' 'permission-repair-sentinel-secret' > "${config_dir}/.encryption_key"
+  chmod 644 "${config_dir}/.encryption_key"
+  if [ "$(stat -c '%a' "${config_dir}/.encryption_key")" = '644' ]; then
+    unset APP_ENCRYPTION_KEY
+    if output="$(
+      chmod() { return 1; }
+      cron_load_app_encryption_key "$config_dir" 0 0 2>&1
+    )"; then
+      fail 'cron accepted a broad key when chmod could not repair it'
+    fi
+    [[ "$output" == *'could not be restricted'* ]] || fail 'chmod failure diagnostic was unclear'
+    [[ "$output" != *'permission-repair-sentinel-secret'* ]] || fail 'chmod failure leaked the key'
+  fi
+}
+
+ineffective_permissions_repair_fails_closed() {
+  local config_dir="${TEST_DIR}/permission-repair-ineffective" output
+  mkdir -p "$config_dir"
+  printf '%s\n' 'ineffective-repair-sentinel-secret' > "${config_dir}/.encryption_key"
+  chmod 644 "${config_dir}/.encryption_key"
+  if [ "$(stat -c '%a' "${config_dir}/.encryption_key")" = '644' ]; then
+    unset APP_ENCRYPTION_KEY
+    if output="$(
+      chmod() { return 0; }
+      cron_load_app_encryption_key "$config_dir" 0 0 2>&1
+    )"; then
+      fail 'cron accepted a broad key when chmod reported success without changing it'
+    fi
+    [[ "$output" == *'unsafe permissions'* ]] || fail 'ineffective chmod diagnostic was unclear'
+    [[ "$output" != *'ineffective-repair-sentinel-secret'* ]] || fail 'ineffective chmod leaked the key'
+  fi
+}
+
 mismatched_explicit_key_fails_without_leaking_either_key() {
   local config_dir="${TEST_DIR}/explicit-mismatch" output
   mkdir -p "$config_dir"
@@ -96,10 +150,15 @@ missing_or_empty_key_fails_without_leaking_a_key() {
   local symlink_dir="${TEST_DIR}/symlink" hidden_key="${TEST_DIR}/sentinel-key"
   mkdir -p "$symlink_dir"
   printf '%s\n' 'sentinel-secret' > "$hidden_key"
+  chmod 644 "$hidden_key"
   ln -s "$hidden_key" "${symlink_dir}/.encryption_key"
   # Git for Windows may emulate a symlink by copying when developer mode is
   # unavailable. Linux CI exercises the real symlink rejection path.
   if [ -L "${symlink_dir}/.encryption_key" ]; then
+    if output="$(app_encryption_key_prepare_web "$symlink_dir" 2>&1)"; then
+      fail 'web accepted a symlinked shared key'
+    fi
+    assert_equal '644' "$(stat -c '%a' "$hidden_key")"
     if output="$(cron_load_app_encryption_key "$symlink_dir" 1 0 2>&1)"; then
       fail 'symlinked shared key unexpectedly succeeded'
     fi
@@ -112,11 +171,9 @@ missing_or_empty_key_fails_without_leaking_a_key() {
   chmod 644 "${permissions_dir}/.encryption_key"
   # Git for Windows does not expose POSIX chmod bits; Linux CI does.
   if [ "$(stat -c '%a' "${permissions_dir}/.encryption_key")" = '644' ]; then
-    if output="$(cron_load_app_encryption_key "$permissions_dir" 0 0 2>&1)"; then
-      fail 'cron accepted a group/world-readable key file'
-    fi
-    [[ "$output" == *'unsafe permissions'* ]] || fail 'unsafe-permissions diagnostic was unclear'
-    [[ "$output" != *'permissions-sentinel-secret'* ]] || fail 'permissions diagnostic leaked the key'
+    cron_load_app_encryption_key "$permissions_dir" 0 0 >/dev/null
+    assert_equal 'permissions-sentinel-secret' "$APP_ENCRYPTION_KEY"
+    assert_equal '600' "$(stat -c '%a' "${permissions_dir}/.encryption_key")"
   fi
 }
 
@@ -144,6 +201,9 @@ web_and_cron_share_one_volume_contract() {
 
 explicit_key_is_persisted_atomically_when_absent
 matching_explicit_key_is_accepted
+broad_persisted_key_is_restricted_for_web_and_cron
+unrepairable_permissions_fail_closed
+ineffective_permissions_repair_fails_closed
 mismatched_explicit_key_fails_without_leaking_either_key
 existing_shared_key_is_loaded
 delayed_shared_key_is_loaded

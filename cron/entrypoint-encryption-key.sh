@@ -13,9 +13,31 @@ app_encryption_key_validate_file() {
     return 1
   fi
   mode="$(stat -c '%a' -- "$key_file" 2>/dev/null || true)"
-  if [ -z "$mode" ] || (( (8#$mode & 077) != 0 )); then
-    app_encryption_key_error 'The shared key file has unsafe permissions; group and other access must be disabled.'
+  if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]]; then
+    app_encryption_key_error 'Could not determine the shared key file permissions.'
     return 1
+  fi
+
+  # Existing named volumes can retain a key created with the host's default
+  # umask. A regular file which this container can control may be tightened in
+  # place; never substitute, follow, or otherwise recover from an unsafe path.
+  if (( (8#$mode & 077) != 0 )); then
+    if ! chmod 0600 -- "$key_file"; then
+      app_encryption_key_error 'The shared key file has unsafe permissions and could not be restricted to owner-only access.'
+      return 1
+    fi
+
+    # chmod can fail silently on some mounted filesystems, so validate both the
+    # object type and the resulting mode again before a secret is read.
+    if [ -L "$key_file" ] || [ ! -f "$key_file" ]; then
+      app_encryption_key_error 'The shared key path must remain a regular, non-symlink file.'
+      return 1
+    fi
+    mode="$(stat -c '%a' -- "$key_file" 2>/dev/null || true)"
+    if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 077) != 0 )); then
+      app_encryption_key_error 'The shared key file has unsafe permissions; group and other access must be disabled.'
+      return 1
+    fi
   fi
 }
 
