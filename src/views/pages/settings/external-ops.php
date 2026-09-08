@@ -22,7 +22,7 @@ $accessDetail = null;
 $projectSources = [];
 $status = [];
 $directoryError = false;
-$portalStatus = ['configured'=>false,'ready'=>false,'profile'=>null,'counts'=>['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_revocations'=>0],'delivery_diagnostics'=>['oldest_pending_age_seconds'=>null,'retries'=>[]],'scheduler'=>['reconciliation'=>['state'=>'unknown','last_run'=>null],'delivery'=>['state'=>'unknown','last_run'=>null]],'preflight'=>['ready'=>false,'operations_delivery_ready'=>false,'checks'=>[],'issues'=>[],'receiver_verification'=>'']];
+$portalStatus = ['configured'=>false,'ready'=>false,'profile'=>null,'counts'=>['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'failed_backfill'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_portal'=>0,'failed_revocations'=>0,'recoveries_pending'=>0],'delivery_diagnostics'=>['oldest_pending_age_seconds'=>null,'retries'=>[],'terminal'=>[]],'scheduler'=>['reconciliation'=>['state'=>'unknown','last_run'=>null],'delivery'=>['state'=>'unknown','last_run'=>null]],'preflight'=>['ready'=>false,'operations_delivery_ready'=>false,'checks'=>[],'issues'=>[],'receiver_verification'=>'']];
 $portalStatusError = false;
 
 try {
@@ -125,22 +125,25 @@ if (!empty($config['enabled'])) {
   <?php if($portalStatusError):?>
     <div class="settings-alert settings-alert-danger" role="alert">Connected workspace synchronization status could not be loaded. Apply the current database migrations, then reload this page.</div>
   <?php else:?>
-    <?php $portalCounts=(array)$portalStatus['counts'];$portalDiagnostics=(array)($portalStatus['delivery_diagnostics']??[]);$portalRetries=(array)($portalDiagnostics['retries']??[]);$portalScheduler=(array)($portalStatus['scheduler']??[]);$portalPreflight=(array)($portalStatus['preflight']??[]);$portalIssues=(array)($portalPreflight['issues']??[]);$oldestQueuedAge=isset($portalDiagnostics['oldest_pending_age_seconds'])&&$portalDiagnostics['oldest_pending_age_seconds']!==null?(int)$portalDiagnostics['oldest_pending_age_seconds']:null;$formatQueuedAge=static function(?int$seconds):string{if($seconds===null)return'None';if($seconds<60)return'Under a minute';if($seconds<3600)return floor($seconds/60).' minutes';if($seconds<86400)return floor($seconds/3600).' hours';return floor($seconds/86400).' days';};$schedulerLabel=static function(string$state):string{return match($state){'ran'=>'Observed','preflight_not_ready'=>'Preflight not ready','running'=>'Running','failed'=>'Failed',default=>'Not yet observed'};};?>
+    <?php $portalCounts=(array)$portalStatus['counts'];$portalDiagnostics=(array)($portalStatus['delivery_diagnostics']??[]);$portalRetries=(array)($portalDiagnostics['retries']??[]);$portalTerminal=(array)($portalDiagnostics['terminal']??[]);$portalScheduler=(array)($portalStatus['scheduler']??[]);$portalPreflight=(array)($portalStatus['preflight']??[]);$portalIssues=(array)($portalPreflight['issues']??[]);$oldestQueuedAge=isset($portalDiagnostics['oldest_pending_age_seconds'])&&$portalDiagnostics['oldest_pending_age_seconds']!==null?(int)$portalDiagnostics['oldest_pending_age_seconds']:null;$formatQueuedAge=static function(?int$seconds):string{if($seconds===null)return'None';if($seconds<60)return'Under a minute';if($seconds<3600)return floor($seconds/60).' minutes';if($seconds<86400)return floor($seconds/3600).' hours';return floor($seconds/86400).' days';};$schedulerLabel=static function(string$state):string{return match($state){'ran'=>'Observed','preflight_not_ready'=>'Preflight not ready','running'=>'Running','failed'=>'Failed',default=>'Not yet observed'};};?>
     <?php if(!empty($portalStatus['transition_message'])):?><div class="settings-alert settings-alert-warning" role="status"><?=$h($portalStatus['transition_message'])?></div><?php endif;?>
     <div class="settings-form-grid">
       <div><span class="label">External application connection</span><strong><?=!empty($portalPreflight['operations_delivery_ready'])?'Ready':'Paused'?></strong></div>
       <div><span class="label">Workspace event routing</span><strong><?=!empty($portalStatus['ready'])?'Ready':'Paused'?></strong></div>
       <div><span class="label">Active workspaces</span><strong><?=(int)($portalCounts['active_workspaces']??0)?></strong></div>
       <div><span class="label">Historical roots remaining</span><strong><?=(int)($portalCounts['historical_remaining']??0)?></strong></div>
+      <div><span class="label">Historical roots requiring retry</span><strong><?=(int)($portalCounts['failed_backfill']??0)?></strong></div>
       <div><span class="label">Eligible contacts</span><strong><?=(int)($portalCounts['eligible']??0)?></strong></div>
       <div><span class="label">Needs review</span><strong><?=(int)($portalCounts['review_required']??0)?></strong></div>
       <div><span class="label">Revoked</span><strong><?=(int)($portalCounts['revoked']??0)?></strong></div>
       <div><span class="label">Total pending / retrying (subset) / terminal failed</span><strong><?=(int)($portalCounts['pending']??0)?> / <?=(int)($portalCounts['retrying']??0)?> / <?=(int)($portalCounts['failed']??0)?></strong></div>
+      <div><span class="label">Replacement snapshots pending</span><strong><?=(int)($portalCounts['recoveries_pending']??0)?></strong></div>
       <div><span class="label">Oldest queued age</span><strong><?=$h($formatQueuedAge($oldestQueuedAge))?></strong></div>
       <div><span class="label">Scheduled reconciliation</span><strong><?=$h($schedulerLabel((string)($portalScheduler['reconciliation']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['reconciliation']['last_run']??'No run recorded'))?></small></div>
       <div><span class="label">Scheduled delivery</span><strong><?=$h($schedulerLabel((string)($portalScheduler['delivery']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['delivery']['last_run']??'No run recorded'))?></small></div>
     </div>
     <?php if($portalRetries):?><div class="settings-alert settings-alert-warning" role="status"><strong>Workspace-event retries:</strong><div class="pa-table-wrap"><table class="pa-table"><thead><tr><th>Safe code</th><th>HTTP status</th><th>Highest attempt</th><th>Records</th></tr></thead><tbody><?php foreach($portalRetries as$retry):?><tr><td><code><?=$h((string)($retry['code']??'delivery_retry'))?></code></td><td><?=$h(isset($retry['http_status'])&&$retry['http_status']!==null?(string)$retry['http_status']:'None')?></td><td><?=(int)($retry['attempts']??0)?></td><td><?=(int)($retry['count']??0)?></td></tr><?php endforeach;?></tbody></table></div><small>Only fixed sender codes and numeric statuses are shown; receiver bodies, addresses, delivery IDs, workspace identifiers, and credentials are never displayed.</small></div><?php endif;?>
+    <?php if($portalTerminal):?><div class="settings-alert settings-alert-danger" role="alert"><strong>Terminal workspace-event failures require investigation:</strong><div class="pa-table-wrap"><table class="pa-table"><thead><tr><th>Projection</th><th>Safe code</th><th>HTTP status</th><th>Highest attempt</th><th>Records</th><th>Workspaces</th></tr></thead><tbody><?php foreach($portalTerminal as$failure):?><tr><td><?=$h((string)($failure['route']??'unknown'))?></td><td><code><?=$h((string)($failure['code']??'terminal_failure'))?></code></td><td><?=$h(isset($failure['http_status'])&&$failure['http_status']!==null?(string)$failure['http_status']:'None')?></td><td><?=(int)($failure['attempts']??0)?></td><td><?=(int)($failure['count']??0)?></td><td><?=(int)($failure['workspaces']??0)?></td></tr><?php endforeach;?></tbody></table></div><small>Repair and verify the receiver before queuing replacement snapshots. Original failed records remain preserved for audit.</small></div><?php endif;?>
     <p style="color:var(--muted);font-size:13px">Retrying is included in total pending. Scheduled reconciliation and delivery are evidence recorded by the cron process, separate from this page's web-process readiness check.</p>
     <p><strong>One outbound connection.</strong> Workspace records and ordinary integration updates use the signed event URL and credentials configured above. API-key pull reconciliation remains a receiver-driven recovery path.</p>
     <?php if($portalIssues):?>
@@ -157,6 +160,18 @@ if (!empty($config['enabled'])) {
           <input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="retry-client-portal-revocations">
           <button class="btn">Retry failed revocations (<?=(int)$portalCounts['failed_revocations']?>)</button>
         </form>
+        <?php if((int)($portalCounts['failed_portal']??0)>0):?>
+          <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Has the current External Operations receiver been repaired and verified? This queues fresh complete snapshots for up to 25 affected active workspaces. It does not replay or delete failed payloads.')">
+            <input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="recover-client-portal-deliveries">
+            <button class="btn" <?=empty($portalStatus['ready'])?'disabled aria-disabled="true" title="Repair and verify the current receiver first"':''?>>Queue replacement snapshots</button>
+          </form>
+        <?php endif;?>
+        <?php if((int)($portalCounts['failed_backfill']??0)>0):?>
+          <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Retry up to 25 terminal historical roots now? Existing portal revocations and administrator access choices will be preserved.')">
+            <input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="retry-client-portal-backfill">
+            <button class="btn">Retry failed historical roots (<?=(int)$portalCounts['failed_backfill']?>)</button>
+          </form>
+        <?php endif;?>
       <?php endif;?>
     <?php endif;?>
   <?php endif;?>

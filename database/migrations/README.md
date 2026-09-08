@@ -92,3 +92,8 @@ delivery unchanged and does not enable Ed25519, create another receiver, or
 store private key material outside the encrypted credentials value. Ed25519 is
 staged and explicitly activated by an administrator only after the existing
 receiver has registered the displayed public key.
+
+Migration `0087_portal_projection_recovery.sql` records bounded, audited
+replacement-snapshot recovery for terminal workspace projection deliveries.
+Failed payloads remain immutable; a recovery becomes complete only after the
+receiver acknowledges the replacement generation's activation record.

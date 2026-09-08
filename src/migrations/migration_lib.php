@@ -254,6 +254,7 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'portal_service_assignment_projection_records' => 80,
         'portal_service_assignment_projection_receipts' => 80,
         'portal_client_provisioning_backfill' => 83,
+        'portal_projection_recoveries' => 87,
     ];
 
     return array_values(array_filter(
@@ -355,6 +356,13 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'state' => 83, 'attempts' => 83, 'next_attempt_at' => 83,
             'last_error_code' => 83, 'completed_at' => 83,
         ],
+        'portal_projection_recoveries' => [
+            'integration_profile_id' => 87, 'workspace_public_id' => 87,
+            'route_type' => 87, 'failed_row_cutoff_id' => 87,
+            'source_generation' => 87, 'activation_delivery_id' => 87,
+            'state' => 87, 'requested_by' => 87, 'completed_at' => 87,
+            'failed_at' => 87, 'last_error_code' => 87,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -435,6 +443,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'portal_service_assignments', 'portal_service_assignment_projection_state',
         'portal_service_assignment_projection_records', 'portal_service_assignment_projection_receipts',
         'portal_client_provisioning_backfill',
+        'portal_projection_recoveries',
         'managed_delivery_intent_outbox',
         'document_number_sequences',
     ];
@@ -489,6 +498,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'portal_client_access_roots' => ['root_type','root_public_id','access_state','state_reason','last_reconciled_at','updated_by'],
         'portal_client_login_eligibility' => ['client_id','portal_principal_id','manual_state','eligibility_status','review_reason','canonical_email','source_version','last_reconciled_at','updated_by'],
         'portal_client_provisioning_backfill' => ['integration_profile_id','root_type','root_public_id','contract_fingerprint','state','attempts','next_attempt_at','last_error_code','completed_at'],
+        'portal_projection_recoveries' => ['integration_profile_id','workspace_public_id','route_type','failed_row_cutoff_id','source_generation','activation_delivery_id','state','requested_by','completed_at','failed_at','last_error_code'],
         'managed_delivery_intent_outbox' => ['delivery_id','intent_type','target_delivery_id','integration_profile_id','destination_url','pinned_application_key','signing_key_id','signing_contract_hash','delivery_timeout_seconds','delivery_max_attempts','actor_user_id','scope_type','scope_public_id','audience_type','audience_public_id','access_mode','request_fingerprint','payload_json','attempts','next_attempt_at','claim_token','claimed_at','delivered_at','dead_lettered_at','last_http_status','last_error_code','receipt_id','revoked_at'],
         'notification_relay_queue' => ['api_key_id', 'action_name', 'template_name', 'recipient_alias', 'variables_json', 'idempotency_hash', 'payload_hash', 'status', 'attempt_count', 'next_attempt_at', 'lock_token'],
         'notification_relay_events' => ['queue_id', 'queue_reference', 'api_key_id', 'event_type', 'status', 'attempt_count', 'error_code'],

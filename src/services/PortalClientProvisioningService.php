@@ -183,9 +183,10 @@ final class PortalClientProvisioningService
     {
         $profile = $this->boundProfile($pdo);
         if (!$profile && $applicationKey !== '') $profile = $this->profile($pdo, $applicationKey);
-        $counts = ['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_revocations'=>0];
-        $deliveryDiagnostics = ['oldest_pending_age_seconds'=>null,'retries'=>[]];
+        $counts = ['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'failed_backfill'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_portal'=>0,'failed_revocations'=>0,'recoveries_pending'=>0];
+        $deliveryDiagnostics = ['oldest_pending_age_seconds'=>null,'retries'=>[],'terminal'=>[]];
         if ($profile) {
+            $unresolvedTerminal = $this->unresolvedTerminalSql('portal_projection_outbox');
             foreach ([
                 'active_roots' => "SELECT COUNT(*) FROM portal_client_access_roots WHERE access_state='active'",
                 'revoked_roots' => "SELECT COUNT(*) FROM portal_client_access_roots WHERE access_state='revoked'",
@@ -195,8 +196,11 @@ final class PortalClientProvisioningService
                 'active_workspaces' => 'SELECT COUNT(*) FROM portal_integration_profile_workspaces pw JOIN portal_v2_workspaces w ON w.id=pw.workspace_id WHERE pw.profile_id='.(int)$profile['id'].' AND pw.active=1 AND w.active=1',
                 'pending' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NULL',
                 'retrying' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NULL AND attempts>0',
-                'failed' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL',
+                'failed' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL AND '.$unresolvedTerminal,
+                'failed_portal' => "SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id=".(int)$profile['id']." AND route_type='portal' AND is_revocation=0 AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL AND ".$unresolvedTerminal,
                 'failed_revocations' => 'SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id='.(int)$profile['id'].' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL AND is_revocation=1',
+                'failed_backfill' => "SELECT COUNT(*) FROM portal_client_provisioning_backfill b JOIN (".$this->scopeQuery().") roots ON roots.root_type=b.root_type AND roots.root_public_id=b.root_public_id WHERE b.integration_profile_id=".(int)$profile['id']." AND b.contract_fingerprint='".$this->backfillContractFingerprint($profile)."' AND b.state='failed'",
+                'recoveries_pending' => "SELECT COUNT(*) FROM portal_projection_recoveries WHERE integration_profile_id=".(int)$profile['id']." AND state='queued'",
             ] as $key => $sql) $counts[$key] = (int)$pdo->query($sql)->fetchColumn();
             $counts['historical_remaining'] = $this->historicalRemaining($pdo, $profile);
             $deliveryDiagnostics = $this->deliveryDiagnostics($pdo, (int)$profile['id']);
@@ -256,7 +260,7 @@ final class PortalClientProvisioningService
      * Return aggregate, non-secret retry evidence. Never expose a receiver body,
      * delivery ID, destination, workspace, or an unrecognised persisted error.
      *
-     * @return array{oldest_pending_age_seconds:?int,retries:list<array{code:string,http_status:?int,attempts:int,count:int}>}
+     * @return array{oldest_pending_age_seconds:?int,retries:list<array{code:string,http_status:?int,attempts:int,count:int}>,terminal:list<array{route:string,code:string,http_status:?int,attempts:int,count:int,workspaces:int}>}
      */
     private function deliveryDiagnostics(PDO $pdo, int $profileId): array
     {
@@ -282,7 +286,84 @@ final class PortalClientProvisioningService
             $groups[$key]['count'] += (int)$row['record_count'];
         }
         usort($groups, static fn(array $left, array $right): int => $right['count'] <=> $left['count'] ?: $right['attempts'] <=> $left['attempts']);
-        return ['oldest_pending_age_seconds'=>$oldestAge,'retries'=>array_slice(array_values($groups), 0, 5)];
+        $unresolvedTerminal = $this->unresolvedTerminalSql('o');
+        $terminalStatement = $pdo->prepare("SELECT o.route_type,CASE o.last_error_code {$cases} ELSE 'terminal_failure' END AS safe_code,o.last_http_status,MAX(o.attempts) AS attempts,COUNT(*) AS record_count,COUNT(DISTINCT o.workspace_public_id) AS workspace_count FROM portal_projection_outbox o WHERE o.integration_profile_id=? AND o.delivered_at IS NULL AND o.dead_lettered_at IS NOT NULL AND {$unresolvedTerminal} GROUP BY o.route_type,safe_code,o.last_http_status ORDER BY record_count DESC,attempts DESC,o.route_type,safe_code,o.last_http_status LIMIT 8");
+        $terminalStatement->execute([$profileId]);
+        $terminal=[];
+        foreach($terminalStatement->fetchAll(PDO::FETCH_ASSOC)as$row)$terminal[]=[
+            'route'=>in_array((string)$row['route_type'],['portal','catalog','service_assignments'],true)?(string)$row['route_type']:'unknown',
+            'code'=>(string)($row['safe_code']??'terminal_failure'),
+            'http_status'=>isset($row['last_http_status'])&&$row['last_http_status']!==null?(int)$row['last_http_status']:null,
+            'attempts'=>(int)$row['attempts'],'count'=>(int)$row['record_count'],'workspaces'=>(int)$row['workspace_count'],
+        ];
+        return ['oldest_pending_age_seconds'=>$oldestAge,'retries'=>array_slice(array_values($groups), 0, 5),'terminal'=>$terminal];
+    }
+
+    /**
+     * Queue fresh complete generations for current linked workspaces whose
+     * normal portal deliveries exhausted retries. Failed payloads are never
+     * replayed or altered; completion is recorded by the sender only after the
+     * replacement activation is acknowledged.
+     *
+     * @return array{queued:int,failed_records:int}
+     */
+    public function recoverFailedPortalWorkspaces(PDO $pdo,string $applicationKey,int $actorId,int $limit=25):array
+    {
+        if($pdo->inTransaction())throw new DomainException('Workspace recovery owns its transaction.');
+        if($limit<1||$limit>25)throw new DomainException('Workspace recovery batch size must be between 1 and 25.');
+        $status=$this->status($pdo,$applicationKey);
+        if(empty($status['ready']))throw new DomainException('Repair and verify the External Operations connection before recovering failed workspaces.');
+        $profile=$this->requireReadyProfile($pdo,$applicationKey);$profileId=(int)$profile['id'];
+        $expectedContract=$this->backfillContractFingerprint($profile);
+        try{
+            $pdo->beginTransaction();
+            $profile=PortalProjectionService::lockProfileContract($pdo,$profileId);
+            if($this->backfillContractFingerprint($profile)!==$expectedContract)throw new DomainException('The receiver contract changed while workspace recovery was starting. Retry after verifying the connection.');
+            $lockedConfig=(new ExternalOpsConfigService())->load($pdo);$lockedRuntime=(new PortalProjectionDeliveryConfigService())->runtime($pdo);
+            if(empty($this->activationPreflight($lockedConfig,$profile,$lockedRuntime)['ready']))throw new DomainException('The External Operations connection stopped being ready while workspace recovery was starting.');
+            $unresolved=$this->unresolvedTerminalSql('o');
+            $sql="SELECT o.workspace_public_id,MAX(o.id) failed_row_cutoff_id,COUNT(*) failed_record_count
+                FROM portal_projection_outbox o
+                JOIN portal_v2_workspaces w ON w.public_id=o.workspace_public_id AND w.active=1
+                JOIN portal_integration_profile_workspaces pw ON pw.profile_id=o.integration_profile_id AND pw.workspace_id=w.id AND pw.active=1
+                WHERE o.integration_profile_id=? AND o.route_type='portal' AND o.is_revocation=0
+                  AND o.delivered_at IS NULL AND o.dead_lettered_at IS NOT NULL AND o.destination_url=?
+                  AND {$unresolved}
+                  AND NOT EXISTS(SELECT 1 FROM portal_projection_recoveries active_recovery WHERE active_recovery.integration_profile_id=o.integration_profile_id AND active_recovery.workspace_public_id=o.workspace_public_id AND active_recovery.route_type='portal' AND active_recovery.state='queued')
+                GROUP BY o.workspace_public_id ORDER BY MIN(o.id) LIMIT ".(int)$limit;
+            $candidates=$pdo->prepare($sql);$candidates->execute([$profileId,(string)$profile['portal_route']]);
+            $projection=new PortalProjectionService();$queued=0;$failedRecords=0;
+            foreach($candidates->fetchAll(PDO::FETCH_ASSOC)as$candidate){
+                $snapshot=$projection->queueWorkspaceSnapshot($pdo,$profile,(string)$candidate['workspace_public_id']);
+                $pdo->prepare("INSERT INTO portal_projection_recoveries(integration_profile_id,workspace_public_id,route_type,failed_row_cutoff_id,source_generation,activation_delivery_id,state,requested_by)VALUES(?,?,'portal',?,?,?,'queued',?)")
+                    ->execute([$profileId,(string)$candidate['workspace_public_id'],(int)$candidate['failed_row_cutoff_id'],(string)$snapshot['sourceGeneration'],(string)$snapshot['activationDeliveryId'],$actorId>0?$actorId:null]);
+                $queued++;$failedRecords+=(int)$candidate['failed_record_count'];
+            }
+            if($queued<1)throw new DomainException('There are no recoverable failed workspace deliveries on the current receiver contract.');
+            $this->audit($pdo,$profileId,'portal.client_provisioning.recovery_queued','profile',(string)$profileId,['actor_id'=>$actorId,'workspace_count'=>$queued,'failed_record_count'=>$failedRecords,'batch_limit'=>$limit]);
+            $pdo->commit();return['queued'=>$queued,'failed_records'=>$failedRecords];
+        }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+    }
+
+    public function retryFailedBackfillRoots(PDO $pdo,string $applicationKey,int $actorId,int $limit=25):int
+    {
+        if($pdo->inTransaction())throw new DomainException('Historical retry owns its transaction.');
+        if($limit<1||$limit>100)throw new DomainException('Historical retry batch size must be between 1 and 100.');
+        if(empty($this->status($pdo,$applicationKey)['ready']))throw new DomainException('Repair and verify the External Operations connection before retrying historical roots.');
+        $profile=$this->requireReadyProfile($pdo,$applicationKey);$profileId=(int)$profile['id'];$fingerprint=$this->backfillContractFingerprint($profile);
+        try{
+            $pdo->beginTransaction();$lockedProfile=PortalProjectionService::lockProfileContract($pdo,$profileId);
+            if($this->backfillContractFingerprint($lockedProfile)!==$fingerprint)throw new DomainException('The receiver contract changed while historical retry was starting. Retry after verifying the connection.');
+            $lockedConfig=(new ExternalOpsConfigService())->load($pdo);$lockedRuntime=(new PortalProjectionDeliveryConfigService())->runtime($pdo);
+            if(empty($this->activationPreflight($lockedConfig,$lockedProfile,$lockedRuntime)['ready']))throw new DomainException('The External Operations connection stopped being ready while historical retry was starting.');
+            $select=$pdo->prepare("SELECT b.root_type,b.root_public_id FROM portal_client_provisioning_backfill b JOIN (".$this->scopeQuery().") roots ON roots.root_type=b.root_type AND roots.root_public_id=b.root_public_id WHERE b.integration_profile_id=? AND b.contract_fingerprint=? AND b.state='failed' ORDER BY b.root_type,b.root_public_id LIMIT ".(int)$limit);
+            $select->execute([$profileId,$fingerprint]);$rows=$select->fetchAll(PDO::FETCH_ASSOC);
+            if($rows===[])throw new DomainException('There are no terminal historical roots to retry.');
+            $retry=$pdo->prepare("UPDATE portal_client_provisioning_backfill SET state='retry',attempts=0,next_attempt_at=CURRENT_TIMESTAMP,last_error_code='operator_retry_requested',completed_at=NULL WHERE integration_profile_id=? AND contract_fingerprint=? AND root_type=? AND root_public_id=? AND state='failed'");
+            $count=0;foreach($rows as$row){$retry->execute([$profileId,$fingerprint,(string)$row['root_type'],(string)$row['root_public_id']]);$count+=$retry->rowCount();}
+            $this->audit($pdo,$profileId,'portal.client_provisioning.backfill_requeued','profile',(string)$profileId,['actor_id'=>$actorId,'retry_count'=>$count,'batch_limit'=>$limit]);
+            $pdo->commit();return$count;
+        }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
     }
 
     /**
@@ -624,6 +705,11 @@ final class PortalClientProvisioningService
     private function boundProfile(PDO $pdo):array|false{$s=$pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=?');$s->execute([self::BOUND_PROFILE_KEY]);$id=(int)($s->fetchColumn()?:0);return$id>0?$this->profileById($pdo,$id):false;}
     private function bindProfile(PDO $pdo,int $profileId):void{$sql=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='sqlite'?'INSERT INTO app_config(organization_id,config_key,config_value)VALUES(0,?,?) ON CONFLICT(organization_id,config_key)DO UPDATE SET config_value=excluded.config_value':'INSERT INTO app_config(organization_id,config_key,config_value)VALUES(0,?,?) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value)';$pdo->prepare($sql)->execute([self::BOUND_PROFILE_KEY,(string)$profileId]);}
     private function undeliveredCount(PDO $pdo,int $profileId):int{$s=$pdo->prepare('SELECT COUNT(*) FROM portal_projection_outbox WHERE integration_profile_id=? AND delivered_at IS NULL AND (is_revocation=1 OR dead_lettered_at IS NULL)');$s->execute([$profileId]);return(int)$s->fetchColumn();}
+    private function unresolvedTerminalSql(string $alias):string
+    {
+        if(!in_array($alias,['o','portal_projection_outbox'],true))throw new DomainException('Terminal-delivery query alias is invalid.');
+        return "({$alias}.is_revocation=1 OR {$alias}.route_type<>'portal' OR NOT EXISTS(SELECT 1 FROM portal_projection_recoveries completed_recovery WHERE completed_recovery.integration_profile_id={$alias}.integration_profile_id AND completed_recovery.workspace_public_id={$alias}.workspace_public_id AND completed_recovery.route_type='portal' AND completed_recovery.state='complete' AND completed_recovery.failed_row_cutoff_id>={$alias}.id))";
+    }
     private function resolveRetiredNormalRows(PDO $pdo,int $profileId,int $actorId):void
     {
         // Once every live delivery and revocation has drained, old normal rows

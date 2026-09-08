@@ -86,9 +86,10 @@ after 1, 2, 4, and 8 minutes, stopping after five attempts. Logs include counts;
 root records include only the stable `storage_failure`/`projection_failure`
 category and a diagnostic hash, not raw customer data or credentials. Terminal
 failures keep cron health failed until repaired. After correcting the cause,
-the existing audited reconcile/repair action also clears its backfill failure
-by marking successfully reconciled roots complete. Never remove access-control
-or eligibility rows to retry: those preserve manual revocations.
+use **Retry failed historical roots** to return a bounded batch to the normal
+reconciliation schedule. The action is audited and resets only terminal rows
+for the current producer contract. Never remove access-control or eligibility
+rows to retry: those preserve manual revocations.
 
 Project Alpha automatically publishes login eligibility for an active human
 contact only when it has one valid canonical email that is unique among active
@@ -169,6 +170,15 @@ batch**. Both actions use the same External Operations connection, reconcile a
 bounded and restart-safe batch (25 and 100 roots respectively), and then send
 due ordinary and portal events within the request deadline. Repeat either
 action while historical roots remain; scheduled jobs continue the same work.
+
+Terminal normal workspace deliveries are not replayed by **Sync now**. Inspect
+the allowlisted aggregate failure code and HTTP status, repair and verify the
+unchanged receiver, then use **Queue replacement snapshots**. The action queues
+fresh complete generations for at most 25 currently active linked workspaces.
+The failed payloads remain immutable evidence. Their failure is considered
+resolved only after the receiver acknowledges the corresponding replacement
+activation. Failed revocations use their separate audited retry action and are
+never consumed by snapshot recovery.
 
 The status card reports the one **External Operations connection** and whether
 client portal events are ready on that connection. API-key pull reconciliation
