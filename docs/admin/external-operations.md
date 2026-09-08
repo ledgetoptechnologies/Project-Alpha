@@ -282,12 +282,13 @@ If the web process is ready but scheduled deliveries remain queued:
    services must use the same `/var/www/config` volume and the same effective
    `APP_ENCRYPTION_KEY`. These codes indicate unavailable delivery configuration;
    they do not by themselves prove a particular missing setting or key mismatch.
-4. An explicitly supplied encryption key takes precedence over the persisted
-   key file. Cron must not invent an independent temporary key when the shared
-   file is delayed. Check for a missing mount, an empty/unreadable key file, or
-   a different explicitly configured key. Preserve the working web key and its
-   secure backup. Never print key values, environment dumps or credentials in
-   logs, screenshots, support tickets or chat.
+4. An explicitly supplied encryption key must match the persisted key file;
+   either service stops rather than using a conflicting key. Cron must not
+   invent an independent temporary key when the shared file is delayed. Check
+   for a missing mount, an empty/unreadable key file, or a different explicitly
+   configured key. Preserve the working web key and its secure backup. Never
+   print key values, environment dumps or credentials in logs, screenshots,
+   support tickets or chat.
 5. After correcting the deployment configuration, recreate only the affected
    scheduled worker. Verify successful deliveries, declining pending counts,
    receiver snapshot activation, and preserved administrator revocations.
