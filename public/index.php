@@ -35,6 +35,13 @@ if ($requestPath === '/api/v1/ops/snapshot/') {
 if ($requestPath === '/api/v2/ops/snapshot/') {
     $requestPath = '/api/v2/ops/snapshot';
 }
+require_once __DIR__ . '/../src/utils/project_management_clean_route.php';
+$projectManagementAlias = project_management_clean_route($requestPath, $_SERVER['REQUEST_METHOD'] ?? 'GET', $_GET);
+if ($projectManagementAlias === 405) {
+    header('Allow: GET, HEAD');
+    http_response_code(405);
+    exit;
+}
 $moduleRoutes = [
     '/health/ready' => 'health/ready',
     '/time' => 'workforce/time',

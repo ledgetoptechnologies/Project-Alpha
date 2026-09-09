@@ -7,6 +7,17 @@ description: Assignment-driven synchronization from Project Alpha to a deploymen
 
 This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Projects, Operations, Tasks, teams, and assignments.
 
+## Reviewed project-management link
+
+Project Alpha exposes `https://<project-alpha-host>/projects` (and the
+equivalent trailing-slash form) as its query-free project-management entry
+point for reviewed external links. It dispatches only to the existing Projects
+list controller, so the normal Project Alpha session and `projects.view`
+authorization still apply. `GET` and `HEAD` are the only accepted methods;
+`page` query input cannot select another controller. Existing list filters may
+remain in the query string, but external integrations should register the
+static `/projects` URL without a query or contextual identifier.
+
 ## Company structure and work planning
 
 A **Business Unit** represents a division, branch, region, department, or crew. Manage Units under **Settings > Business > Business units & divisions**. Add existing PA users as Members or Heads and choose one primary Unit per user. These are organizational labels: they do not grant PA permissions, workforce review scope, or external-application access.
