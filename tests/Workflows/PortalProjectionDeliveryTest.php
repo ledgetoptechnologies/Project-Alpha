@@ -89,6 +89,35 @@ final class PortalProjectionDeliveryTest extends TestCase
         self::assertStringNotContainsString('secret host detail', (string)$pdo->query('SELECT last_error_code FROM portal_projection_outbox WHERE id=1')->fetchColumn());
     }
 
+    public function testUnreadableSharedCredentialsDoNotClaimOrBurnQueuedPortalDelivery(): void
+    {
+        $pdo = $this->deliveryDatabase();
+        $pdo->exec('UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1 WHERE id=1');
+        $this->insertDelivery($pdo, 1, 'activation-waits-for-credentials', '{"kind":"snapshot.activate"}');
+        $encrypted = (string)$pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->fetchColumn();
+        $pdo->prepare("UPDATE app_config SET config_value='unreadable-ciphertext' WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->execute();
+        $transportCalled = false;
+
+        $summary = (new PortalProjectionOutboxSender())->deliverDue($pdo, 10, static function () use (&$transportCalled): array {
+            $transportCalled = true;
+            return ['status'=>204];
+        });
+
+        self::assertSame(['processed'=>0, 'delivered'=>0, 'failed'=>0, 'dead_lettered'=>0], $summary);
+        self::assertFalse($transportCalled);
+        self::assertSame(['attempts'=>0, 'dead'=>null, 'claimed'=>null], $pdo->query("SELECT attempts,dead_lettered_at dead,claimed_at claimed FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetch(PDO::FETCH_ASSOC));
+
+        $pdo->prepare("UPDATE app_config SET config_value=? WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->execute([$encrypted]);
+        $pdo->exec("UPDATE app_config SET config_value='0' WHERE organization_id=0 AND config_key='external_ops_enabled'");
+        self::assertSame(['processed'=>0, 'delivered'=>0, 'failed'=>0, 'dead_lettered'=>0], (new PortalProjectionOutboxSender())->deliverDue($pdo, 10));
+        self::assertSame(0, (int)$pdo->query("SELECT attempts FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetchColumn());
+
+        $pdo->exec("UPDATE app_config SET config_value='1' WHERE organization_id=0 AND config_key='external_ops_enabled'");
+        $summary = (new PortalProjectionOutboxSender())->deliverDue($pdo, 10, static fn(): array => ['status'=>204]);
+        self::assertSame(['processed'=>1, 'delivered'=>1, 'failed'=>0, 'dead_lettered'=>0], $summary);
+        self::assertNotNull($pdo->query("SELECT delivered_at FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetchColumn());
+    }
+
     public function testEveryProjectionKindUsesTheExactExternalOperationsEndpointAndStrictEnvelope(): void
     {
         foreach(['portal','catalog','service_assignments'] as $kind){

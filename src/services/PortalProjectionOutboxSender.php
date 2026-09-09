@@ -25,11 +25,24 @@ final class PortalProjectionOutboxSender
         $limit=max(1,min(100,$limit));$deadline=microtime(true)+max(1,min(300,$maxRuntimeSeconds));$summary=['processed'=>0,'delivered'=>0,'failed'=>0,'dead_lettered'=>0];$transport??=[$this,'curlTransport'];
         for($index=0;$index<$limit;$index++){
             if(microtime(true)>=$deadline)break;
+            // A cron container can temporarily lack the shared encrypted
+            // credentials while the web process is ready. Do not claim a
+            // valid ordered projection until its shared transport is usable:
+            // claiming here would turn a configuration pause into retries or a
+            // terminal delivery failure without ever contacting the receiver.
+            if (!$this->sharedTransportReady($pdo)) break;
             $claim=$this->claimNext($pdo);if($claim===null)break;$summary['processed']++;
             try{$response=$this->sendClaim($pdo,$claim,$transport);$status=(int)($response['status']??0);if($status>=200&&$status<300){$this->finish($pdo,$claim,true,$status,null,false);$summary['delivered']++;continue;}
                 $code=$status>=300&&$status<400?'redirect_rejected':($status===429?'http_429':($status>=400&&$status<500?'http_4xx':($status>=500?'http_5xx':'transport_failed')));$dead=$this->shouldDeadLetter($claim,$status);$this->finish($pdo,$claim,false,$status,$code,$dead);$dead?$summary['dead_lettered']++:$summary['failed']++;
             }catch(Throwable$error){$code=$this->safeErrorCode($error);$dead=((int)$claim['attempts']+1)>=(int)$claim['delivery_max_attempts'];$this->finish($pdo,$claim,false,0,$code,$dead);$dead?$summary['dead_lettered']++:$summary['failed']++;}
         }return$summary;
+    }
+
+    private function sharedTransportReady(PDO $pdo): bool
+    {
+        $config = (new ExternalOpsConfigService())->load($pdo);
+        $issues = (array)($config['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($config));
+        return !empty($config['configured_enabled']) && $issues === [];
     }
 
     /** @return array<string,mixed>|null */

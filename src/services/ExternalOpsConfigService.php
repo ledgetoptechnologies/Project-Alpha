@@ -84,6 +84,31 @@ final class ExternalOpsConfigService
         ];
     }
 
+    /**
+     * Non-disclosing cron diagnostic for encrypted delivery configuration.
+     * It deliberately exposes neither key material, ciphertext, nor fields
+     * within decrypted credentials.
+     *
+     * @return array{runtime_key:string,credential_record:string}
+     */
+    public function safeEncryptionDiagnostic(PDO $pdo): array
+    {
+        $statement = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=? LIMIT 1');
+        $statement->execute([self::CREDENTIALS_KEY]);
+        $encrypted = trim((string)($statement->fetchColumn() ?: ''));
+        if ($encrypted === '') {
+            return [
+                'runtime_key' => getenv('APP_ENCRYPTION_KEY') === false || getenv('APP_ENCRYPTION_KEY') === '' ? 'missing' : 'present',
+                'credential_record' => 'absent',
+            ];
+        }
+        $decoded = $this->decodeCredentials($encrypted);
+        return [
+            'runtime_key' => getenv('APP_ENCRYPTION_KEY') === false || getenv('APP_ENCRYPTION_KEY') === '' ? 'missing' : 'present',
+            'credential_record' => $decoded['unreadable'] ? 'unreadable' : 'readable',
+        ];
+    }
+
     /** @param array<string,mixed> $input @return array<string,mixed> */
     public function save(PDO $pdo, array $input): array
     {

@@ -7,6 +7,17 @@ description: Assignment-driven synchronization from Project Alpha to a deploymen
 
 This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Projects, Operations, Tasks, teams, and assignments.
 
+## Reviewed project-management link
+
+Project Alpha exposes `https://<project-alpha-host>/projects` (and the
+equivalent trailing-slash form) as its query-free project-management entry
+point for reviewed external links. It dispatches only to the existing Projects
+list controller, so the normal Project Alpha session and `projects.view`
+authorization still apply. `GET` and `HEAD` are the only accepted methods;
+`page` query input cannot select another controller. Existing list filters may
+remain in the query string, but external integrations should register the
+static `/projects` URL without a query or contextual identifier.
+
 ## Company structure and work planning
 
 A **Business Unit** represents a division, branch, region, department, or crew. Manage Units under **Settings > Business > Business units & divisions**. Add existing PA users as Members or Heads and choose one primary Unit per user. These are organizational labels: they do not grant PA permissions, workforce review scope, or external-application access.
@@ -288,6 +299,14 @@ If the web process is ready but scheduled deliveries remain queued:
    ready but cron reports a blocker, recreate the cron service from the current
    release while preserving the shared configuration volume, then verify its
    non-secret startup marker before investigating the receiver.
+   When the cron preflight includes `encryption_runtime_key` and
+   `encrypted_external_credentials`, use only those categories: `missing` /
+   `present` for the runtime key and `absent`, `readable`, or `unreadable` for
+   the encrypted credential record. Do not collect or share key values,
+   ciphertext, hashes, or credential fields.
+   While those delivery prerequisites are unavailable, Project Alpha leaves
+   queued workspace projections unclaimed: a temporary cron configuration
+   mismatch must not consume retries or dead-letter a valid snapshot activation.
 4. An explicitly supplied encryption key must match the persisted key file;
    either service stops rather than using a conflicting key. Cron must not
    invent an independent temporary key when the shared file is delayed. Check

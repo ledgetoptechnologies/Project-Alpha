@@ -9,6 +9,12 @@
     RewriteRule ^api/v1/ops/snapshot/?$ index.php [QSA,L]
     RewriteRule ^api/v2/ops/snapshot/?$ index.php [QSA,L]
 
+    # Reviewed external project-management links use this query-free entry
+    # point. The front controller forces the existing project-list route and
+    # rejects non-read methods; query parameters remain available only for the
+    # established list filters.
+    RewriteRule ^projects/?$ index.php [QSA,L]
+
     # Container readiness must enter PA's front controller so schema health is
     # checked before Apache reports the application as available.
     RewriteRule ^health/ready/?$ index.php?page=health/ready [QSA,L]
