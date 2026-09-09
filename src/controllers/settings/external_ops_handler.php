@@ -179,7 +179,11 @@ try {
         }
         $summary=(new ExternalOpsSyncOrchestrator())->run($pdo,25,50,50,null,null,20);
         $reconciliation=$summary['reconciliation'];$ordinary=$summary['ordinary'];$portal=$summary['portal'];
-        $message=sprintf('Synchronization completed a bounded pass: %d historical roots completed, %d remaining; ordinary events %d delivered / %d retrying; portal events %d delivered / %d retrying / %d failed.',$reconciliation['completed'],$reconciliation['remaining'],$ordinary['delivered'],$ordinary['failed'],$portal['delivered'],$portal['failed'],$portal['dead_lettered']);
+        if (empty($summary['ready'])) {
+            $message = 'Synchronization paused: workspace producer preflight is not ready. No historical workspace roots were provisioned or delivered.';
+        } else {
+            $message=sprintf('Synchronization completed a bounded pass: %d historical roots completed, %d remaining; ordinary events %d delivered / %d retrying; portal events %d delivered / %d retrying / %d failed.',$reconciliation['completed'],$reconciliation['remaining'],$ordinary['delivered'],$ordinary['failed'],$portal['delivered'],$portal['failed'],$portal['dead_lettered']);
+        }
     } else {
         throw new DomainException('Unknown integration action.');
     }

@@ -304,6 +304,9 @@ If the web process is ready but scheduled deliveries remain queued:
    `present` for the runtime key and `absent`, `readable`, or `unreadable` for
    the encrypted credential record. Do not collect or share key values,
    ciphertext, hashes, or credential fields.
+   While those delivery prerequisites are unavailable, Project Alpha leaves
+   queued workspace projections unclaimed: a temporary cron configuration
+   mismatch must not consume retries or dead-letter a valid snapshot activation.
 4. An explicitly supplied encryption key must match the persisted key file;
    either service stops rather than using a conflicting key. Cron must not
    invent an independent temporary key when the shared file is delayed. Check

@@ -214,6 +214,8 @@ final class ExternalOpsReadinessTest extends TestCase
             strpos($handler, 'elseif ($action === \'send-now\')')
         );
         self::assertStringContainsString("\$config['delivery_ready']", $handler);
+        self::assertStringContainsString("if (empty(\$summary['ready']))", $handler);
+        self::assertStringContainsString('Synchronization paused: workspace producer preflight is not ready.', $handler);
         self::assertStringContainsString("\$config['delivery_ready']", $cron);
         self::assertStringContainsString('Outbound delivery paused:', $cron);
         self::assertStringContainsString('pa_external_ops_application_key($pdo)', $snapshot);
