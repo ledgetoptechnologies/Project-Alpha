@@ -169,3 +169,18 @@ app_encryption_key_prepare_cron() {
 cron_load_app_encryption_key() {
   app_encryption_key_prepare_cron "$@"
 }
+
+# Cron drops the container environment. Serialize only the existing approved
+# variable families into a shell-readable file so scheduled PHP processes keep
+# the verified shared application key without exposing it in logs.
+cron_write_runtime_environment() {
+  local environment_file="$1" name value
+  : > "$environment_file" || return 1
+  while IFS='=' read -r name value; do
+    case "$name" in
+      MYSQL_*|DB_*|APP_*|STRIPE_*|SMTP_*|BACKUP_*|NOTIFICATION_RELAY_*)
+        printf 'export %s=%q\n' "$name" "$value" >> "$environment_file" || return 1
+        ;;
+    esac
+  done < <(printenv)
+}

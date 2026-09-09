@@ -200,6 +200,15 @@ web_and_cron_share_one_volume_contract() {
   assert_equal 'shared-volume-sentinel' "$APP_ENCRYPTION_KEY"
 }
 
+cron_environment_keeps_verified_application_key() {
+  local environment_file="${TEST_DIR}/cron-environment" expected='cron environment sentinel $;! []'
+  export APP_ENCRYPTION_KEY="$expected"
+  cron_write_runtime_environment "$environment_file"
+  if ! env -i PATH="$PATH" bash -c 'source "$1"; [ "${APP_ENCRYPTION_KEY:-}" = "$2" ] || exit 1; php -r "exit((\$_SERVER[\"APP_ENCRYPTION_KEY\"] ?? \"\") === \$argv[1] ? 0 : 1);" "$2"' _ "$environment_file" "$expected" >/dev/null 2>&1; then
+    fail 'cron environment did not preserve the verified application key for PHP'
+  fi
+}
+
 explicit_key_is_persisted_atomically_when_absent
 matching_explicit_key_is_accepted
 broad_persisted_key_is_restricted_for_web_and_cron
@@ -211,4 +220,5 @@ delayed_shared_key_is_loaded
 missing_or_empty_key_fails_without_leaking_a_key
 generated_and_persisted_key_is_reused
 web_and_cron_share_one_volume_contract
+cron_environment_keeps_verified_application_key
 echo 'PASS: cron encryption-key resolution'
