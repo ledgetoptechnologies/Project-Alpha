@@ -22,6 +22,10 @@ try {
     );
     $delivery=(new PortalProjectionOutboxSender())->deliverDue($pdo,50,null,20);
     $preflightCodes=(array)($summary['preflight_codes']??[]);
+    $encryptionDiagnostic = null;
+    if (in_array('service_authentication', $preflightCodes, true) || in_array('event_signing', $preflightCodes, true)) {
+        $encryptionDiagnostic = (new ExternalOpsConfigService())->safeEncryptionDiagnostic($pdo);
+    }
     $message=sprintf(
         'Activation %s (%s); ready %s; considered %d; completed %d; retrying %d; failed %d; remaining %d; portal delivered %d; portal retrying %d; portal dead-lettered %d',
         $activation['attempted']?'checked':'unchanged',
@@ -37,6 +41,10 @@ try {
         $delivery['dead_lettered']
     );
     if($preflightCodes!==[])$message.='; preflight_codes='.implode(',',$preflightCodes);
+    if ($encryptionDiagnostic !== null) {
+        $message .= '; encryption_runtime_key=' . $encryptionDiagnostic['runtime_key']
+            . '; encrypted_external_credentials=' . $encryptionDiagnostic['credential_record'];
+    }
     if ($summary['failed']>0 || $delivery['dead_lettered']>0) {
         cron_state_mark_failure($pdo,$jobName,new RuntimeException($message.'; repair the root failure and run the audited reconcile action.'));
     } else {

@@ -87,6 +87,41 @@ final class ExternalOpsReadinessTest extends TestCase
         self::assertSame('', $config['access_client_secret']);
         self::assertSame('', $config['hmac_secret']);
     }
+
+    public function testSafeEncryptionDiagnosticUsesOnlyFixedCategories(): void
+    {
+        $previousKey = getenv('APP_ENCRYPTION_KEY');
+        putenv('APP_ENCRYPTION_KEY');
+        try {
+            self::assertSame(
+                ['runtime_key' => 'missing', 'credential_record' => 'absent'],
+                (new ExternalOpsConfigService())->safeEncryptionDiagnostic($this->pdo)
+            );
+            $this->pdo->prepare('INSERT INTO app_config (organization_id, config_key, config_value) VALUES (0, ?, ?)')
+                ->execute(['external_ops_credentials_enc', 'not-a-valid-envelope']);
+            self::assertSame(
+                ['runtime_key' => 'missing', 'credential_record' => 'unreadable'],
+                (new ExternalOpsConfigService())->safeEncryptionDiagnostic($this->pdo)
+            );
+            require_once dirname(__DIR__, 2) . '/src/utils/crypto.php';
+            putenv('APP_ENCRYPTION_KEY=external-ops-diagnostic-correct-key');
+            $encrypted = crypto_encrypt('{"diagnostic":"opaque"}');
+            self::assertIsString($encrypted);
+            $this->pdo->prepare('UPDATE app_config SET config_value=? WHERE organization_id=0 AND config_key=?')
+                ->execute([$encrypted, 'external_ops_credentials_enc']);
+            self::assertSame(
+                ['runtime_key' => 'present', 'credential_record' => 'readable'],
+                (new ExternalOpsConfigService())->safeEncryptionDiagnostic($this->pdo)
+            );
+            putenv('APP_ENCRYPTION_KEY=external-ops-diagnostic-wrong-key');
+            self::assertSame(
+                ['runtime_key' => 'present', 'credential_record' => 'unreadable'],
+                (new ExternalOpsConfigService())->safeEncryptionDiagnostic($this->pdo)
+            );
+        } finally {
+            $previousKey === false ? putenv('APP_ENCRYPTION_KEY') : putenv('APP_ENCRYPTION_KEY=' . $previousKey);
+        }
+    }
     public function testDisabledCompleteConfigurationIsCompleteButNotDeliveryReady(): void
     {
         require_once dirname(__DIR__, 2) . '/src/utils/crypto.php';

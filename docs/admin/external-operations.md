@@ -288,6 +288,11 @@ If the web process is ready but scheduled deliveries remain queued:
    ready but cron reports a blocker, recreate the cron service from the current
    release while preserving the shared configuration volume, then verify its
    non-secret startup marker before investigating the receiver.
+   When the cron preflight includes `encryption_runtime_key` and
+   `encrypted_external_credentials`, use only those categories: `missing` /
+   `present` for the runtime key and `absent`, `readable`, or `unreadable` for
+   the encrypted credential record. Do not collect or share key values,
+   ciphertext, hashes, or credential fields.
 4. An explicitly supplied encryption key must match the persisted key file;
    either service stops rather than using a conflicting key. Cron must not
    invent an independent temporary key when the shared file is delayed. Check
