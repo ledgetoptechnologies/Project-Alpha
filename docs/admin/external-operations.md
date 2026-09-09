@@ -282,6 +282,12 @@ If the web process is ready but scheduled deliveries remain queued:
    services must use the same `/var/www/config` volume and the same effective
    `APP_ENCRYPTION_KEY`. These codes indicate unavailable delivery configuration;
    they do not by themselves prove a particular missing setting or key mismatch.
+   Current releases also show any fixed **Cron-reported prerequisite blockers**
+   on the Connected workspace synchronization card. These are only known
+   prerequisite categories, not exception text or credential values. If web is
+   ready but cron reports a blocker, recreate the cron service from the current
+   release while preserving the shared configuration volume, then verify its
+   non-secret startup marker before investigating the receiver.
 4. An explicitly supplied encryption key must match the persisted key file;
    either service stops rather than using a conflicting key. Cron must not
    invent an independent temporary key when the shared file is delayed. Check

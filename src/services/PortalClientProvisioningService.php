@@ -34,6 +34,18 @@ final class PortalClientProvisioningService
         'http_5xx',
         'transport_failed',
     ];
+    /** These are stable, non-secret keys from activationPreflight(). */
+    private const SAFE_CRON_PREFLIGHT_CODES = [
+        'external_connection',
+        'signed_event_receiver',
+        'service_authentication',
+        'event_signing',
+        'producer_contract',
+        'producer_enabled',
+        'producer_delivery',
+        'outbound_runtime',
+        'authoritative_hooks',
+    ];
 
     /**
      * Upgrade an already-enabled External Operations connection into the
@@ -371,12 +383,12 @@ final class PortalClientProvisioningService
      * web request's readiness. The stored messages remain private; only a
      * small allowlisted state is returned.
      *
-     * @return array{reconciliation:array{state:string,last_run:?string},delivery:array{state:string,last_run:?string}}
+     * @return array{reconciliation:array{state:string,last_run:?string,preflight_codes:list<string>},delivery:array{state:string,last_run:?string}}
      */
     private function schedulerEvidence(PDO $pdo): array
     {
         $evidence = [
-            'reconciliation'=>['state'=>'unknown','last_run'=>null],
+            'reconciliation'=>['state'=>'unknown','last_run'=>null,'preflight_codes'=>[]],
             'delivery'=>['state'=>'unknown','last_run'=>null],
         ];
         try {
@@ -392,13 +404,56 @@ final class PortalClientProvisioningService
                     'success', 'completed' => 'ran',
                     default => 'unknown',
                 };
-                if ($state === 'ran' && $key === 'reconciliation' && str_contains((string)($row['result'] ?? ''), 'ready no')) $state = 'preflight_not_ready';
-                $evidence[$key] = ['state'=>$state,'last_run'=>$lastRun];
+                $preflightCodes = [];
+                if ($key === 'reconciliation') {
+                    $cronMessage = $state === 'failed'
+                        ? $this->cronFailureMessage($pdo, (string)$row['job_name'])
+                        : (string)($row['result'] ?? '');
+                    $preflightCodes = $this->safePreflightCodesFromCronResult($cronMessage);
+                    if ($state === 'ran' && str_contains($cronMessage, 'ready no')) $state = 'preflight_not_ready';
+                }
+                $evidence[$key] = $key === 'reconciliation'
+                    ? ['state'=>$state,'last_run'=>$lastRun,'preflight_codes'=>$preflightCodes]
+                    : ['state'=>$state,'last_run'=>$lastRun];
             }
         } catch (Throwable) {
             // Older schemas and isolated tests may not have cron history yet.
         }
         return $evidence;
+    }
+
+    /** @param array<string,mixed> $preflight @return list<string> */
+    private function safePreflightCodes(array $preflight): array
+    {
+        $codes = [];
+        foreach ((array)($preflight['checks'] ?? []) as $check) {
+            $key = (string)($check['key'] ?? '');
+            if (in_array($key, self::SAFE_CRON_PREFLIGHT_CODES, true) && empty($check['ready'])) $codes[] = $key;
+        }
+        return array_values(array_unique($codes));
+    }
+
+    private function cronFailureMessage(PDO $pdo, string $jobName): string
+    {
+        try {
+            $statement = $pdo->prepare('SELECT error_message FROM cron_job_runs WHERE job_name=? LIMIT 1');
+            $statement->execute([$jobName]);
+            return (string)($statement->fetchColumn() ?: '');
+        } catch (Throwable) {
+            // Older cron ledgers do not have error_message. Keep their status
+            // evidence available; only the optional safe detail is absent.
+            return '';
+        }
+    }
+
+    /** @return list<string> */
+    private function safePreflightCodesFromCronResult(string $result): array
+    {
+        if (preg_match('/(?:^|;)\\s*preflight_codes=([a-z_,]+)(?:;|$)/', $result, $matches) !== 1) return [];
+        return array_values(array_unique(array_values(array_filter(
+            explode(',', (string)$matches[1]),
+            static fn(string $code): bool => in_array($code, self::SAFE_CRON_PREFLIGHT_CODES, true)
+        ))));
     }
 
     public function retryFailedRevocations(PDO $pdo,string $applicationKey,int $actorId):int
@@ -456,14 +511,16 @@ final class PortalClientProvisioningService
      * contract is ready. Each root commits with its projection and completion
      * marker; a process crash therefore leaves no half-provisioned root.
      *
-     * @return array{ready:bool,considered:int,completed:int,retrying:int,failed:int,remaining:int}
+     * @return array{ready:bool,considered:int,completed:int,retrying:int,failed:int,remaining:int,preflight_codes:list<string>}
      */
     public function reconcileHistoricalBatch(PDO $pdo, string $applicationKey, int $limit = 25): array
     {
         if ($pdo->inTransaction()) throw new DomainException('Historical reconciliation owns its transactions.');
         if ($limit < 1 || $limit > 100) throw new DomainException('Historical reconciliation batch size must be between 1 and 100.');
-        $summary = ['ready'=>false,'considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0,'remaining'=>0];
-        if (!$this->status($pdo, $applicationKey)['ready']) {
+        $summary = ['ready'=>false,'considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0,'remaining'=>0,'preflight_codes'=>[]];
+        $initialStatus = $this->status($pdo, $applicationKey);
+        if (empty($initialStatus['ready'])) {
+            $summary['preflight_codes'] = $this->safePreflightCodes((array)($initialStatus['preflight'] ?? []));
             $profile = $this->boundProfile($pdo);
             if (!$profile && $applicationKey !== '') $profile = $this->profile($pdo, $applicationKey);
             $summary['remaining'] = $profile
@@ -489,9 +546,11 @@ final class PortalClientProvisioningService
                 PortalProjectionService::lockProfileContract($pdo, $profileId);
                 // Recheck under the shared producer lock: disable/rotation or
                 // another cron run may have raced the initial candidate query.
-                if (!$this->status($pdo, $applicationKey)['ready']) {
+                $currentStatus = $this->status($pdo, $applicationKey);
+                if (empty($currentStatus['ready'])) {
                     $pdo->rollBack();
                     $summary['ready'] = false;
+                    $summary['preflight_codes'] = $this->safePreflightCodes((array)($currentStatus['preflight'] ?? []));
                     break;
                 }
                 $state = $this->backfillState($pdo, $profileId, $scope);

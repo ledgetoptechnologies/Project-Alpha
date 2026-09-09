@@ -41,7 +41,7 @@ CREATE TABLE portal_client_provisioning_backfill(integration_profile_id INTEGER,
 CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT,PRIMARY KEY(organization_id,config_key));
  CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,delivery_id TEXT,workspace_public_id TEXT,schema_version INTEGER,source_sequence INTEGER,delivery_kind TEXT,route_type TEXT,is_revocation INTEGER DEFAULT 0,destination_url TEXT,signing_key_id TEXT,payload_json TEXT,attempts INTEGER DEFAULT 0,next_attempt_at TEXT DEFAULT '2000-01-01 00:00:00',claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
  CREATE TABLE portal_projection_recoveries(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT DEFAULT 'portal',failed_row_cutoff_id INTEGER,source_generation TEXT,activation_delivery_id TEXT UNIQUE,state TEXT DEFAULT 'queued',requested_by INTEGER,completed_at TEXT,failed_at TEXT,last_error_code TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
- CREATE TABLE cron_job_runs(job_name TEXT PRIMARY KEY,last_run TEXT,status TEXT,result TEXT);
+CREATE TABLE cron_job_runs(job_name TEXT PRIMARY KEY,last_run TEXT,status TEXT,result TEXT,error_message TEXT);
 CREATE TABLE portal_projection_state(integration_profile_id INTEGER,workspace_public_id TEXT,source_generation TEXT,source_sequence INTEGER,last_snapshot_hash TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id));
 CREATE TABLE portal_projection_resource_state(integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT,resource_type TEXT,resource_public_id TEXT,source_version TEXT,payload_hash TEXT,record_json TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id,route_type,resource_type,resource_public_id));
 CREATE TABLE portal_integration_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,api_key_id INTEGER,action TEXT,target_type TEXT,target_public_id TEXT,metadata_json TEXT);
@@ -200,13 +200,13 @@ SQL);
             self::assertNull($empty['delivery_diagnostics']['oldest_pending_age_seconds']);
             self::assertSame('unknown',$empty['scheduler']['reconciliation']['state']);
             self::assertSame('unknown',$empty['scheduler']['delivery']['state']);
-            $this->pdo->exec("INSERT INTO cron_job_runs VALUES('portal_client_provisioning_backfill',NULL,'running',NULL)");
+            $this->pdo->exec("INSERT INTO cron_job_runs(job_name,last_run,status,result,error_message) VALUES('portal_client_provisioning_backfill',NULL,'running',NULL,NULL)");
             self::assertSame('unknown',$this->service->status($this->pdo,'generic_operations')['scheduler']['reconciliation']['state']);
 
             $this->pdo->exec("INSERT INTO portal_projection_outbox(integration_profile_id,delivery_id,workspace_public_id,schema_version,source_sequence,delivery_kind,route_type,payload_json,attempts,last_http_status,last_error_code,created_at) VALUES(1,'delivery-a','workspace-private',1,1,'event','portal','{}',3,503,'http_5xx','2000-01-01 00:00:00'),(1,'delivery-b','workspace-secret',1,2,'event','portal','{}',2,0,'receiver said token=secret','2000-01-02 00:00:00'),(2,'delivery-other-profile','workspace-other',1,1,'event','portal','{}',8,429,'http_429','2000-01-01 00:00:00')");
             $retryInsert=$this->pdo->prepare("INSERT INTO portal_projection_outbox(integration_profile_id,delivery_id,workspace_public_id,schema_version,source_sequence,delivery_kind,route_type,payload_json,attempts,last_http_status,last_error_code,created_at) VALUES(1,?, 'workspace-not-returned',1,1,'event','portal','{}',1,NULL,'external-operations-delivery-unavailable','2000-01-03 00:00:00')");
             for($i=1;$i<=39;$i++)$retryInsert->execute(['delivery-retry-'.$i]);
-            $this->pdo->exec("UPDATE cron_job_runs SET last_run='2026-09-07 20:30:00',status='success',result='Activation unchanged (prerequisites_missing); ready no' WHERE job_name='portal_client_provisioning_backfill'; INSERT INTO cron_job_runs VALUES('portal_projection_outbox','2026-09-07 20:30:01','success','Processed 41; delivered 0; retrying 41; dead-lettered 0')");
+            $this->pdo->exec("UPDATE cron_job_runs SET last_run='2026-09-07 20:30:00',status='success',result='Activation unchanged (prerequisites_missing); ready no; preflight_codes=event_signing,unknown,service_authentication' WHERE job_name='portal_client_provisioning_backfill'; INSERT INTO cron_job_runs(job_name,last_run,status,result,error_message) VALUES('portal_projection_outbox','2026-09-07 20:30:01','success','Processed 41; delivered 0; retrying 41; dead-lettered 0',NULL)");
 
             $status=$this->service->status($this->pdo,'generic_operations');
 
@@ -214,6 +214,7 @@ SQL);
             self::assertSame(41,$status['counts']['retrying']);
             self::assertSame(0,$status['counts']['failed']);
             self::assertSame('preflight_not_ready',$status['scheduler']['reconciliation']['state']);
+            self::assertSame(['event_signing','service_authentication'],$status['scheduler']['reconciliation']['preflight_codes']);
             self::assertSame('ran',$status['scheduler']['delivery']['state']);
             self::assertSame(['external-operations-delivery-unavailable','http_5xx','delivery_retry'],array_column($status['delivery_diagnostics']['retries'],'code'));
             self::assertSame([null,503,0],array_column($status['delivery_diagnostics']['retries'],'http_status'));
@@ -225,8 +226,10 @@ SQL);
             self::assertStringNotContainsString('workspace-secret',$serialized);
             self::assertStringNotContainsString('receiver said token=secret',$serialized);
 
-            $this->pdo->exec("UPDATE cron_job_runs SET status='failed',result='ready no' WHERE job_name='portal_client_provisioning_backfill'");
-            self::assertSame('failed',$this->service->status($this->pdo,'generic_operations')['scheduler']['reconciliation']['state']);
+            $this->pdo->exec("UPDATE cron_job_runs SET status='failed',error_message='ready no; preflight_codes=event_signing,unknown,service_authentication' WHERE job_name='portal_client_provisioning_backfill'");
+            $failedStatus=$this->service->status($this->pdo,'generic_operations');
+            self::assertSame('failed',$failedStatus['scheduler']['reconciliation']['state']);
+            self::assertSame(['event_signing','service_authentication'],$failedStatus['scheduler']['reconciliation']['preflight_codes']);
         });
     }
 
@@ -835,6 +838,7 @@ SQL);
         $this->pdo->exec("INSERT INTO clients VALUES(20,'client-a','A Person','person@example.test',NULL,'consumer',0,NULL,'v1')");
         $summary=$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
         self::assertFalse($summary['ready']);
+        self::assertSame(['external_connection','signed_event_receiver','service_authentication','event_signing','producer_contract','producer_enabled','producer_delivery','outbound_runtime','authoritative_hooks'],$summary['preflight_codes']);
         self::assertSame(0,$summary['considered']);
         self::assertSame(1,$summary['remaining'],'Paused delivery must not hide historical work that still remains.');
         self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_workspaces')->fetchColumn());

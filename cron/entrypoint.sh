@@ -12,14 +12,7 @@ cron_load_app_encryption_key "$CONFIG_DIR" 60 1
 # Cron does NOT inherit the container's env vars, so we dump them
 # to /etc/environment which each cron job sources before running.
 ENV_FILE="/etc/environment"
-: > "$ENV_FILE"
-while IFS='=' read -r name value; do
-  case "$name" in
-    MYSQL_*|DB_*|APP_*|STRIPE_*|SMTP_*|BACKUP_*|NOTIFICATION_RELAY_*)
-      printf 'export %s=%q\n' "$name" "$value" >> "$ENV_FILE"
-      ;;
-  esac
-done < <(printenv)
+cron_write_runtime_environment "$ENV_FILE"
 
 # ── Create log directory if it doesn't exist ──
 LOG_ROOT="/var/www/config/logs"

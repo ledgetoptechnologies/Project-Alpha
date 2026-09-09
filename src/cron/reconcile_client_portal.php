@@ -21,6 +21,7 @@ try {
         25
     );
     $delivery=(new PortalProjectionOutboxSender())->deliverDue($pdo,50,null,20);
+    $preflightCodes=(array)($summary['preflight_codes']??[]);
     $message=sprintf(
         'Activation %s (%s); ready %s; considered %d; completed %d; retrying %d; failed %d; remaining %d; portal delivered %d; portal retrying %d; portal dead-lettered %d',
         $activation['attempted']?'checked':'unchanged',
@@ -35,6 +36,7 @@ try {
         $delivery['failed'],
         $delivery['dead_lettered']
     );
+    if($preflightCodes!==[])$message.='; preflight_codes='.implode(',',$preflightCodes);
     if ($summary['failed']>0 || $delivery['dead_lettered']>0) {
         cron_state_mark_failure($pdo,$jobName,new RuntimeException($message.'; repair the root failure and run the audited reconcile action.'));
     } else {
