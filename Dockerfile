@@ -136,7 +136,7 @@ COPY ./config/.env.example /var/www/config/.env.example
 RUN chown -R www-data:www-data /var/www/vendor /var/www/tests /var/www/tools /var/www/docs /var/www/database /var/www/public /var/www/cron /var/www/docker /var/www/docker-compose.yml /var/www/Dockerfile /var/www/php.ini /var/www/.github /var/www/config /var/www/phpunit.xml /var/www/composer.json /var/www/composer.lock /var/www/SECURITY.md
 
 # ---------- Stage 3: Encrypted MySQL runtime ----------
-FROM mysql:8.4 AS db
+FROM mysql:26.7 AS db
 
 USER root
 # The upstream image includes MySQL Shell (about 500 MB of optional Python
