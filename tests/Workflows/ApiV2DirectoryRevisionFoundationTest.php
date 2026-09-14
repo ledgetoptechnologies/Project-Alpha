@@ -8,7 +8,7 @@ use PDO;
 
 final class ApiV2DirectoryRevisionFoundationTest extends TestCase
 {
-    public function testFoundationCannotAdvertiseAnUntrackedRead(): void
+    public function testDirectoryReadRequiresExplicitFeatureAndRevisionFoundation(): void
     {
         $root = dirname(__DIR__, 2);
         $migration = (string)file_get_contents($root . '/database/migrations/0089_api_v2_directory_revision_foundation.sql');
@@ -24,8 +24,10 @@ final class ApiV2DirectoryRevisionFoundationTest extends TestCase
         self::assertStringNotContainsString('sync_source_identity', $migration);
         self::assertStringNotContainsString('sync_resource_state', $migration);
         self::assertStringNotContainsString('INSERT INTO api_v2_directory_', $migration);
-        self::assertStringNotContainsString('directory.clients.read', $capabilities . $front . $scopes);
-        self::assertStringNotContainsString('directory.organizations.read', $capabilities . $front . $scopes);
+        self::assertStringContainsString('directory.clients.read', $capabilities . $scopes);
+        self::assertStringContainsString('directory.organizations.read', $capabilities . $scopes);
+        self::assertStringContainsString('APP_API_V2_DIRECTORY_READ_ENABLED', $front);
+        self::assertStringContainsString('if (($features[$feature] ?? false) !== true) continue', $capabilities);
     }
 
     public function testRevisionIsAtomicAndNoopUpdatesDoNotEmitChanges(): void

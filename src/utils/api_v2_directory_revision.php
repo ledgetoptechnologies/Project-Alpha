@@ -1,6 +1,18 @@
 <?php
 declare(strict_types=1);
 
+/** The one canonical profile projection used by writers and live readers. */
+function api_v2_directory_projection_hash(string $type, array $row): string
+{
+    if (!in_array($type, ['client', 'organization'], true)) throw new LogicException('Unsupported directory resource');
+    $fields = $type === 'client'
+        ? ['name', 'email', 'phone', 'client_type', 'organization_id', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country']
+        : ['name', 'general_email', 'general_phone', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country'];
+    $profile = [];
+    foreach ($fields as $field) $profile[$field] = $row[$field] ?? null;
+    return hash('sha256', json_encode($profile, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
 /** Record a committed-profile candidate inside the caller's transaction. */
 function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
 {
@@ -16,12 +28,7 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
     if (!$row || preg_match('/^[0-9a-f]{32}$/D', (string)($row['public_id'] ?? '')) !== 1) {
         throw new RuntimeException('Directory resource identity unavailable');
     }
-    $fields = $type === 'client'
-        ? ['name', 'email', 'phone', 'client_type', 'organization_id', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country']
-        : ['name', 'general_email', 'general_phone', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country'];
-    $profile = [];
-    foreach ($fields as $field) $profile[$field] = $row[$field] ?? null;
-    $hash = hash('sha256', json_encode($profile, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    $hash = api_v2_directory_projection_hash($type, $row);
     $state = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
     $state->execute([$type, $row['public_id']]);
     $current = $state->fetch(PDO::FETCH_ASSOC);

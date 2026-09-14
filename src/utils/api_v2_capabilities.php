@@ -22,19 +22,56 @@ function api_v2_identity_is_valid(array $identity): bool
     return true;
 }
 
-function api_v2_capabilities_payload(array $identity, string $requestId): array
+function api_v2_enabled(string $name): bool
 {
+    return filter_var(getenv($name) ?: 'false', FILTER_VALIDATE_BOOLEAN);
+}
+
+/**
+ * Advertise only routes enabled on this installation. Capability metadata is
+ * discovery, not a grant: the key's explicit scopes are listed separately.
+ */
+function api_v2_capabilities_payload(array $identity, string $requestId, array $keyScopes = [], array $features = []): array
+{
+    $granted = [['name' => 'api.capabilities.read']];
+    $endpoints = [[
+        'method' => 'GET',
+        'path' => '/api/v2/capabilities',
+        'requiredCapability' => 'api.capabilities.read',
+    ]];
+    $definitions = [
+        'directory_read' => [
+            ['directory.clients.read', '/api/v2/directory/clients/{publicId}'],
+            ['directory.organizations.read', '/api/v2/directory/organizations/{publicId}'],
+        ],
+        'binding_status' => [
+            ['directory.clients.binding_status.read', '/api/v2/bindings/client/status/{base64urlExternalId}'],
+            ['directory.organizations.binding_status.read', '/api/v2/bindings/organization/status/{base64urlExternalId}'],
+        ],
+        'directory_binding' => [
+            ['directory.clients.bind', '/api/v2/directory/clients/bindings/commands', 'POST'],
+            ['directory.organizations.bind', '/api/v2/directory/organizations/bindings/commands', 'POST'],
+        ],
+    ];
+    foreach ($definitions as $feature => $routes) {
+        if (($features[$feature] ?? false) !== true) continue;
+        foreach ($routes as $route) {
+            [$scope, $path] = $route;
+            $endpoints[] = [
+                'method' => $route[2] ?? 'GET', 'path' => $path, 'requiredCapability' => $scope,
+                'requiresSourceInstanceId' => true, 'requiresApplicationId' => true,
+                'requiresHistoryEpoch' => true,
+            ];
+            if (in_array($scope, $keyScopes, true)) $granted[] = ['name' => $scope];
+        }
+    }
     return [
         'apiVersion' => '2',
         'sourceInstanceId' => (string)$identity['source_instance_id'],
         'applicationId' => (string)$identity['application_id'],
         'historyEpoch' => (string)$identity['history_epoch'],
         'requestId' => $requestId,
-        'grantedCapabilities' => [['name' => 'api.capabilities.read']],
-        'implementedEndpoints' => [[
-            'method' => 'GET',
-            'path' => '/api/v2/capabilities',
-            'requiredCapability' => 'api.capabilities.read',
-        ]],
+        'grantedCapabilities' => $granted,
+        'implementedEndpoints' => $endpoints,
     ];
 }

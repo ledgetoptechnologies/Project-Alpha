@@ -8,6 +8,36 @@ function api_scope_catalog(): array
             'description' => 'Read the identity and implemented capabilities of a bound application. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [], // Routed before the interactive front controller.
         ],
+        'directory.clients.read' => [
+            'label' => 'API v2 client directory read',
+            'description' => 'Read exact client profiles through an application-bound API v2 connection. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.organizations.read' => [
+            'label' => 'API v2 organization directory read',
+            'description' => 'Read exact organization profiles through an application-bound API v2 connection. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.clients.binding_status.read' => [
+            'label' => 'API v2 client binding status',
+            'description' => 'Check one application-scoped client external identity binding. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.organizations.binding_status.read' => [
+            'label' => 'API v2 organization binding status',
+            'description' => 'Check one application-scoped organization external identity binding. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.clients.bind' => [
+            'label' => 'API v2 client identity binding',
+            'description' => 'Bind an existing client to one application-scoped external identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.organizations.bind' => [
+            'label' => 'API v2 organization identity binding',
+            'description' => 'Bind an existing organization to one application-scoped external identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

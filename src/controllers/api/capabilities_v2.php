@@ -52,7 +52,12 @@ try {
     if (!api_v2_identity_is_valid($identity)) {
         throw new RuntimeException('Invalid provisioned API v2 identity');
     }
-    echo json_encode(api_v2_capabilities_payload($identity, $requestId), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    $features = [
+        'directory_read' => api_v2_enabled('APP_API_V2_DIRECTORY_READ_ENABLED'),
+        'binding_status' => api_v2_enabled('APP_API_V2_BINDING_STATUS_ENABLED'),
+        'directory_binding' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_ENABLED'),
+    ];
+    echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {
     error_log('[ApiV2Capabilities] ' . get_class($error));
     http_response_code(503);
