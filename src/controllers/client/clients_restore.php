@@ -2,6 +2,7 @@
 // src/controllers/clients_restore.php
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 $id = (int)($_POST['id'] ?? 0); // archived_clients.id
 if ($id <= 0) {
@@ -17,6 +18,7 @@ try {
     (int)($_SESSION['user']['id'] ?? 0)
   );
   $clientId=(int)$restored['client_id'];
+  api_v2_directory_record($pdo, 'client', $clientId);
 
   $projection=new App\Services\PortalProjectionMutationService();
   $projection->afterMutation($pdo,$projection->clientScopes($pdo,$clientId));

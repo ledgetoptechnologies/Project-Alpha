@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/client_onboarding.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 $organizationId = request_client_org_id();
 $userId = (int)($_SESSION['user']['id'] ?? 0);
@@ -292,6 +293,12 @@ try {
         address_book_save($pdo, $sharedAddress, 'client', $clientId, 'billing', true, $userId);
         if ($reviewClientType === 'business' && $targetOrganizationId) {
             address_book_save($pdo, $sharedAddress, 'organization', $targetOrganizationId, 'billing', true, $userId);
+        }
+        if ($reviewClientType === 'business' && $targetOrganizationId) {
+            api_v2_directory_record($pdo, 'organization', $targetOrganizationId);
+        }
+        if ($resolution !== 'keep_existing' || ($reviewClientType === 'business' && $targetOrganizationId)) {
+            api_v2_directory_record($pdo, 'client', $clientId);
         }
         $pdo->prepare('UPDATE client_onboarding_submissions SET proposed_data=? WHERE id=?')
             ->execute([json_encode($data, JSON_UNESCAPED_SLASHES), $submissionId]);

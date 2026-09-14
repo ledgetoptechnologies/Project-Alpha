@@ -39,3 +39,33 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
         ->execute([$type, $row['public_id'], $revision]);
     return true;
 }
+
+/** Record a committed deletion tombstone inside the caller's transaction. */
+function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId): bool
+{
+    if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization'], true)
+        || preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1) {
+        throw new LogicException('Directory deletion revision requires an active transaction and stable supported identity');
+    }
+    $state = $pdo->prepare('SELECT revision,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?'
+        . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
+    $state->execute([$type, $publicId]);
+    $current = $state->fetch(PDO::FETCH_ASSOC);
+    if ($current && (int)$current['present'] === 0) return false;
+
+    $revision = $current ? (int)$current['revision'] + 1 : 1;
+    if ($revision < 1 || $revision > PHP_INT_MAX) throw new OverflowException('Directory revision exhausted');
+    // A tombstone has no profile projection; a stable empty projection hash keeps
+    // the state row valid without pretending that a removed row is still present.
+    $hash = hash('sha256', '');
+    if ($current) {
+        $pdo->prepare('UPDATE api_v2_directory_resource_state SET revision=?,projection_sha256=?,present=0 WHERE resource_type=? AND public_id=?')
+            ->execute([$revision, $hash, $type, $publicId]);
+    } else {
+        $pdo->prepare('INSERT INTO api_v2_directory_resource_state(resource_type,public_id,revision,projection_sha256,present) VALUES (?,?,?, ?,0)')
+            ->execute([$type, $publicId, $revision, $hash]);
+    }
+    $pdo->prepare("INSERT INTO api_v2_directory_resource_changes(resource_type,public_id,revision,action) VALUES (?,?,?,'delete')")
+        ->execute([$type, $publicId, $revision]);
+    return true;
+}

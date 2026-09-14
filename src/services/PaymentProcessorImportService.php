@@ -4,6 +4,7 @@
 
 require_once __DIR__ . '/../utils/invoice_lifecycle.php';
 require_once __DIR__ . '/../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../utils/api_v2_directory_revision.php';
 
 class PaymentProcessorImportService
 {
@@ -278,13 +279,18 @@ class PaymentProcessorImportService
                 'Created from ' . self::cleanProvider((string)$tx['provider']) . ' standalone payment import.',
                 portal_projection_source_version(),
             ]);
-            $clientId=(int)$pdo->lastInsertId();$projection=new \App\Services\PortalProjectionMutationService();$projection->afterMutation($pdo,$projection->clientScopes($pdo,$clientId));if($owns)$pdo->commit();return$clientId;
+            $clientId=(int)$pdo->lastInsertId();
+            api_v2_directory_record($pdo, 'client', $clientId);
+            $projection=new \App\Services\PortalProjectionMutationService();$projection->afterMutation($pdo,$projection->clientScopes($pdo,$clientId));if($owns)$pdo->commit();return$clientId;
         } catch (Throwable$error) {if($owns&&$pdo->inTransaction())$pdo->rollBack();throw$error;}
     }
 
     private static function enrichClient(PDO $pdo, int $clientId, array $tx): void
     {
-        $pdo->prepare(
+        $owns = !$pdo->inTransaction();
+        if ($owns) $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
             'UPDATE clients SET
                 phone=COALESCE(NULLIF(phone, ""), ?),
                 address_line1=COALESCE(NULLIF(address_line1, ""), ?),
@@ -294,7 +300,7 @@ class PaymentProcessorImportService
                 postal_code=COALESCE(NULLIF(postal_code, ""), ?),
                 country=COALESCE(NULLIF(country, ""), ?)
              WHERE id=?'
-        )->execute([
+            )->execute([
             self::nullableString($tx['payer_phone'] ?? null, 50),
             self::nullableString($tx['payer_address_line1'] ?? null, 255),
             self::nullableString($tx['payer_address_line2'] ?? null, 255),
@@ -303,7 +309,13 @@ class PaymentProcessorImportService
             self::nullableString($tx['payer_postal_code'] ?? null, 20),
             self::nullableString($tx['payer_country'] ?? null, 100),
             $clientId,
-        ]);
+            ]);
+            api_v2_directory_record($pdo, 'client', $clientId);
+            if ($owns) $pdo->commit();
+        } catch (Throwable $error) {
+            if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
+        }
     }
 
     private static function insertStandalonePayment(PDO $pdo, array $tx, int $ledgerId, ?int $clientId): int
