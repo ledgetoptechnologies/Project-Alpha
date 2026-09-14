@@ -7,11 +7,12 @@ use PHPUnit\Framework\TestCase;
 
 final class ApiV2CapabilitiesFoundationTest extends TestCase
 {
-    public function testDedicatedScopeDoesNotPassThroughLegacyFullAccess(): void
+    public function testExplicitScopeDoesNotPassThroughLegacyFullAccessAndCanBeCombined(): void
     {
         require_once dirname(__DIR__, 2) . '/src/utils/api_scopes.php';
         self::assertFalse(\api_key_has_scope('full', 'api.capabilities.read', false));
         self::assertTrue(\api_key_has_scope('api.capabilities.read', 'api.capabilities.read', false));
+        self::assertTrue(\api_key_has_scope('api.capabilities.read,clients.read', 'api.capabilities.read', false));
         self::assertSame([], \api_scope_catalog()['api.capabilities.read']['endpoints']);
         self::assertNotSame(['api.capabilities.read'], \api_normalize_scopes('api.capabilities.read,clients.read'));
     }
@@ -51,10 +52,10 @@ final class ApiV2CapabilitiesFoundationTest extends TestCase
         $route = file_get_contents($root . '/src/controllers/api/capabilities_v2.php');
         self::assertLessThan(strpos($front, 'session_start()'), strpos($front, "'/api/v2/capabilities'"));
         self::assertStringContainsString("api_require_key(['api.capabilities.read'], false)", $route);
+        self::assertStringNotContainsString("=== ['api.capabilities.read']", $route);
         self::assertStringContainsString('app.id = api_key.api_v2_application_id', $route);
         self::assertStringContainsString('api_v2_capabilities_payload($identity, $requestId)', $route);
         self::assertLessThan(strpos($route, 'new PDO('), strpos($route, "'REQUEST_METHOD'"));
-        self::assertStringContainsString('api_normalize_scopes($key', $route);
         self::assertStringNotContainsString('$_GET[', $route);
     }
 }

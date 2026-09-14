@@ -257,6 +257,9 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'portal_projection_recoveries' => 87,
         'api_v2_history_identity' => 88,
         'api_v2_applications' => 88,
+        'api_v2_directory_resource_state' => 89,
+        'api_v2_directory_resource_changes' => 89,
+        'api_v2_directory_authorization_state' => 89,
     ];
 
     return array_values(array_filter(
@@ -372,6 +375,16 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
         'api_v2_applications' => [
             'id' => 88, 'application_id' => 88, 'name' => 88,
         ],
+        'api_v2_directory_resource_state' => [
+            'resource_type' => 89, 'public_id' => 89, 'revision' => 89,
+            'projection_sha256' => 89, 'present' => 89,
+        ],
+        'api_v2_directory_resource_changes' => [
+            'resource_type' => 89, 'public_id' => 89, 'revision' => 89, 'action' => 89,
+        ],
+        'api_v2_directory_authorization_state' => [
+            'application_pk' => 89, 'authorization_generation' => 89,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -456,6 +469,8 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'managed_delivery_intent_outbox',
         'document_number_sequences',
         'api_v2_history_identity', 'api_v2_applications',
+        'api_v2_directory_resource_state', 'api_v2_directory_resource_changes',
+        'api_v2_directory_authorization_state',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -498,6 +513,9 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_keys' => ['name', 'key_prefix', 'key_hash', 'scopes', 'allowed_ips', 'created_at', 'last_used_at', 'revoked_at', 'api_v2_application_id'],
         'api_v2_history_identity' => ['singleton', 'source_instance_id', 'history_epoch'],
         'api_v2_applications' => ['id', 'application_id', 'name'],
+        'api_v2_directory_resource_state' => ['resource_type', 'public_id', 'revision', 'projection_sha256', 'present'],
+        'api_v2_directory_resource_changes' => ['resource_type', 'public_id', 'revision', 'action'],
+        'api_v2_directory_authorization_state' => ['application_pk', 'authorization_generation'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

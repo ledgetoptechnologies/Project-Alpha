@@ -29,9 +29,11 @@ Web and cron depend on successful completion of this service.
 Migration `0088_api_v2_application_identity.sql` adds the stable API v2 history
 epoch, generic application identities, and nullable key-to-application binding.
 It grants no existing key access. An operator must create an application row
-with a generated UUID and explicitly bind a dedicated key carrying only
-`api.capabilities.read` to its numeric `api_v2_applications.id`. Do not attach
-the scope to legacy `full` keys. For example, after creating a dedicated key
+with a generated UUID and explicitly bind a scoped key carrying
+`api.capabilities.read` and only the other capabilities that application
+actually needs to its numeric `api_v2_applications.id`. The capabilities
+probe and subsequent resource calls use the same key. Do not attach the
+scope to legacy `full` keys. For example, after creating a scoped key
 through the existing administrator API-key screen, use a reviewed database
 change to insert `api_v2_applications(application_id, name)` with a freshly
 generated lowercase UUID-v4 from a cryptographic random generator
@@ -41,6 +43,21 @@ does not claim snapshot, change-feed, or binding-status support. Its
 `sourceInstanceId` and `historyEpoch` are independent, persisted UUID-v4
 values. The history epoch changes only with an explicit operator history reset.
 MySQL `UUID()` alone is version 1 and will fail API v2 preflight validation.
+
+Migration `0089_api_v2_directory_revision_foundation.sql` adds
+application-independent directory revision state and per-resource change rows,
+plus an application-specific authorization generation. Ordinary client and
+organization create/core-update controllers write revision/change rows inside
+their transactions, suppressing unchanged profile hashes. The migration does
+not backfill existing resources, cover all mutation writers, initialize or
+advance authorization generations, route directory reads, or advertise them in
+capabilities. The legacy Sync Contract v2 source identity is
+not used; its UUID-v1 value is incompatible with the new v2 handshake. Before
+enabling a directory read, cover every client, organization, address,
+relationship, deletion/restoration, and access-grant mutation in the same
+transaction as its revision/change and authorization-generation updates.
+Prove concurrency, rollback, and exact application binding with real MySQL
+tests. Do not infer a globally commit-ordered feed from auto-increment IDs.
 
 ## Validation
 

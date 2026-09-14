@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/organization_schema.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 $name = trim($_POST['name'] ?? '');
 $generalEmail = strtolower(trim((string)($_POST['general_email'] ?? '')));
@@ -105,6 +106,7 @@ try {
     ], 'organization', $id, 'billing', true, (int)($_SESSION['user']['id']??0));
     $projection=new App\Services\PortalProjectionMutationService();
     $projection->afterMutation($pdo,$projection->organizationScopes($pdo,$id));
+    api_v2_directory_record($pdo, 'organization', $id);
     $pdo->commit();
 } catch (Throwable $error) {
     if ($pdo->inTransaction()) $pdo->rollBack();

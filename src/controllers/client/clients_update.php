@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 $id = (int)($_POST['id'] ?? 0);
 require_record_ownership($pdo, 'clients', $id);
@@ -41,7 +42,7 @@ $st->execute([
   $country,
   portal_projection_source_version(),
   $id
-]);},static fn():array=>$portalProjection->clientScopes($pdo,$id),true);
+]);api_v2_directory_record($pdo, 'client', $id);},static fn():array=>$portalProjection->clientScopes($pdo,$id),true);
 address_book_save($pdo, [
   'label'=>'Billing address','address_line1'=>$address_line1,'address_line2'=>$address_line2,'city'=>$city,
   'state'=>$state,'postal_code'=>$postal,'country'=>$country,

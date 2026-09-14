@@ -34,11 +34,6 @@ try {
 require_once __DIR__ . '/../../utils/api_auth.php';
 
 $key = api_require_key(['api.capabilities.read'], false);
-if (api_normalize_scopes($key['scopes'] ?? '') !== ['api.capabilities.read']) {
-    http_response_code(403);
-    echo json_encode(['error' => 'Dedicated capability key required']);
-    exit;
-}
 try {
     $stmt = $pdo->prepare(
         'SELECT history.source_instance_id, history.history_epoch, app.application_id
