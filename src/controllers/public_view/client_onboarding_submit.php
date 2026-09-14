@@ -57,7 +57,7 @@ $data = [
     'address_line2' => client_onboarding_clean_text($_POST['address_line2'] ?? '', 255),
     'city' => client_onboarding_clean_text($_POST['city'] ?? '', 100),
     'state' => $state,
-    'postal_code' => client_onboarding_clean_text($_POST['postal_code'] ?? '', 20),
+    'postal_code' => client_onboarding_clean_text($_POST['postal_code'] ?? '', 32),
     'country' => client_onboarding_clean_text($_POST['country'] ?? 'US', 100) ?: 'US',
     'client_type' => $clientType,
 ];
