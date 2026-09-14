@@ -255,6 +255,8 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'portal_service_assignment_projection_receipts' => 80,
         'portal_client_provisioning_backfill' => 83,
         'portal_projection_recoveries' => 87,
+        'api_v2_history_identity' => 88,
+        'api_v2_applications' => 88,
     ];
 
     return array_values(array_filter(
@@ -363,6 +365,13 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'state' => 87, 'requested_by' => 87, 'completed_at' => 87,
             'failed_at' => 87, 'last_error_code' => 87,
         ],
+        'api_keys' => ['api_v2_application_id' => 88],
+        'api_v2_history_identity' => [
+            'singleton' => 88, 'source_instance_id' => 88, 'history_epoch' => 88,
+        ],
+        'api_v2_applications' => [
+            'id' => 88, 'application_id' => 88, 'name' => 88,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -446,6 +455,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'portal_projection_recoveries',
         'managed_delivery_intent_outbox',
         'document_number_sequences',
+        'api_v2_history_identity', 'api_v2_applications',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -485,7 +495,9 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'entity_links' => ['include_on_invoices', 'resolver_mode', 'visibility_scope'],
         'contracts' => ['organization_id', 'show_contact_on_document', 'created_by', 'job_id', 'service_location_id', 'status', 'revision_number', 'last_sent_revision', 'signed_revision_number', 'signed_pdf_sha256'],
         'invoices' => ['organization_id', 'show_contact_on_document', 'created_by', 'collection_mode', 'job_id', 'service_location_id', 'revision_number', 'last_sent_revision', 'credit_due', 'credit_applied', 'generation_key'],
-        'api_keys' => ['name', 'key_prefix', 'key_hash', 'scopes', 'allowed_ips', 'created_at', 'last_used_at', 'revoked_at'],
+        'api_keys' => ['name', 'key_prefix', 'key_hash', 'scopes', 'allowed_ips', 'created_at', 'last_used_at', 'revoked_at', 'api_v2_application_id'],
+        'api_v2_history_identity' => ['singleton', 'source_instance_id', 'history_epoch'],
+        'api_v2_applications' => ['id', 'application_id', 'name'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

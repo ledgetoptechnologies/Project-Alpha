@@ -3,6 +3,11 @@
 function api_scope_catalog(): array
 {
     return [
+        'api.capabilities.read' => [
+            'label' => 'API v2 capabilities',
+            'description' => 'Read the identity and implemented capabilities of a bound application. Dedicated keys only; full access does not inherit this scope.',
+            'endpoints' => [], // Routed before the interactive front controller.
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

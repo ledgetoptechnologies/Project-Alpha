@@ -1,4 +1,9 @@
 <?php
+// The capabilities handshake is deliberately outside interactive session routing.
+if (parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) === '/api/v2/capabilities') {
+    require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
+    exit;
+}
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../src/config/db.php';
 require_once __DIR__ . '/../src/utils/request_security.php';
