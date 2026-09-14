@@ -106,4 +106,74 @@ final class ApiV2DirectoryRevisionFoundationTest extends TestCase
         self::assertLessThan($parent, $firstChildren);
         self::assertLessThan($snapshot, $parent);
     }
+
+    public function testOrganizationClientAttachAndDetachRecordTheLockedClientMutation(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (['organization_add_client.php', 'organization_remove_client.php'] as $controller) {
+            $source = (string) file_get_contents($root . '/src/controllers/organization/' . $controller);
+            $lock = strpos($source, 'lockedClientScopes($pdo,$client_id');
+            $mutation = strpos($source, 'UPDATE clients SET organization_id');
+            $record = strpos($source, "api_v2_directory_record(\$pdo,'client',\$client_id)");
+            $after = strpos($source, 'clientScopes($pdo,$client_id)');
+
+            self::assertStringContainsString("require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';", $source);
+            self::assertNotFalse($lock);
+            self::assertNotFalse($mutation);
+            self::assertNotFalse($record);
+            self::assertNotFalse($after);
+            self::assertLessThan($mutation, $lock, $controller . ' must lock before changing the relationship.');
+            self::assertLessThan($record, $mutation, $controller . ' must revision the changed profile before projection reconciliation.');
+            self::assertLessThan($after, $record, $controller . ' must reconcile after the revision write.');
+        }
+    }
+
+    public function testAlternateOrganizationCreateRecordsInsideItsTransactionAndSuppressesNoop(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $source = (string) file_get_contents($root . '/src/controllers/organization/org_create.php');
+        $insert = strpos($source, "INSERT INTO organizations");
+        $record = strpos($source, "api_v2_directory_record(\$pdo, 'organization', \$id)");
+        $commit = strpos($source, '$pdo->commit();');
+        self::assertNotFalse($insert);
+        self::assertNotFalse($record);
+        self::assertNotFalse($commit);
+        self::assertLessThan($record, $insert);
+        self::assertLessThan($commit, $record);
+
+        require_once $root . '/src/utils/api_v2_directory_revision.php';
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec("CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,general_email TEXT,general_phone TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
+            CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
+            CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
+            INSERT INTO organizations(id,public_id,name) VALUES(1,'cccccccccccccccccccccccccccccccc','Alternate create');");
+        $pdo->beginTransaction();
+        self::assertTrue(\api_v2_directory_record($pdo, 'organization', 1));
+        self::assertFalse(\api_v2_directory_record($pdo, 'organization', 1));
+        $pdo->commit();
+        self::assertSame(1, (int) $pdo->query('SELECT COUNT(*) FROM api_v2_directory_resource_changes')->fetchColumn());
+    }
+
+    public function testOrganizationRelationshipRevisionIsGuardedByAnActualUpdate(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $attach = (string) file_get_contents($root . '/src/controllers/organization/organization_add_client.php');
+        self::assertStringContainsString('static function()use($pdo,$organization_id,$client_id,$currentOrganizationId)', $attach);
+        self::assertStringContainsString("if(\$actualOrganizationId!==\$currentOrganizationId)throw new DomainException", $attach);
+        self::assertStringContainsString('if($actualOrganizationId===$organization_id)return', $attach);
+        self::assertStringContainsString("\$oldOrganizationPredicate=\$currentOrganizationId===0?'organization_id IS NULL':'organization_id=?'", $attach);
+        self::assertStringContainsString('if($currentOrganizationId>0)$params[]=$currentOrganizationId', $attach);
+        self::assertStringContainsString('if($update->rowCount()!==1)throw new DomainException', $attach);
+        self::assertStringContainsString("SELECT organization_id FROM clients WHERE id=?", $attach);
+        self::assertStringContainsString("throw new DomainException('Client organization relationship changed.')", $attach);
+
+        $detach = (string) file_get_contents($root . '/src/controllers/organization/organization_remove_client.php');
+        $guard = strpos($detach, "if(\$update->rowCount()!==1)throw new DomainException");
+        $record = strpos($detach, "api_v2_directory_record(\$pdo,'client',\$client_id)");
+        self::assertStringContainsString('WHERE id=? AND organization_id=?', $detach);
+        self::assertNotFalse($guard);
+        self::assertNotFalse($record);
+        self::assertLessThan($record, $guard, 'A stale detach must fail before it can emit a directory revision.');
+    }
 }

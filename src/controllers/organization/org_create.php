@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 header('Content-Type: application/json');
 
@@ -42,6 +43,7 @@ try {
     $ins = $pdo->prepare('INSERT INTO organizations (name, source_version, created_at) VALUES (?, ?, NOW())');
     $ins->execute([$name,portal_projection_source_version()]);
     $id = (int)$pdo->lastInsertId();
+    api_v2_directory_record($pdo, 'organization', $id);
     $projection=new App\Services\PortalProjectionMutationService();
     $projection->afterMutation($pdo,$projection->organizationScopes($pdo,$id));
     $pdo->commit();
