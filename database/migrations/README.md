@@ -79,6 +79,23 @@ or old-resource revision state; no flag should be enabled in production until
 complete backfill, all writer/lifecycle coverage, current-profile verification,
 and real-MySQL concurrency and rollback acceptance are demonstrated.
 
+For an operator-approved dedicated API key, the generic provisioning CLI can
+bind its numeric key ID to a new API v2 application and initialize that
+application's authorization generation at zero. It requires migrations 0088
+and 0089, a valid persisted source/history identity, an active explicitly
+scoped key, and an exact dry-run before apply. The key secret is never an
+argument or output. Take a database backup and review the selected key first:
+
+```bash
+php bin/provision-api-v2-application.php --api-key-id=123 --name='External application' --dry-run
+php bin/provision-api-v2-application.php --api-key-id=123 --name='External application' --apply --confirm-bind-api-v2-application
+```
+
+The same-key/same-name rerun is a no-op. This command does **not** backfill
+directory revisions, authorize portal access, or enable any endpoint. Use it
+separately for each installation; never copy an application's identity or
+secret between installations.
+
 ## Validation
 
 ```bash
