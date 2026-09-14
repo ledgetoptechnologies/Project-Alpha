@@ -66,15 +66,19 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             || (string)$receipt['resource_revision'] !== $command['expectedRevision'])) {
             $pdo->rollBack(); return ['status' => 409];
         }
-        $stateStmt = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
-        $stateStmt->execute([$type, $command['expectedPublicId']]); $state = $stateStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$state || (int)$state['present'] !== 1 || (string)$state['revision'] !== $command['expectedRevision']) {
-            $pdo->rollBack(); return ['status' => 409];
-        }
         $table = $type === 'client' ? 'clients' : 'organizations';
         $liveStmt = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=?' . $lock);
         $liveStmt->execute([$command['expectedPublicId']]); $live = $liveStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$live || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash($type, $live))) {
+        if (!$live) {
+            $pdo->rollBack(); return ['status' => 409];
+        }
+        // Ordinary directory writers lock the live row before revision state.
+        // Keep the same order when acquiring a binding to avoid a writer/POST
+        // deadlock under concurrent edits.
+        $stateStmt = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
+        $stateStmt->execute([$type, $command['expectedPublicId']]); $state = $stateStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$state || (int)$state['present'] !== 1 || (string)$state['revision'] !== $command['expectedRevision']
+            || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash($type, $live))) {
             $pdo->rollBack(); return ['status' => 409];
         }
         $bindingStmt = $pdo->prepare('SELECT external_id,public_id,resource_revision,resource_projection_sha256,status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND (external_id=? OR public_id=?)' . $lock);

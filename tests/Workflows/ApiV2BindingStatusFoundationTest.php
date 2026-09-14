@@ -64,7 +64,11 @@ final class ApiV2BindingStatusFoundationTest extends TestCase
         self::assertStringContainsString('HTTP_X_PA_APPLICATION_ID', $controller);
         self::assertStringContainsString('HTTP_X_PA_HISTORY_EPOCH', $controller);
         self::assertStringContainsString('resource_projection_sha256', $helper);
-        self::assertStringContainsString('state.projection_sha256', $helper);
+        self::assertStringContainsString("stateRow['projection_sha256']", $helper);
+        self::assertLessThan(
+            strpos($helper, 'SELECT present,CAST(revision AS CHAR) state_revision'),
+            strpos($helper, "SELECT * FROM ' . \$table . ' WHERE public_id=? LIMIT 2")
+        );
         self::assertStringContainsString('api_v2_directory_projection_hash', $helper);
         $identity = ['source_instance_id' => '123e4567-e89b-42d3-a456-426614174000', 'application_id' => '223e4567-e89b-42d3-a456-426614174000', 'history_epoch' => '323e4567-e89b-42d3-a456-426614174000'];
         $discovery = \api_v2_capabilities_payload($identity, '423e4567-e89b-42d3-a456-426614174000', ['directory.clients.binding_status.read'], []);

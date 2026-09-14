@@ -38,6 +38,16 @@ function api_scope_catalog(): array
             'description' => 'Bind an existing organization to one application-scoped external identity. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [], // Stateless versioned route.
         ],
+        'directory.clients.binding.revision.refresh' => [
+            'label' => 'API v2 client binding revision refresh',
+            'description' => 'Advance one existing application-scoped client binding to a verified live revision. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
+        'directory.organizations.binding.revision.refresh' => [
+            'label' => 'API v2 organization binding revision refresh',
+            'description' => 'Advance one existing application-scoped organization binding to a verified live revision. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [], // Stateless versioned route.
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

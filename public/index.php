@@ -35,6 +35,16 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/commands$
     require __DIR__ . '/../src/controllers/api/directory_binding_command_v2.php';
     exit;
 }
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revisions/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_v2.php';
+    exit;
+}
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../src/config/db.php';
 require_once __DIR__ . '/../src/utils/request_security.php';

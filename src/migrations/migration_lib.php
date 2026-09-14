@@ -262,6 +262,7 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_directory_authorization_state' => 89,
         'api_v2_directory_external_bindings' => 90,
         'api_v2_directory_binding_command_receipts' => 91,
+        'api_v2_directory_binding_revision_refresh_receipts' => 92,
     ];
 
     return array_values(array_filter(
@@ -398,6 +399,13 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'request_sha256' => 91, 'external_id' => 91, 'public_id' => 91,
             'resource_revision' => 91, 'created_at' => 91,
         ],
+        'api_v2_directory_binding_revision_refresh_receipts' => [
+            'application_pk' => 92, 'resource_type' => 92, 'command_id' => 92,
+            'request_sha256' => 92, 'external_id' => 92, 'public_id' => 92,
+            'expected_prior_revision' => 92, 'result_revision' => 92,
+            'result_projection_sha256' => 92, 'expected_authorization_generation' => 92,
+            'result_authorization_generation' => 92, 'created_at' => 92,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -486,6 +494,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_authorization_state',
         'api_v2_directory_external_bindings',
         'api_v2_directory_binding_command_receipts',
+        'api_v2_directory_binding_revision_refresh_receipts',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -533,6 +542,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_authorization_state' => ['application_pk', 'authorization_generation'],
         'api_v2_directory_external_bindings' => ['application_pk', 'resource_type', 'external_id', 'public_id', 'resource_revision', 'resource_projection_sha256', 'status', 'created_at', 'tombstoned_at'],
         'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'created_at'],
+        'api_v2_directory_binding_revision_refresh_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_prior_revision', 'result_revision', 'result_projection_sha256', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

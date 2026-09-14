@@ -79,6 +79,16 @@ or old-resource revision state; no flag should be enabled in production until
 complete backfill, all writer/lifecycle coverage, current-profile verification,
 and real-MySQL concurrency and rollback acceptance are demonstrated.
 
+Migration `0092_api_v2_directory_binding_revision_refresh_receipts.sql` adds
+durable receipts for advancing the revision of an existing client or
+organization binding without changing its public ID or external ID. The
+refresh POST is independently disabled by default through
+`APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` and requires an explicit
+`directory.clients.binding.revision.refresh` or
+`directory.organizations.binding.revision.refresh` scope. It is not a
+replacement for a fresh status read, and real-MySQL concurrency and replay
+tests remain required before enabling it.
+
 For an operator-approved dedicated API key, the generic provisioning CLI can
 bind its numeric key ID to a new API v2 application and initialize that
 application's authorization generation at zero. It requires migrations 0088
