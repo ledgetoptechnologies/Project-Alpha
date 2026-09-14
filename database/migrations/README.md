@@ -96,6 +96,11 @@ directory revisions, authorize portal access, or enable any endpoint. Use it
 separately for each installation; never copy an application's identity or
 secret between installations.
 
+Existing directory resources require a separate, maintenance-window backfill
+before any directory route can be enabled. The local-only bounded tool and its
+conflict/coverage requirements are documented in
+[`docs/admin/api-v2-directory-backfill.md`](../../docs/admin/api-v2-directory-backfill.md).
+
 ## Validation
 
 ```bash
