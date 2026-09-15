@@ -200,6 +200,11 @@ $portalBeforeScopes = $portalProjection->lockedProjectScopes(
 	$organization_id > 0 ? $organization_id : null,
 	$department_id > 0 ? $department_id : null
 );
+$lockedPresentation = $pdo->prepare('SELECT archived_at FROM projects WHERE id=?');
+$lockedPresentation->execute([$id]);
+if ($publicProjectEnabled && $lockedPresentation->fetchColumn() !== null) {
+	throw new DomainException('Restore the Project before explicitly publishing it.');
+}
 $lockedModeStmt = $pdo->prepare('SELECT invoice_billing_period FROM projects WHERE id=?');
 $lockedModeStmt->execute([$id]);
 $lockedInvoiceBillingPeriod = (string)($lockedModeStmt->fetchColumn() ?: 'per_invoice');
@@ -324,6 +329,7 @@ if ($publicProjectPassword !== '') {
 $publicStmt = $pdo->prepare('
 	UPDATE projects
 	SET public_project_enabled = ?,
+	    portal_publish_enabled = CASE WHEN ?=1 THEN 1 ELSE portal_publish_enabled END,
 	    public_project_token = ?,
 	    public_project_require_password = ?,
 	    public_project_password_hash = ?,
@@ -334,6 +340,7 @@ $publicStmt = $pdo->prepare('
 	WHERE id = ?
 ');
 $publicStmt->execute([
+	$publicProjectEnabled,
 	$publicProjectEnabled,
 	$publicProjectToken !== '' ? $publicProjectToken : null,
 	$publicProjectRequirePassword,

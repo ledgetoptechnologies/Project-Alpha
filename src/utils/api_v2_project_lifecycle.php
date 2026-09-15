@@ -9,6 +9,8 @@ use App\Services\ProjectRevisionService;
 require_once __DIR__ . '/api_v2_capabilities.php';
 require_once __DIR__ . '/../services/ProjectRevisionService.php';
 require_once __DIR__ . '/../services/ProjectLifecycleService.php';
+require_once __DIR__ . '/../services/ProjectPresentationService.php';
+require_once __DIR__ . '/../services/ManagedDeliveryService.php';
 require_once __DIR__ . '/../services/ProjectCloseGuardService.php';
 require_once __DIR__ . '/../services/ProjectContractEligibilityGuardService.php';
 require_once __DIR__ . '/../services/ProjectReceivablesSummaryService.php';
@@ -81,7 +83,8 @@ function api_v2_project_lifecycle_write(PDO $pdo, string $publicId, string $acti
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         $receiptStatement = $pdo->prepare(
             'SELECT request_sha256,project_public_id,action_name,CAST(expected_revision AS CHAR) expected_revision,
-                    CAST(result_revision AS CHAR) result_revision,result_status,result_completed_at,result_archived_at,outcome
+                    CAST(result_revision AS CHAR) result_revision,result_status,result_completed_at,result_archived_at,
+                    result_portal_publish_enabled,result_public_project_enabled,outcome
              FROM api_v2_project_lifecycle_command_receipts
              WHERE application_pk=? AND history_epoch=? AND command_id=?' . $lock
         );
@@ -96,6 +99,7 @@ function api_v2_project_lifecycle_write(PDO $pdo, string $publicId, string $acti
             }
             $payload = api_v2_project_lifecycle_payload($identity, $publicId, (string)$receipt['result_revision'],
                 (string)$receipt['result_status'], $receipt['result_completed_at'], $receipt['result_archived_at'],
+                (bool)$receipt['result_portal_publish_enabled'], (bool)$receipt['result_public_project_enabled'],
                 $requestId, true, $receipt['outcome'] !== 'blocked');
             $pdo->commit();
             return ['status'=>$receipt['outcome'] === 'blocked' ? 409 : 200,'payload'=>$payload];
@@ -125,13 +129,16 @@ function api_v2_project_lifecycle_write(PDO $pdo, string $publicId, string $acti
             }
         }
         $pdo->prepare('INSERT INTO api_v2_project_lifecycle_command_receipts
-            (application_pk,history_epoch,command_id,request_sha256,action_name,project_public_id,expected_revision,result_revision,result_status,result_completed_at,result_archived_at,outcome)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([
+            (application_pk,history_epoch,command_id,request_sha256,action_name,project_public_id,expected_revision,result_revision,result_status,result_completed_at,result_archived_at,result_portal_publish_enabled,result_public_project_enabled,outcome)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([
                 $identity['application_pk'],$identity['history_epoch'],$command['commandId'],$hash,$action,$publicId,$command['expectedRevision'],
-                $project['revision'],$project['status'],$project['completed_at'] ?? null,$project['archived_at'] ?? null,$outcome,
+                $project['revision'],$project['status'],$project['completed_at'] ?? null,$project['archived_at'] ?? null,
+                !empty($project['portal_publish_enabled']) ? 1 : 0,!empty($project['public_project_enabled']) ? 1 : 0,$outcome,
             ]);
         $payload = api_v2_project_lifecycle_payload($identity, $publicId, (string)$project['revision'], (string)$project['status'],
-            $project['completed_at'] ?? null, $project['archived_at'] ?? null, $requestId, false, $outcome !== 'blocked');
+            $project['completed_at'] ?? null, $project['archived_at'] ?? null,
+            !empty($project['portal_publish_enabled']), !empty($project['public_project_enabled']),
+            $requestId, false, $outcome !== 'blocked');
         $pdo->commit();
         return ['status'=>$outcome === 'blocked' ? 409 : 200,'payload'=>$payload];
     } catch (Throwable $error) {
@@ -167,13 +174,16 @@ function api_v2_project_payload(array $identity, array $project, string $request
 }
 
 function api_v2_project_lifecycle_payload(array $identity, string $publicId, string $revision, string $status, mixed $completedAt,
-    mixed $archivedAt, string $requestId, bool $replayed, bool $accepted): array
+    mixed $archivedAt, bool $portalPublished, bool $publicLinkEnabled, string $requestId, bool $replayed, bool $accepted): array
 {
     return [
         'apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],
         'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'replayed'=>$replayed,'accepted'=>$accepted,
         'resource'=>['type'=>'project','id'=>$publicId,'revision'=>$revision],
-        'result'=>['status'=>$status,'completedAt'=>$completedAt,'archived'=>$archivedAt !== null,'archivedAt'=>$archivedAt],
+        'result'=>[
+            'status'=>$status,'completedAt'=>$completedAt,'archived'=>$archivedAt !== null,'archivedAt'=>$archivedAt,
+            'presentation'=>['portalPublished'=>$portalPublished,'publicLinkEnabled'=>$publicLinkEnabled],
+        ],
     ];
 }
 

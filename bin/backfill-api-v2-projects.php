@@ -18,5 +18,5 @@ if(!is_string($limit)||preg_match('/^[1-9][0-9]{0,2}$/D',$limit)!==1||(int)$limi
     fwrite(STDERR,"Usage: php bin/backfill-api-v2-projects.php [--cursor=id] [--limit=1..500] [--dry-run]\n");
     fwrite(STDERR,"Default is dry-run. Apply requires --apply --confirm-api-v2-project-backfill --maintenance-window-confirmed.\n");exit(2);
 }
-try{$result=api_v2_project_backfill(migration_connection(),$cursor,(int)$limit,!$apply);fwrite(STDOUT,($result['dryRun']?'Dry run':'Applied').': scanned '.$result['scanned'].'; inserted '.$result['inserted'].'; current '.$result['skippedCurrent'].".\n");if($result['nextCursor']!==null)fwrite(STDOUT,'Resume cursor: '.$result['nextCursor'].".\n");}
+try{$result=api_v2_project_backfill(migration_connection(),$cursor,(int)$limit,!$apply);fwrite(STDOUT,($result['dryRun']?'Dry run':'Applied').': scanned '.$result['scanned'].'; inserted '.$result['inserted'].'; current '.$result['skippedCurrent'].'; presentation revocations '.$result['presentationRevoked'].".\n");if($result['nextCursor']!==null)fwrite(STDOUT,'Resume cursor: '.$result['nextCursor'].".\n");}
 catch(Throwable $error){fwrite(STDERR,"Project backfill refused: ".$error->getMessage()."\n");exit(1);}

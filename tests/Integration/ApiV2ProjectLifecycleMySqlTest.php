@@ -67,6 +67,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         self::assertSame(200, $first['status']);
         self::assertSame('2', $first['payload']['resource']['revision']);
         self::assertTrue($first['payload']['result']['archived']);
+        self::assertSame(['portalPublished'=>false,'publicLinkEnabled'=>false], $first['payload']['result']['presentation']);
         $replay = \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'two');
         self::assertSame(200, $replay['status']);
         self::assertTrue($replay['payload']['replayed']);
@@ -106,7 +107,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
 
     private function resetSchema(): void
     {
-        $tables = ['api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
+        $tables = ['api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','managed_delivery_intent_outbox','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
         foreach ($tables as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -117,7 +118,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
             CREATE TABLE app_config(organization_id INT,config_key VARCHAR(191),config_value TEXT,PRIMARY KEY(organization_id,config_key)) ENGINE=InnoDB;
             CREATE TABLE organizations(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin) ENGINE=InnoDB;
             CREATE TABLE clients(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin,organization_id INT NULL) ENGINE=InnoDB;
-            CREATE TABLE projects(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,client_id INT NULL,organization_id INT NULL,name VARCHAR(255),description TEXT,status ENUM('not_started','active','overdue','completed','cancelled') NOT NULL DEFAULT 'not_started',completed_at DATETIME(6) NULL,source_version VARCHAR(191),estimated_start DATE NULL,estimated_end DATE NULL,updated_at DATETIME(6) NULL) ENGINE=InnoDB;
+            CREATE TABLE projects(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,client_id INT NULL,organization_id INT NULL,name VARCHAR(255),description TEXT,status ENUM('not_started','active','overdue','completed','cancelled') NOT NULL DEFAULT 'not_started',completed_at DATETIME(6) NULL,source_version VARCHAR(191),public_project_enabled TINYINT NOT NULL DEFAULT 0,estimated_start DATE NULL,estimated_end DATE NULL,updated_at DATETIME(6) NULL) ENGINE=InnoDB;
             CREATE TABLE contracts(id INT PRIMARY KEY,project_id INT,doc_number VARCHAR(191),status VARCHAR(32),contract_type VARCHAR(32)) ENGINE=InnoDB;
             CREATE TABLE invoices(id INT PRIMARY KEY,project_id INT,status VARCHAR(32),balance_due DECIMAL(12,2),collection_mode VARCHAR(32),finalized_at DATETIME NULL) ENGINE=InnoDB;
             CREATE TABLE project_invoices(id INT PRIMARY KEY,project_id INT,status VARCHAR(32),balance_due DECIMAL(12,2),finalized_at DATETIME NULL) ENGINE=InnoDB;
@@ -125,14 +126,18 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
             CREATE TABLE system_audit(id INT AUTO_INCREMENT PRIMARY KEY,user_id INT NULL,organization_id INT NULL,action VARCHAR(191),entity_type VARCHAR(191),entity_id INT,details JSON,ip_address VARCHAR(64),user_agent VARCHAR(255)) ENGINE=InnoDB;
             CREATE TABLE project_service_locations(id INT PRIMARY KEY,project_id INT,service_location_id INT,is_default TINYINT) ENGINE=InnoDB;
             CREATE TABLE schedule_entries(id INT AUTO_INCREMENT PRIMARY KEY,project_id INT,job_id INT NULL,service_location_id INT NULL,title VARCHAR(255),starts_at DATETIME NULL,ends_at DATETIME NULL,timezone VARCHAR(64),status VARCHAR(32),source_type VARCHAR(32),source_id INT,created_by INT NULL,UNIQUE KEY uq_schedule_source(source_type,source_id)) ENGINE=InnoDB;
+            CREATE TABLE managed_delivery_intent_outbox(id BIGINT AUTO_INCREMENT PRIMARY KEY,delivery_id CHAR(36),intent_type VARCHAR(16),target_delivery_id CHAR(36),scope_type VARCHAR(32),scope_public_id VARCHAR(128),delivered_at DATETIME(6) NULL,dead_lettered_at DATETIME(6) NULL,revoked_at DATETIME(6) NULL,last_error_code VARCHAR(64) NULL,claim_token CHAR(36) NULL,claimed_at DATETIME(6) NULL) ENGINE=InnoDB;
             INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','test');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
             INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0');
-            INSERT INTO projects VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,'MySQL Project',NULL,'overdue',NULL,'v1','2026-01-01','2026-01-02',NULL);");
+            INSERT INTO projects VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,'MySQL Project',NULL,'overdue',NULL,'v1',1,'2026-01-01','2026-01-02',NULL);");
         $migration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0100_project_lifecycle_api_foundation.sql');
         self::assertNotFalse($migration);
         $this->first->exec($migration);
+        $presentationMigration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0101_project_archive_presentation_revocation.sql');
+        self::assertNotFalse($presentationMigration);
+        $this->first->exec($presentationMigration);
         $this->first->beginTransaction();
         (new ProjectRevisionService($this->first))->initialize(1, 'baseline');
         $this->first->commit();

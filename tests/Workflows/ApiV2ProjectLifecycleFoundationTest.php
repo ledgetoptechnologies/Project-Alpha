@@ -19,17 +19,20 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) self::markTestSkipped('pdo_sqlite is required.');
         require_once dirname(__DIR__,2).'/src/utils/api_v2_project_lifecycle.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_project_backfill.php';
+        require_once dirname(__DIR__,2).'/src/utils/public_project_links.php';
         $this->pdo=new PDO('sqlite::memory:');$this->pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec("CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,revoked_at TEXT);
             CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY,application_id TEXT);
             CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT);
-            CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER);CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT);
-            CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,client_id INTEGER,organization_id INTEGER,name TEXT,description TEXT,status TEXT,
-                completed_at TEXT,archived_at TEXT,portal_publish_enabled INTEGER,revision INTEGER,estimated_start TEXT,estimated_end TEXT,source_version TEXT,updated_at TEXT);
+            CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,name TEXT);CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
+            CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
+            CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,client_id INTEGER,organization_id INTEGER,department_id INTEGER,name TEXT,description TEXT,status TEXT,
+                completed_at TEXT,archived_at TEXT,portal_publish_enabled INTEGER,public_project_enabled INTEGER,public_project_token TEXT,revision INTEGER,estimated_start TEXT,estimated_end TEXT,source_version TEXT,updated_at TEXT);
             CREATE TABLE project_retention_guards(project_public_id TEXT PRIMARY KEY,established_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE project_changes(project_public_id TEXT,revision INTEGER,action_name TEXT,projection_sha256 TEXT,application_pk INTEGER,command_id TEXT,actor_user_id INTEGER,changed_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(project_public_id,revision));
             CREATE TABLE api_v2_project_lifecycle_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,
-                project_public_id TEXT,expected_revision INTEGER,result_revision INTEGER,result_status TEXT,result_completed_at TEXT,result_archived_at TEXT,outcome TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                project_public_id TEXT,expected_revision INTEGER,result_revision INTEGER,result_status TEXT,result_completed_at TEXT,result_archived_at TEXT,
+                result_portal_publish_enabled INTEGER,result_public_project_enabled INTEGER,outcome TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(application_pk,history_epoch,command_id));
             CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT);
             CREATE TABLE contracts(id INTEGER PRIMARY KEY,project_id INTEGER,doc_number TEXT,status TEXT,contract_type TEXT);
@@ -42,7 +45,8 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
             INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
-            INSERT INTO projects VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,'Exact Project',NULL,'active',NULL,NULL,1,1,'2026-01-01','2026-01-02','v1',NULL);");
+            INSERT INTO projects(id,public_id,client_id,organization_id,department_id,name,description,status,completed_at,archived_at,portal_publish_enabled,public_project_enabled,public_project_token,revision,estimated_start,estimated_end,source_version,updated_at)
+            VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,NULL,'Exact Project',NULL,'active',NULL,NULL,1,1,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef',1,'2026-01-01','2026-01-02','v1',NULL);");
         $this->pdo->beginTransaction();(new ProjectRevisionService($this->pdo))->initialize(1,'baseline');$this->pdo->commit();
     }
 
@@ -57,17 +61,28 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
 
     public function testArchiveRestoreAreIdempotentAndPreserveTheProject(): void
     {
+        self::assertNotNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
         $archive=['commandId'=>'423e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'1'];
         $first=api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'archive',$archive,7,$this->headers,'r1');
         self::assertSame(200,$first['status']);self::assertSame('2',$first['payload']['resource']['revision']);
         self::assertTrue($first['payload']['result']['archived']);self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM projects')->fetchColumn());
+        self::assertSame(['portalPublished'=>false,'publicLinkEnabled'=>false],$first['payload']['result']['presentation']);
+        self::assertNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
         $replay=api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'archive',$archive,7,$this->headers,'r2');
         self::assertTrue($replay['payload']['replayed']);self::assertSame('2',$replay['payload']['resource']['revision']);
         self::assertSame(409,api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'restore',[
             'commandId'=>'523e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'1'],7,$this->headers,'r3')['status']);
         $restore=['commandId'=>'623e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'2'];
-        self::assertSame('3',api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'restore',$restore,7,$this->headers,'r4')['payload']['resource']['revision']);
+        $restored=api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'restore',$restore,7,$this->headers,'r4');
+        self::assertSame('3',$restored['payload']['resource']['revision']);
+        self::assertSame(['portalPublished'=>false,'publicLinkEnabled'=>false],$restored['payload']['result']['presentation']);
         self::assertNull($this->pdo->query('SELECT archived_at FROM projects')->fetchColumn());
+        self::assertNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
+        $portalVisibility=\App\Services\ProjectLifecycleSchema::visibility($this->pdo,'projects',true);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM projects WHERE '.$portalVisibility)->fetchColumn());
+        $this->pdo->exec('UPDATE projects SET public_project_enabled=1,portal_publish_enabled=1 WHERE id=1');
+        self::assertNotNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM projects WHERE '.$portalVisibility)->fetchColumn());
     }
 
     public function testCompletionUsesSharedCloseoutAndTransactionalSchedule(): void
@@ -98,9 +113,14 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
     public function testBackfillDryRunAndApplyUseCanonicalProjector(): void
     {
         $this->pdo->exec('DELETE FROM project_changes');
+        $this->pdo->exec("UPDATE projects SET archived_at='2026-01-03 00:00:00',portal_publish_enabled=1,public_project_enabled=1");
         $dry=api_v2_project_backfill($this->pdo,null,10,true);self::assertSame(1,$dry['inserted']);
+        self::assertSame(1,$dry['presentationRevoked']);
+        self::assertSame(1,(int)$this->pdo->query('SELECT portal_publish_enabled FROM projects')->fetchColumn());
         self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM project_changes')->fetchColumn());
         $apply=api_v2_project_backfill($this->pdo,null,10,false);self::assertSame(1,$apply['inserted']);
+        self::assertSame(1,$apply['presentationRevoked']);
+        self::assertSame('0:0',$this->pdo->query("SELECT portal_publish_enabled || ':' || public_project_enabled FROM projects")->fetchColumn());
         self::assertNotNull(api_v2_project_read($this->pdo,str_repeat('a',32),7,$this->headers,'r'));
     }
 }

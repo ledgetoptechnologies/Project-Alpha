@@ -16,12 +16,12 @@ final class ProjectLifecycleSchema
     {
         $prefix = $alias === '' ? '' : $alias . '.';
         $parts = [];
-        if (self::hasColumn($pdo, 'archived_at')) $parts[] = $prefix . 'archived_at IS NULL';
-        if ($portal && self::hasColumn($pdo, 'portal_publish_enabled')) $parts[] = $prefix . 'portal_publish_enabled=1';
+        if (self::hasProjectColumn($pdo, 'archived_at')) $parts[] = $prefix . 'archived_at IS NULL';
+        if ($portal && self::hasProjectColumn($pdo, 'portal_publish_enabled')) $parts[] = $prefix . 'portal_publish_enabled=1';
         return $parts === [] ? '1=1' : implode(' AND ', $parts);
     }
 
-    private static function hasColumn(PDO $pdo, string $column): bool
+    public static function hasProjectColumn(PDO $pdo, string $column): bool
     {
         self::$columns ??= new \WeakMap();
         if (!isset(self::$columns[$pdo])) {
@@ -38,5 +38,17 @@ final class ProjectLifecycleSchema
             self::$columns[$pdo] = $columns;
         }
         return isset(self::$columns[$pdo][$column]);
+    }
+
+    public static function hasTable(PDO $pdo, string $table): bool
+    {
+        if (preg_match('/^[a-z0-9_]+$/D', $table) !== 1) return false;
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $statement = $pdo->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
+        } else {
+            $statement = $pdo->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?');
+        }
+        $statement->execute([$table]);
+        return $statement->fetchColumn() !== false;
     }
 }

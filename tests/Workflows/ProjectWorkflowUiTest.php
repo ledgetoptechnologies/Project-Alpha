@@ -25,6 +25,12 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('<form method="post" action="/?page=project/projects-delete"', $view);
         self::assertStringContainsString("'Archive'", $view);
         self::assertStringContainsString('name="lifecycle_action"', $view);
+        $presentation = (string)file_get_contents($this->root . '/src/services/ProjectPresentationService.php');
+        $update = (string)file_get_contents($this->root . '/src/controllers/project/projects_update.php');
+        self::assertStringContainsString("['portal_publish_enabled','public_project_enabled']", $presentation);
+        self::assertStringContainsString('managed_delivery_intent_outbox', $presentation);
+        self::assertStringContainsString('portal_publish_enabled = CASE WHEN ?=1', $update);
+        self::assertStringContainsString('Restore the Project before explicitly publishing it.', $update);
         self::assertStringContainsString('>View Project</a>', $view);
     }
 

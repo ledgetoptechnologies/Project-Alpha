@@ -20,11 +20,18 @@ that a caller can set. Archive is reversible and independent of workflow
 status. It removes the Project from ordinary selection, managed delivery,
 portal projection, and public-link resolution while retaining the Project,
 documents, files, financial relationships, public ID, and revision history.
+Archive also disables both public-link and portal-publication state, stops
+undelivered managed presentation, and queues pinned-contract revocations for
+accepted project-scoped deliveries. Tokens and receipts remain audit evidence.
+Restore changes lifecycle visibility only and leaves presentation disabled.
 
 The historical browser delete route now archives. A foreign key from permanent
 change history to the Project also makes an accidental physical delete fail
 closed. Archived Projects can be restored from the browser's Archived filter or
 through the separately authorized restore command.
+After restore, a user must deliberately enable the existing public Project link
+control in the ownership- and CSRF-guarded Project edit workflow before the
+retained token can resolve or the Project can re-enter portal projection.
 
 ## Routes and identity
 
@@ -50,11 +57,13 @@ replay returns the recorded result; reuse of a command ID with another target,
 action, revision, or body fails with conflict. Closeout contract guards,
 receivable auditing, schedule synchronization, portal reconciliation, revision
 history, and the receipt share one database transaction.
+Lifecycle results and exact-replay receipts include `portalPublished` and
+`publicLinkEnabled`; archive and restore record both values as false.
 
 ## Release gate
 
 Keep every `APP_API_V2_PROJECTS_*_ENABLED` flag false while preparing a release.
-After migration 0100, run bounded dry runs and then apply during a confirmed
+After migrations 0100 and 0101, run bounded dry runs and then apply during a confirmed
 maintenance window:
 
 ```text

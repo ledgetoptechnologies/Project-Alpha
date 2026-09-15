@@ -476,6 +476,7 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'application_pk'=>100,'history_epoch'=>100,'command_id'=>100,'request_sha256'=>100,'action_name'=>100,
             'project_public_id'=>100,'expected_revision'=>100,'result_revision'=>100,'result_status'=>100,
             'result_completed_at'=>100,'result_archived_at'=>100,'outcome'=>100,'created_at'=>100,
+            'result_portal_publish_enabled'=>101,'result_public_project_enabled'=>101,
         ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
@@ -636,7 +637,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_binding_revoke_command_receipts' => ['application_pk','resource_type','history_epoch','command_id','request_sha256','external_id','public_id','expected_resource_revision','expected_authorization_generation','result_authorization_generation','created_at'],
         'project_changes' => ['project_public_id','revision','action_name','projection_sha256','application_pk','command_id','actor_user_id','changed_at'],
         'project_retention_guards' => ['project_public_id','established_at'],
-        'api_v2_project_lifecycle_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','project_public_id','expected_revision','result_revision','result_status','result_completed_at','result_archived_at','outcome','created_at'],
+        'api_v2_project_lifecycle_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','project_public_id','expected_revision','result_revision','result_status','result_completed_at','result_archived_at','result_portal_publish_enabled','result_public_project_enabled','outcome','created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

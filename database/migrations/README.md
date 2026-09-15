@@ -256,3 +256,11 @@ restricting. It also adds application-and-epoch-scoped receipts for dormant,
 fine-grained API v2 complete, cancel, archive, and restore commands. Existing
 Projects are not assigned synthetic SQL hashes: run the bounded, dry-run-first
 `bin/backfill-api-v2-projects.php` command before enabling any Project API flag.
+
+Migration `0101_project_archive_presentation_revocation.sql` makes archive a
+presentation revocation boundary. Existing public tokens and delivery receipts
+remain audit records, but archived Projects have public and portal publication
+disabled, pending managed deliveries stopped, and lifecycle receipts record the
+disabled presentation result. Restore does not re-enable any of that state;
+the bounded PHP backfill queues pinned-contract revocations for accepted legacy
+managed deliveries, and an authorized browser publish action is required later.

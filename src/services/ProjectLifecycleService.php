@@ -49,15 +49,28 @@ final class ProjectLifecycleService
 
         if ($action === 'archive' || $action === 'restore') {
             $isArchived = $project['archived_at'] !== null;
-            if (($action === 'archive') === $isArchived) {
-                return ['transitioned' => false, 'project' => $project, 'blockers' => []];
+            $presentation = ['changed'=>false,'localDisabled'=>false,'pendingStopped'=>0,'managedRevocationIds'=>[]];
+            if ($action === 'archive') {
+                $presentation = (new ProjectPresentationService($this->pdo))->revokeForArchive($project, $actorUserId);
+            }
+            if (($action === 'archive') === $isArchived && !$presentation['changed']) {
+                return ['transitioned' => false, 'project' => $project, 'blockers' => [], 'presentation'=>$presentation];
             }
             $now = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? 'UTC_TIMESTAMP(6)' : 'CURRENT_TIMESTAMP';
-            $this->pdo->prepare('UPDATE projects SET archived_at=' . ($action === 'archive' ? $now : 'NULL') . ',updated_at=' . $now . ' WHERE id=?')
-                ->execute([$projectId]);
+            if (($action === 'archive') !== $isArchived) {
+                $this->pdo->prepare('UPDATE projects SET archived_at=' . ($action === 'archive' ? $now : 'NULL') . ',updated_at=' . $now . ' WHERE id=?')
+                    ->execute([$projectId]);
+            }
             $project = $revisionService->advance($projectId, $action, $applicationPk, $commandId, $actorUserId ?: null);
-            $this->audit($project, 'project.' . $action, ['revision' => (string)$project['revision']], $actorUserId);
-            return ['transitioned' => true, 'project' => $project, 'blockers' => []];
+            $this->audit($project, 'project.' . $action, [
+                'revision'=>(string)$project['revision'],
+                'presentation'=>[
+                    'portal_publish_enabled'=>false,'public_project_enabled'=>false,
+                    'pending_managed_deliveries_stopped'=>$presentation['pendingStopped'],
+                    'managed_revocation_delivery_ids'=>$presentation['managedRevocationIds'],
+                ],
+            ], $actorUserId);
+            return ['transitioned' => true, 'project' => $project, 'blockers' => [], 'presentation'=>$presentation];
         }
 
         if ($project['archived_at'] !== null) {
