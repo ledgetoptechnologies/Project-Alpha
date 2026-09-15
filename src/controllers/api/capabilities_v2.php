@@ -57,6 +57,7 @@ try {
         'binding_status' => api_v2_enabled('APP_API_V2_BINDING_STATUS_ENABLED'),
         'directory_binding' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_ENABLED'),
         'directory_binding_refresh' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED'),
+        'directory_organization_write' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED'),
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

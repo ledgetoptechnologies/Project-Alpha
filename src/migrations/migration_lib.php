@@ -263,6 +263,7 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_directory_external_bindings' => 90,
         'api_v2_directory_binding_command_receipts' => 91,
         'api_v2_directory_binding_revision_refresh_receipts' => 92,
+        'api_v2_directory_organization_profile_command_receipts' => 93,
     ];
 
     return array_values(array_filter(
@@ -543,6 +544,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_external_bindings' => ['application_pk', 'resource_type', 'external_id', 'public_id', 'resource_revision', 'resource_projection_sha256', 'status', 'created_at', 'tombstoned_at'],
         'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'created_at'],
         'api_v2_directory_binding_revision_refresh_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_prior_revision', 'result_revision', 'result_projection_sha256', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
+        'api_v2_directory_organization_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

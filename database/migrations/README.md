@@ -89,6 +89,19 @@ refresh POST is independently disabled by default through
 replacement for a fresh status read, and real-MySQL concurrency and replay
 tests remain required before enabling it.
 
+Migration `0093_api_v2_directory_organization_profile_command_receipts.sql`
+adds application-scoped idempotency receipts for conditional organization
+profile updates. The generic command route is independently disabled by
+default through `APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED` and
+requires the same bound policy-v2 key to hold both `api.capabilities.read` and
+the explicit `directory.organizations.write` scope; legacy `full` access does
+not inherit it. Commands preserve private notes and address metadata, use the
+shared browser/API organization mutation transaction, reject stale resource or
+authorization generations, record no-op success without revision churn, and
+recover the immutable first result on exact retry. Do not enable the route
+until the existing-row backfill, complete writer inventory, real-MySQL
+concurrency/rollback checks, and external-management handoff are accepted.
+
 For an operator-approved dedicated API key, the generic provisioning CLI can
 bind its numeric key ID to a new API v2 application and initialize that
 application's authorization generation at zero. It requires migrations 0088

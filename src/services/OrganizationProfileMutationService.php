@@ -23,16 +23,19 @@ require_once __DIR__ . '/../utils/portal_projection_hooks.php';
 final class OrganizationProfileMutationService
 {
     /**
-     * @param array{name:string,general_email?:?string,general_phone?:?string,notes?:?string,address?:array<string,mixed>,google_place_id?:?string,actor_id?:?int} $profile
+     * @param array{name:string,general_email?:?string,general_phone?:?string,notes?:?string,address?:array<string,mixed>,google_place_id?:?string,address_label?:?string,actor_id?:?int} $profile
      */
-    public function mutate(PDO $pdo, int $organizationId, array $profile): void
+    public function mutate(PDO $pdo, int $organizationId, array $profile, ?array $existingAddressColumns = null): void
     {
         if ($organizationId < 1 || trim((string)($profile['name'] ?? '')) === '') {
             throw new \InvalidArgumentException('A valid organization profile is required.');
         }
 
         $address = is_array($profile['address'] ?? null) ? $profile['address'] : [];
-        $addressColumns = \pa_ensure_organization_address_columns($pdo);
+        // API writers pass a preflighted schema snapshot so this authoritative
+        // transaction never attempts runtime DDL (which would implicitly commit
+        // on MySQL). Interactive callers retain the legacy self-healing path.
+        $addressColumns = $existingAddressColumns ?? \pa_ensure_organization_address_columns($pdo);
         $addressAssignments = [];
         $addressParams = [];
         foreach (\pa_organization_address_definitions() as $column => $_definition) {
@@ -49,6 +52,7 @@ final class OrganizationProfileMutationService
         $generalPhone = trim((string)($profile['general_phone'] ?? ''));
         $notes = trim((string)($profile['notes'] ?? ''));
         $googlePlaceId = trim((string)($profile['google_place_id'] ?? ''));
+        $addressLabel = trim((string)($profile['address_label'] ?? '')) ?: 'Billing address';
         $actorId = (int)($profile['actor_id'] ?? 0);
         $addressSql = $addressAssignments === [] ? '' : ', ' . implode(', ', $addressAssignments);
         $projection = new PortalProjectionMutationService();
@@ -56,12 +60,12 @@ final class OrganizationProfileMutationService
         \portal_projection_mutate(
             $pdo,
             $projection->organizationScopes($pdo, $organizationId),
-            static function () use ($pdo, $organizationId, $name, $generalEmail, $generalPhone, $notes, $addressSql, $addressParams, $address, $googlePlaceId, $actorId): void {
+            static function () use ($pdo, $organizationId, $name, $generalEmail, $generalPhone, $notes, $addressSql, $addressParams, $address, $googlePlaceId, $addressLabel, $actorId): void {
                 $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', source_version = ? WHERE id = ?');
                 $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [\portal_projection_source_version(), $organizationId]));
 
                 \address_book_save($pdo, [
-                    'label' => 'Billing address',
+                    'label' => $addressLabel,
                     'google_place_id' => $googlePlaceId,
                 ] + $address, 'organization', $organizationId, 'billing', true, $actorId);
                 \api_v2_directory_record($pdo, 'organization', $organizationId);

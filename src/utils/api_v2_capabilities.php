@@ -56,6 +56,9 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
             ['directory.clients.binding.revision.refresh', '/api/v2/directory/clients/bindings/revisions/commands', 'POST'],
             ['directory.organizations.binding.revision.refresh', '/api/v2/directory/organizations/bindings/revisions/commands', 'POST'],
         ],
+        'directory_organization_write' => [
+            ['directory.organizations.write', '/api/v2/directory/organizations/{publicId}/profile/commands', 'POST'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;
