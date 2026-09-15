@@ -66,7 +66,7 @@ function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, 
         $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id AS application_pk
           FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id
           JOIN api_v2_history_identity history ON history.singleton=1
-          WHERE api_key.id=? AND api_key.revoked_at IS NULL LIMIT 2');
+          WHERE api_key.id=? AND api_key.revoked_at IS NULL LIMIT 2' . $lock);
         $identityStatement->execute([$apiKeyId]); $identityRows = $identityStatement->fetchAll(PDO::FETCH_ASSOC);
         if (count($identityRows) === 0) { $pdo->commit(); return ['status' => 404]; }
         if (count($identityRows) !== 1) throw new RuntimeException('ambiguous binding identity');

@@ -64,6 +64,7 @@ final class ApiV2BindingStatusFoundationTest extends TestCase
         self::assertStringContainsString('HTTP_X_PA_APPLICATION_ID', $controller);
         self::assertStringContainsString('HTTP_X_PA_HISTORY_EPOCH', $controller);
         self::assertStringContainsString('resource_projection_sha256', $helper);
+        self::assertStringContainsString("WHERE api_key.id=? AND api_key.revoked_at IS NULL LIMIT 2' . \$lock", $helper);
         self::assertStringContainsString("stateRow['projection_sha256']", $helper);
         self::assertLessThan(
             strpos($helper, 'SELECT present,CAST(revision AS CHAR) state_revision'),

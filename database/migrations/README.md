@@ -217,7 +217,8 @@ are permanently tombstoned and each affected application's authorization
 generation is advanced. All client and organization delete, archive, purge,
 restore, and organization-delete paths must keep this operation in the same
 transaction as the resource revision. Restore never reactivates a prior
-external ID; rebinding is an explicit later command and a tombstoned external
-ID remains reserved. Do not enable generic binding or status routes until the
+external ID; rebinding is an explicit later command for that same external ID
+and public identity at the restored revision. A tombstoned external ID cannot
+be silently replaced with a different ID. Do not enable generic binding or status routes until the
 SQLite and disposable MySQL 8.4 lifecycle, concurrency, fail-closed status,
 external-ID reuse, and rollback gates pass.
