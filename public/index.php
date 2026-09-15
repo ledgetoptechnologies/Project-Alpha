@@ -45,6 +45,15 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revisions
     require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_v2.php';
     exit;
 }
+if (preg_match('#^/api/v2/directory/(clients|organizations)/commands$#D', $apiV2Path, $apiV2CreateMatch) === 1) {
+    $apiV2CreateFlag = $apiV2CreateMatch[1] === 'clients'
+        ? 'APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'
+        : 'APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED';
+    if (!filter_var(getenv($apiV2CreateFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_create_command_v2.php'; exit;
+}
 if (preg_match('#^/api/v2/directory/organizations/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;

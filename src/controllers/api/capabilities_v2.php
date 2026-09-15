@@ -59,6 +59,8 @@ try {
         'directory_binding_refresh' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED'),
         'directory_organization_write' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED'),
         'directory_client_write' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED'),
+        'directory_organization_create' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED'),
+        'directory_client_create' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'),
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

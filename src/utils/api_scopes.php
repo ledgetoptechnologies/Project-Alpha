@@ -58,6 +58,21 @@ function api_scope_catalog(): array
             'description' => 'Update one application-bound client profile through a version-checked API v2 command. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [],
         ],
+        'directory.clients.create' => [
+            'label' => 'API v2 client directory create',
+            'description' => 'Create and bind one client through an application-scoped API v2 command. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.organizations.create' => [
+            'label' => 'API v2 organization directory create',
+            'description' => 'Create and bind one organization through an application-scoped API v2 command. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.organization.assign' => [
+            'label' => 'API v2 client organization assignment',
+            'description' => 'Assign a newly created client through an exact active application-bound organization identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

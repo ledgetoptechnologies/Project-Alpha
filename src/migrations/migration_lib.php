@@ -266,6 +266,7 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_directory_organization_profile_command_receipts' => 93,
         'api_v2_directory_client_profile_command_receipts' => 94,
         'api_v2_directory_backfill_attestations' => 96,
+        'api_v2_directory_create_command_receipts' => 97,
     ];
 
     return array_values(array_filter(
@@ -424,6 +425,13 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
         'api_v2_directory_backfill_attestations' => [
             'attestation_sha256' => 96, 'attestation_json' => 96, 'created_at' => 96,
         ],
+        'api_v2_directory_create_command_receipts' => [
+            'application_pk' => 97, 'resource_type' => 97, 'command_id' => 97,
+            'request_sha256' => 97, 'external_id' => 97, 'public_id' => 97,
+            'expected_authorization_generation' => 97, 'result_revision' => 97,
+            'result_projection_sha256' => 97, 'result_authorization_generation' => 97,
+            'created_at' => 97,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -516,6 +524,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_organization_profile_command_receipts',
         'api_v2_directory_client_profile_command_receipts',
         'api_v2_directory_backfill_attestations',
+        'api_v2_directory_create_command_receipts',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -567,6 +576,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_organization_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_client_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_backfill_attestations' => ['attestation_sha256', 'attestation_json', 'created_at'],
+        'api_v2_directory_create_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'result_authorization_generation', 'created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

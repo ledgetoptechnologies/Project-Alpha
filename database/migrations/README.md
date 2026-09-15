@@ -117,6 +117,20 @@ enable the route until the existing-row backfill, complete writer inventory,
 real-MySQL concurrency/rollback checks, and external-management handoff are
 accepted.
 
+Migration `0097_api_v2_directory_create_command_receipts.sql` adds only the
+immutable idempotency receipts for generic client and organization creation.
+The routes have independent default-off flags and explicit create scopes;
+assigning a new client to an organization also requires the separate
+`directory.clients.organization.assign` scope and an exact active same-app
+organization binding revision. Creation atomically records the resource,
+initial upsert revision, external binding, authorization generation, and
+receipt while crossing the same transaction-bound generic workspace,
+relationship, eligibility, and outbox projection boundary as browser creates.
+It does not initialize private or financial state, create portal credentials,
+or infer an access grant. Managed external ownership must remain unavailable
+and both route flags must stay disabled until the complete browser/API writer
+inventory and operational handoff are separately accepted.
+
 For an operator-approved dedicated API key, the generic provisioning CLI can
 bind its numeric key ID to a new API v2 application and initialize that
 application's authorization generation at zero. It requires migrations 0088

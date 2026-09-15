@@ -62,6 +62,12 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_client_write' => [
             ['directory.clients.write', '/api/v2/directory/clients/{publicId}/profile/commands', 'POST'],
         ],
+        'directory_organization_create' => [
+            ['directory.organizations.create', '/api/v2/directory/organizations/commands', 'POST'],
+        ],
+        'directory_client_create' => [
+            ['directory.clients.create', '/api/v2/directory/clients/commands', 'POST'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;
@@ -74,6 +80,10 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
             ];
             if (in_array($scope, $keyScopes, true)) $granted[] = ['name' => $scope];
         }
+    }
+    if (($features['directory_client_create'] ?? false) === true
+        && in_array('directory.clients.organization.assign', $keyScopes, true)) {
+        $granted[] = ['name' => 'directory.clients.organization.assign'];
     }
     return [
         'apiVersion' => '2',
