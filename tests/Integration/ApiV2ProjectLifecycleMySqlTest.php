@@ -128,9 +128,21 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
 
     public function testReleaseAttestationRequiresAndReadsBackRealMySqlSchema(): void
     {
-        $before=\api_v2_project_backfill_attestation($this->first);self::assertTrue($before['schemaReady']);self::assertTrue($before['evidenceComplete']);self::assertFalse($before['complete']);
+        $before=\api_v2_project_backfill_attestation($this->first);self::assertTrue($before['schemaReady'],json_encode($before,JSON_THROW_ON_ERROR));self::assertTrue($before['evidenceComplete'],json_encode($before,JSON_THROW_ON_ERROR));self::assertFalse($before['complete']);
         $digest=\api_v2_project_backfill_attestation_persist($this->first);self::assertTrue(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
         $this->first->exec("UPDATE schema_migrations SET checksum='".str_repeat('0',64)."' WHERE version=102");self::assertFalse(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
+    }
+
+    public function testReleaseAttestationFailsClosedWithoutBindingOneToOneUniqueKey(): void
+    {
+        $digest=\api_v2_project_backfill_attestation_persist($this->first);$this->first->exec('ALTER TABLE api_v2_project_external_bindings DROP INDEX uq_api_v2_project_binding_public');
+        $proof=\api_v2_project_backfill_attestation($this->first);self::assertGreaterThan(0,$proof['violations']['index']);self::assertFalse($proof['evidenceComplete']);self::assertFalse($proof['complete']);self::assertFalse(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
+    }
+
+    public function testReleaseAttestationFailsClosedWithoutReceiptProjectForeignKey(): void
+    {
+        $digest=\api_v2_project_backfill_attestation_persist($this->first);$this->first->exec('ALTER TABLE api_v2_project_command_receipts DROP FOREIGN KEY fk_api_v2_project_command_project');
+        $proof=\api_v2_project_backfill_attestation($this->first);self::assertGreaterThan(0,$proof['violations']['foreign_key']);self::assertFalse($proof['evidenceComplete']);self::assertFalse($proof['complete']);self::assertFalse(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
     }
 
     private function resetSchema(): void

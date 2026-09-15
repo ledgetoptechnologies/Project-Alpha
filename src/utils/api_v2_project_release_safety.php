@@ -38,6 +38,19 @@ function api_v2_project_release_invalid_rows(PDO$pdo,string$sql,callable$invalid
     $count=0;foreach($pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC)as$row)if($invalid($row))$count++;return$count;
 }
 
+/** @param list<string> $columns */
+function api_v2_project_release_mysql_index_matches(PDO$pdo,string$table,string$name,bool$unique,array$columns):bool
+{
+    $s=$pdo->prepare('SELECT non_unique,column_name,sub_part FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=? ORDER BY seq_in_index');$s->execute([$table,$name]);$rows=$s->fetchAll(PDO::FETCH_NUM);
+    if(count($rows)!==count($columns))return false;foreach($rows as$i=>$row)if((int)$row[0]!==($unique?0:1)||(string)$row[1]!==$columns[$i]||$row[2]!==null)return false;return true;
+}
+
+function api_v2_project_release_mysql_fk_matches(PDO$pdo,string$table,string$name,string$column,string$referencedTable,string$referencedColumn):bool
+{
+    $s=$pdo->prepare("SELECT k.column_name,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.table_name=k.table_name AND r.constraint_name=k.constraint_name WHERE k.constraint_schema=DATABASE() AND k.table_name=? AND k.constraint_name=? ORDER BY k.ordinal_position");$s->execute([$table,$name]);$rows=$s->fetchAll(PDO::FETCH_NUM);
+    return count($rows)===1&&(string)$rows[0][0]===$column&&(string)$rows[0][1]===$referencedTable&&(string)$rows[0][2]===$referencedColumn&&(string)$rows[0][3]==='RESTRICT'&&(string)$rows[0][4]==='NO ACTION';
+}
+
 function api_v2_project_release_code_digest():string
 {
     $root=dirname(__DIR__,2);$paths=['src/services/ProjectRevisionService.php','src/utils/api_v2_project_lifecycle.php','src/utils/api_v2_project_sync.php','src/utils/api_v2_project_backfill.php','src/utils/api_v2_project_release_safety.php'];$parts=[];
@@ -50,7 +63,7 @@ function api_v2_project_backfill_evidence(PDO$pdo):array
 {
     if($pdo->inTransaction())throw new LogicException('Project backfill attestation requires no active transaction.');
     $root=dirname(__DIR__,2);$migrationPath=$root.'/database/migrations/0102_api_v2_project_synchronization.sql';$schemaDigest=api_v2_project_release_file_digest($migrationPath);$acceptedSchemaDigests=api_v2_project_release_file_accepted_digests($migrationPath);
-    $violations=['schema'=>0,'migration'=>0,'constraint'=>0,'authorization'=>0,'binding'=>0,'receipt'=>0,'identity'=>0,'missing_history'=>0,'projection_drift'=>0];
+    $violations=['schema'=>0,'migration'=>0,'constraint'=>0,'index'=>0,'foreign_key'=>0,'authorization'=>0,'binding'=>0,'receipt'=>0,'identity'=>0,'missing_history'=>0,'projection_drift'=>0];
     $required=[
         'api_v2_project_authorization_state'=>['application_pk','authorization_generation','updated_at'],
         'api_v2_project_external_bindings'=>['application_pk','external_id','project_public_id','project_revision','project_projection_sha256','created_at','updated_at'],
@@ -67,7 +80,15 @@ function api_v2_project_backfill_evidence(PDO$pdo):array
         if($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'){
             $present=array_fill_keys($pdo->query("SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema=DATABASE() AND constraint_type='CHECK'")->fetchAll(PDO::FETCH_COLUMN),true);
             foreach($constraintNames as$name)if(!isset($present[$name]))$violations['constraint']++;
-        }else{$source=file_get_contents($migrationPath)?:'';foreach($constraintNames as$name)if(!str_contains($source,'CONSTRAINT '.$name))$violations['constraint']++;}
+            $indexes=[['api_v2_project_authorization_state','PRIMARY',true,['application_pk']],['api_v2_project_external_bindings','PRIMARY',true,['application_pk','external_id']],['api_v2_project_external_bindings','uq_api_v2_project_binding_public',true,['application_pk','project_public_id']],['api_v2_project_external_bindings','fk_api_v2_project_binding_project',false,['project_public_id']],['api_v2_project_command_receipts','PRIMARY',true,['application_pk','history_epoch','command_id']],['api_v2_project_command_receipts','fk_api_v2_project_command_project',false,['project_public_id']],['api_v2_project_backfill_attestations','PRIMARY',true,['attestation_sha256']]];
+            foreach($indexes as[$table,$name,$unique,$columns])if(!api_v2_project_release_mysql_index_matches($pdo,$table,$name,$unique,$columns))$violations['index']++;
+            $foreignKeys=[['api_v2_project_authorization_state','fk_api_v2_project_auth_application','application_pk','api_v2_applications','id'],['api_v2_project_external_bindings','fk_api_v2_project_binding_application','application_pk','api_v2_applications','id'],['api_v2_project_external_bindings','fk_api_v2_project_binding_project','project_public_id','projects','public_id'],['api_v2_project_command_receipts','fk_api_v2_project_command_application','application_pk','api_v2_applications','id'],['api_v2_project_command_receipts','fk_api_v2_project_command_project','project_public_id','projects','public_id']];
+            foreach($foreignKeys as[$table,$name,$column,$referencedTable,$referencedColumn])if(!api_v2_project_release_mysql_fk_matches($pdo,$table,$name,$column,$referencedTable,$referencedColumn))$violations['foreign_key']++;
+        }else{
+            $source=preg_replace('/\s+/',' ',file_get_contents($migrationPath)?:'');foreach($constraintNames as$name)if(!str_contains($source,'CONSTRAINT '.$name))$violations['constraint']++;
+            foreach(['application_pk BIGINT UNSIGNED NOT NULL PRIMARY KEY','PRIMARY KEY (application_pk,external_id)','UNIQUE KEY uq_api_v2_project_binding_public (application_pk,project_public_id)','PRIMARY KEY (application_pk,history_epoch,command_id)','attestation_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY']as$definition)if(!str_contains($source,$definition))$violations['index']++;
+            foreach(['CONSTRAINT fk_api_v2_project_auth_application FOREIGN KEY (application_pk) REFERENCES api_v2_applications(id) ON DELETE RESTRICT','CONSTRAINT fk_api_v2_project_binding_application FOREIGN KEY (application_pk) REFERENCES api_v2_applications(id) ON DELETE RESTRICT','CONSTRAINT fk_api_v2_project_binding_project FOREIGN KEY (project_public_id) REFERENCES projects(public_id) ON DELETE RESTRICT','CONSTRAINT fk_api_v2_project_command_application FOREIGN KEY (application_pk) REFERENCES api_v2_applications(id) ON DELETE RESTRICT','CONSTRAINT fk_api_v2_project_command_project FOREIGN KEY (project_public_id) REFERENCES projects(public_id) ON DELETE RESTRICT']as$definition)if(!str_contains($source,$definition))$violations['foreign_key']++;
+        }
         $violations['authorization']+=(int)$pdo->query('SELECT COUNT(*) FROM api_v2_applications app LEFT JOIN api_v2_project_authorization_state auth ON auth.application_pk=app.id WHERE auth.application_pk IS NULL OR auth.authorization_generation<0 OR auth.authorization_generation>9223372036854775807')->fetchColumn();
         $violations['binding']+=api_v2_project_release_invalid_rows($pdo,'SELECT binding.*,app.id app_exists,project.id project_exists FROM api_v2_project_external_bindings binding LEFT JOIN api_v2_applications app ON app.id=binding.application_pk LEFT JOIN projects project ON project.public_id=binding.project_public_id',static fn(array$row):bool=>$row['app_exists']===null||$row['project_exists']===null||(int)$row['project_revision']<1||preg_match('/^[0-9a-f]{64}$/D',(string)$row['project_projection_sha256'])!==1);
         $violations['receipt']+=api_v2_project_release_invalid_rows($pdo,'SELECT receipt.*,app.id app_exists,project.id project_exists FROM api_v2_project_command_receipts receipt LEFT JOIN api_v2_applications app ON app.id=receipt.application_pk LEFT JOIN projects project ON project.public_id=receipt.project_public_id',static fn(array$row):bool=>$row['app_exists']===null||$row['project_exists']===null||preg_match('/^[0-9a-f]{64}$/D',(string)$row['request_sha256'])!==1||preg_match('/^[0-9a-f]{64}$/D',(string)$row['result_projection_sha256'])!==1);
@@ -84,7 +105,7 @@ function api_v2_project_backfill_evidence(PDO$pdo):array
             $covered++;$coverage[]=['publicId'=>$publicId,'revision'=>(int)$revision,'projectionSha256'=>$expected];
         }
     }
-    return['attestationVersion'=>2,'schemaReady'=>$violations['schema']===0&&$violations['migration']===0&&$violations['constraint']===0,'evidenceComplete'=>array_sum($violations)===0,'source'=>$source,'covered'=>$covered,'schemaSha256'=>$schemaDigest,'codeSha256'=>api_v2_project_release_code_digest(),'coverageDigest'=>hash('sha256',json_encode($coverage,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)),'violations'=>$violations];
+    return['attestationVersion'=>3,'schemaReady'=>$violations['schema']===0&&$violations['migration']===0&&$violations['constraint']===0&&$violations['index']===0&&$violations['foreign_key']===0,'evidenceComplete'=>array_sum($violations)===0,'source'=>$source,'covered'=>$covered,'schemaSha256'=>$schemaDigest,'codeSha256'=>api_v2_project_release_code_digest(),'coverageDigest'=>hash('sha256',json_encode($coverage,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)),'violations'=>$violations];
 }
 
 function api_v2_project_backfill_evidence_json(array$evidence):string{return json_encode($evidence,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);}

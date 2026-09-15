@@ -124,7 +124,8 @@ php bin/check-api-v2-project-release.php --attestation-sha256=<digest emitted ab
 Continue from the emitted cursor until no cursor remains. The staging release
 must run the check command with the reviewed digest immediately before enabling
 any Project synchronization route; it exits nonzero for a missing/stale receipt,
-partial/wrong 0102 schema, or code/schema/coverage drift. Then run focused and
+partial/wrong 0102 schema (including binding/receipt keys and foreign keys), or
+code/schema/coverage drift. Then run focused and
 full tests plus disposable MySQL concurrency/rollback tests. Provision only the
 needed per-route scopes and enable only the reviewed routes. A missing or
 drifted canonical history row causes reads and commands to fail closed.
