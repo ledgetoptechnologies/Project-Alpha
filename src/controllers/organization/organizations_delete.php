@@ -4,6 +4,8 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'directory','delete')) { header('Location: /?page=organization/organizations-list&directory_managed=1'); exit; }
 
 // Verify CSRF token
 csrf_verify_post_or_redirect('organization/organizations-edit');

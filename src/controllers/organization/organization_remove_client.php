@@ -4,6 +4,8 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'relationship','remove')) { header('Location: /?page=organization/organizations-list&directory_managed=1'); exit; }
 
 $organization_id = (int)($_POST['organization_id'] ?? 0);
 $client_id = (int)($_POST['client_id'] ?? 0);

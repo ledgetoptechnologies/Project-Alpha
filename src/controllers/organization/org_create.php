@@ -4,8 +4,10 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
 
 header('Content-Type: application/json');
+if (api_v2_directory_management_guard($pdo,'organization','create')) { http_response_code(409); echo json_encode(['success'=>false,'error'=>API_V2_DIRECTORY_MANAGEMENT_LABEL]); exit; }
 
 // CSRF will be verified by public/index.php POST handler, but double-check if available
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

@@ -5,6 +5,8 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/client_onboarding.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 client_onboarding_revoke_stale($pdo);
 
@@ -373,10 +375,12 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
                       <label style="display:block;margin-top:10px"><span class="label-muted">Review notes</span><textarea class="input" name="review_notes" rows="2"></textarea></label>
                       <div class="onboarding-review-actions">
                         <button class="btn btn-danger" name="decision" value="reject" formnovalidate>Reject</button>
+                        <?php if(!$directoryManagementStatus['effective']):?>
                         <button class="btn btn-primary" name="decision" value="approve" onclick="this.form.resolution.value='create'">Approve as New Client</button>
                         <?php if ($clientMatches): ?>
                           <button class="btn" name="decision" value="approve" onclick="this.form.resolution.value='keep_existing'">Keep Existing Client</button>
                           <button class="btn btn-primary" name="decision" value="approve" onclick="this.form.resolution.value='merge_existing'">Merge Selected Fields</button>
+                        <?php endif; ?>
                         <?php endif; ?>
                       </div>
                       <input type="hidden" name="resolution" value="">

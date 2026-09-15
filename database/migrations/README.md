@@ -238,3 +238,13 @@ and public identity at the restored revision. A tombstoned external ID cannot
 be silently replaced with a different ID. Do not enable generic binding or status routes until the
 SQLite and disposable MySQL 8.4 lifecycle, concurrency, fail-closed status,
 external-ID reuse, and rollback gates pass.
+
+Migration `0098_external_directory_management_policy.sql` adds an optional,
+explicitly configured directory-management policy, immutable release evidence,
+and an audit trail. It creates no application, API key, grant, or active policy.
+The policy stays inactive unless the selected application and its non-legacy
+key pass every live scope, route, identity, authorization, schema, writer, and
+release-evidence check. If a check later fails, local administrator actions are
+made available and the transition is audited. Source lifecycle and relationship
+API routes are not implemented in this release, so configuration is retained
+but cannot yet become effective.

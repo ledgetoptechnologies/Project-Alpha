@@ -267,6 +267,9 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_directory_client_profile_command_receipts' => 94,
         'api_v2_directory_backfill_attestations' => 96,
         'api_v2_directory_create_command_receipts' => 97,
+        'api_v2_directory_management_policy' => 98,
+        'api_v2_directory_management_attestations' => 98,
+        'api_v2_directory_management_audit' => 98,
     ];
 
     return array_values(array_filter(
@@ -432,6 +435,18 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'result_projection_sha256' => 97, 'result_authorization_generation' => 97,
             'created_at' => 97,
         ],
+        'api_v2_directory_management_policy' => [
+            'singleton'=>98,'configured_enabled'=>98,'ownership_active'=>98,'application_pk'=>98,'source_instance_id'=>98,
+            'application_id'=>98,'history_epoch'=>98,'release_attestation_sha256'=>98,
+            'last_effective'=>98,'last_reason'=>98,'configured_by'=>98,'configured_at'=>98,'updated_at'=>98,
+        ],
+        'api_v2_directory_management_attestations' => [
+            'attestation_sha256'=>98,'attestation_json'=>98,'created_by'=>98,'created_at'=>98,
+        ],
+        'api_v2_directory_management_audit' => [
+            'id'=>98,'event_type'=>98,'outcome'=>98,'reason'=>98,'application_pk'=>98,'actor_user_id'=>98,
+            'target_type'=>98,'action_name'=>98,'metadata_json'=>98,'created_at'=>98,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -525,6 +540,8 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_client_profile_command_receipts',
         'api_v2_directory_backfill_attestations',
         'api_v2_directory_create_command_receipts',
+        'api_v2_directory_management_policy', 'api_v2_directory_management_attestations',
+        'api_v2_directory_management_audit',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -577,6 +594,9 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_client_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_backfill_attestations' => ['attestation_sha256', 'attestation_json', 'created_at'],
         'api_v2_directory_create_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'result_authorization_generation', 'created_at'],
+        'api_v2_directory_management_policy' => ['singleton','configured_enabled','ownership_active','application_pk','source_instance_id','application_id','history_epoch','release_attestation_sha256','last_effective','last_reason','configured_by','configured_at','updated_at'],
+        'api_v2_directory_management_attestations' => ['attestation_sha256','attestation_json','created_by','created_at'],
+        'api_v2_directory_management_audit' => ['id','event_type','outcome','reason','application_pk','actor_user_id','target_type','action_name','metadata_json','created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

@@ -746,6 +746,7 @@ $directControllers = [
     'api/catalog-v1' => 'api/catalog_v1.php',
     'settings/workforce-catalog-handler' => 'settings/workforce_catalog_handler.php',
     'settings/external-ops-handler' => 'settings/external_ops_handler.php',
+    'settings/directory-management-handler' => 'settings/directory_management_handler.php',
     'workforce/contractor-invoice' => 'workforce/contractor_invoice.php',
     'workforce/contractor-invoice-download' => 'workforce/contractor_invoice_download.php',
 ];
@@ -1135,6 +1136,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $skipCsrfFor = ['auth', 'reset-request', 'reset-verify', 'reset-update', '2fa-setup-action', '2fa-verify-action', 'public-quote-action', 'public-contract-sign', 'public-contract-action', 'public-project-upload', 'organization/org-create', 'organization/organization-update-notes', 'stripe-webhook', 'stripe-webhook-legacy', 'settings/link-test-connection', 'settings/link-resolver-run', 'settings/managed-delivery-test', 'settings/managed-delivery-send', 'settings/managed-delivery-revoke', 'settings/managed-delivery-retry', 'legal/tos-accept', 'portal/service-assignments-handler'];
     if (!in_array($page, $skipCsrfFor, true)) {
         csrf_verify_post_or_redirect($page);
+    }
+
+    // Interactive directory writers share one server-side policy boundary.
+    // Stateless API v2 routes have already been dispatched above and remain
+    // available to the explicitly authorized application.
+    require_once __DIR__ . '/../src/utils/api_v2_directory_management.php';
+    $directoryWriters = api_v2_directory_management_browser_writers();
+    if (isset($directoryWriters[$page])) {
+        [$directoryTarget, $directoryAction] = $directoryWriters[$page];
+        if (api_v2_directory_management_guard($pdo, $directoryTarget, $directoryAction)) {
+            if ($page === 'organization/org-create') {
+                header('Content-Type: application/json; charset=UTF-8');
+                http_response_code(409);
+                echo json_encode(['success'=>false,'error'=>API_V2_DIRECTORY_MANAGEMENT_LABEL]);
+                exit;
+            }
+            header('Location: /?page=' . ($directoryTarget === 'organization' || $directoryTarget === 'relationship' ? 'organization/organizations-list' : 'client/clients-list') . '&directory_managed=1');
+            exit;
+        }
     }
 
     if ($page === 'settings') {

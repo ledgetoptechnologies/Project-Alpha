@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'client','delete')) { header('Location: /?page=client/clients-list&directory_managed=1'); exit; }
 
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 $id = (int)($_POST['id'] ?? 0);

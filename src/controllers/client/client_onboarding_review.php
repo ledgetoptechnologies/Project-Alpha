@@ -7,11 +7,16 @@ require_once __DIR__ . '/../../utils/client_onboarding.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
 
 $organizationId = request_client_org_id();
 $userId = (int)($_SESSION['user']['id'] ?? 0);
 $submissionId = (int)($_POST['submission_id'] ?? 0);
 $decision = (string)($_POST['decision'] ?? '');
+if ($decision === 'approve' && api_v2_directory_management_guard($pdo, 'directory', 'onboarding_review')) {
+    header('Location: /?page=client/onboarding&directory_managed=1');
+    exit;
+}
 $resolution = (string)($_POST['resolution'] ?? '');
 $matchClientId = max(0, (int)($_POST['match_client_id'] ?? 0));
 $matchOrganizationId = max(0, (int)($_POST['match_organization_id'] ?? 0));

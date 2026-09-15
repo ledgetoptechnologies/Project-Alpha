@@ -5,6 +5,8 @@ require_once __DIR__ . '/../../utils/organization_schema.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'organization','create')) { header('Location: /?page=organization/organizations-list&directory_managed=1'); exit; }
 
 $name = trim($_POST['name'] ?? '');
 $generalEmail = strtolower(trim((string)($_POST['general_email'] ?? '')));

@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/escaper.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $per = (int)($_GET['per_page'] ?? 50);
 if (!in_array($per, [50, 100], true)) $per = 50;
@@ -88,11 +90,12 @@ function archived_client_email_html(?string $email): string
           </tr>
           <tr>
             <td colspan="6" style="padding:10px">
-              <form method="post" action="/?page=client/clients-restore" onsubmit="return confirm('Restore client <?php echo e($r['name']); ?> to active list?');" style="display:inline-block">
+              <?php if(!$directoryManagementStatus['effective']):?><form method="post" action="/?page=client/clients-restore" onsubmit="return confirm('Restore client <?php echo e($r['name']); ?> to active list?');" style="display:inline-block">
                 <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                 <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
                 <button type="submit" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff">Restore</button>
               </form>
+              <?php else:?><span class="api-key-badge">Managed externally</span><?php endif;?>
             </td>
           </tr>
         <?php endforeach; ?>

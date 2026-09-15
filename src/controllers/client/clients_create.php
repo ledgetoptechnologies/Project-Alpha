@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'client','create')) { header('Location: /?page=client/clients-list&directory_managed=1'); exit; }
 
 $__orgId = request_client_org_id() ?: null;
 $__creator = (int)($_SESSION['user']['id'] ?? 0) ?: null;
