@@ -9,6 +9,8 @@ require_once __DIR__ . '/../../services/PortalProjectionMutationService.php';
 require_once __DIR__ . '/../../services/ProjectContractEligibilityGuardService.php';
 require_once __DIR__ . '/../../services/ProjectReceivablesSummaryService.php';
 require_once __DIR__ . '/../../services/ProjectCloseGuardService.php';
+require_once __DIR__ . '/../../services/ProjectLifecycleService.php';
+require_once __DIR__ . '/../../services/ProjectRevisionService.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -28,7 +30,7 @@ if (!$id) {
     exit('Project ID is required');
 }
 
-$validStatuses = ['not_started', 'active', 'overdue', 'completed', 'cancelled'];
+$validStatuses = ['not_started', 'active', 'completed', 'cancelled'];
 if (!in_array($status, $validStatuses)) {
     http_response_code(400);
     exit('Invalid status');
@@ -36,9 +38,14 @@ if (!in_array($status, $validStatuses)) {
 
 try {
     $pdo->beginTransaction();
-    $transition = (new App\Services\ProjectCloseGuardService($pdo))->transition(
+    $action = match ((string)$status) {
+        'completed' => 'complete',
+        'cancelled' => 'cancel',
+        default => (string)$status,
+    };
+    $transition = (new App\Services\ProjectLifecycleService($pdo))->apply(
         $id,
-        (string)$status,
+        $action,
         (int)($_SESSION['user']['id'] ?? 0)
     );
     if (!$transition['transitioned']) {

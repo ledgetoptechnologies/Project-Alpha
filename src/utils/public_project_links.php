@@ -131,6 +131,7 @@ function pa_project_public_resolve(PDO $pdo, string $token): ?array
         LEFT JOIN organizations o ON o.id = p.organization_id
         LEFT JOIN organization_departments od ON od.id = p.department_id
         WHERE p.public_project_token = ? AND p.public_project_enabled = 1
+          AND p.archived_at IS NULL AND p.portal_publish_enabled = 1
         LIMIT 1
     ');
     $stmt->execute([$token]);

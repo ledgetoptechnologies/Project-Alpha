@@ -68,6 +68,11 @@ try {
         'directory_relationship_write' => api_v2_enabled('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED'),
         'directory_binding_revoke' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED'),
         'directory_inventory' => api_v2_enabled('APP_API_V2_DIRECTORY_INVENTORY_ENABLED'),
+        'projects_read' => api_v2_enabled('APP_API_V2_PROJECTS_READ_ENABLED'),
+        'projects_complete' => api_v2_enabled('APP_API_V2_PROJECTS_COMPLETE_ENABLED'),
+        'projects_cancel' => api_v2_enabled('APP_API_V2_PROJECTS_CANCEL_ENABLED'),
+        'projects_archive' => api_v2_enabled('APP_API_V2_PROJECTS_ARCHIVE_ENABLED'),
+        'projects_restore' => api_v2_enabled('APP_API_V2_PROJECTS_RESTORE_ENABLED'),
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

@@ -92,6 +92,21 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_inventory' => [
             ['directory.inventory.read', '/api/v2/directory/inventory'],
         ],
+        'projects_read' => [
+            ['projects.v2.read', '/api/v2/projects/{publicId}'],
+        ],
+        'projects_complete' => [
+            ['projects.lifecycle.complete', '/api/v2/projects/{publicId}/complete/commands', 'POST'],
+        ],
+        'projects_cancel' => [
+            ['projects.lifecycle.cancel', '/api/v2/projects/{publicId}/cancel/commands', 'POST'],
+        ],
+        'projects_archive' => [
+            ['projects.lifecycle.archive', '/api/v2/projects/{publicId}/archive/commands', 'POST'],
+        ],
+        'projects_restore' => [
+            ['projects.lifecycle.restore', '/api/v2/projects/{publicId}/restore/commands', 'POST'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;

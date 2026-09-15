@@ -303,7 +303,7 @@ final class ManagedDeliveryService
     private function scopeExists(PDO $pdo, string $type, string $publicId): bool
     {
         $table = self::SCOPE_TABLES[$type];
-        $suffix = $type === 'project' ? " AND status<>'cancelled'" : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
+        $suffix = $type === 'project' ? " AND status<>'cancelled' AND " . ProjectLifecycleSchema::visibility($pdo, '', true) : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
         $statement = $pdo->prepare("SELECT 1 FROM {$table} WHERE public_id=?{$suffix} LIMIT 1");
         $statement->execute([$publicId]);
         return (bool)$statement->fetchColumn();

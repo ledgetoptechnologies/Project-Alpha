@@ -10,13 +10,18 @@ $status = trim((string)($_GET['status'] ?? ''));
 $clientId = trim((string)($_GET['client_id'] ?? ''));
 $orgId = trim((string)($_GET['org_id'] ?? ''));
 
-$where = [];
+$showArchived = $status === 'archived';
+$where = [$showArchived ? 'p.archived_at IS NOT NULL' : 'p.archived_at IS NULL'];
 $params = [];
 if ($q !== '') {
     $where[] = 'p.name LIKE ?';
     $params[] = '%' . $q . '%';
 }
-if ($status !== '') {
+if ($status === 'archived') {
+    // The archive predicate above is the complete lifecycle filter.
+} elseif ($status === 'overdue') {
+    $where[] = "p.status IN ('not_started','active') AND p.estimated_end IS NOT NULL AND p.estimated_end < CURRENT_DATE";
+} elseif ($status !== '') {
     $where[] = 'p.status = ?';
     $params[] = $status;
 }
@@ -45,7 +50,8 @@ $sql = "
  LEFT JOIN clients c ON c.id = p.client_id
  LEFT JOIN organizations o ON o.id = p.organization_id
     {$whereClause}
-  ORDER BY FIELD(p.status, 'active', 'overdue', 'not_started', 'completed', 'cancelled'),
+  ORDER BY CASE WHEN p.status IN ('not_started','active') AND p.estimated_end IS NOT NULL AND p.estimated_end < CURRENT_DATE THEN 0 ELSE 1 END,
+           FIELD(p.status, 'active', 'not_started', 'completed', 'cancelled'),
            p.created_at DESC
 ";
 
@@ -69,6 +75,7 @@ $statusStyles = [
     'not_started' => ['label' => 'Not Started', 'class' => 'not-started'],
     'completed' => ['label' => 'Completed', 'class' => 'completed'],
     'cancelled' => ['label' => 'Cancelled', 'class' => 'cancelled'],
+    'archived' => ['label' => 'Archived', 'class' => 'cancelled'],
 ];
 
 $visibleActive = count(array_filter($rows, static fn(array $row): bool => ($row['status'] ?? '') === 'active'));
@@ -115,6 +122,7 @@ $formatDate = static function ($value): string {
           <option value="overdue" <?php echo $status === 'overdue' ? 'selected' : ''; ?>>Overdue</option>
           <option value="completed" <?php echo $status === 'completed' ? 'selected' : ''; ?>>Completed</option>
           <option value="cancelled" <?php echo $status === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+          <option value="archived" <?php echo $status === 'archived' ? 'selected' : ''; ?>>Archived</option>
         </select>
       </label>
 
@@ -150,7 +158,9 @@ $formatDate = static function ($value): string {
     <div class="projects-list">
       <?php foreach ($rows as $project): ?>
         <?php
-          $projectStatus = (string)($project['status'] ?? 'not_started');
+          $projectStatus = !empty($project['archived_at']) ? 'archived' : (in_array((string)($project['status'] ?? ''), ['not_started','active'], true)
+              && !empty($project['estimated_end']) && (string)$project['estimated_end'] < date('Y-m-d')
+              ? 'overdue' : (string)($project['status'] ?? 'not_started'));
           $statusStyle = $statusStyles[$projectStatus] ?? ['label' => ucwords(str_replace('_', ' ', $projectStatus)), 'class' => 'cancelled'];
           $billingLabel = ($project['invoice_billing_period'] ?? 'per_invoice') === 'monthly' ? 'Monthly' : 'Per Invoice';
         ?>
@@ -179,11 +189,12 @@ $formatDate = static function ($value): string {
 
           <div class="project-row-actions">
             <a class="btn btn-sm" href="/?page=project/projects-details&amp;id=<?php echo (int)$project['id']; ?>">View Project</a>
-            <form method="post" action="/?page=project/projects-delete" onsubmit="return confirm('Delete this project and all mappings?');">
+            <form method="post" action="/?page=project/projects-delete" onsubmit="return confirm('<?php echo $showArchived ? 'Restore this project?' : 'Archive this project? Its documents, billing, files, and history will be retained.'; ?>');">
               <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
               <input type="hidden" name="id" value="<?php echo (int)$project['id']; ?>">
+              <input type="hidden" name="lifecycle_action" value="<?php echo $showArchived ? 'restore' : 'archive'; ?>">
               <input type="hidden" name="redirect" value="/?page=project/projects-list">
-              <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+              <button class="btn btn-sm <?php echo $showArchived ? '' : 'btn-danger'; ?>" type="submit"><?php echo $showArchived ? 'Restore' : 'Archive'; ?></button>
             </form>
           </div>
         </article>

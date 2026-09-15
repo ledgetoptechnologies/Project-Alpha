@@ -112,7 +112,8 @@ final class ProjectWorkPlanningService
 
     private function requireProject(PDO $pdo, int $projectId): void
     {
-        $statement = $pdo->prepare("SELECT 1 FROM projects WHERE id=? AND status<>'cancelled'");
+        $visibility = ProjectLifecycleSchema::visibility($pdo, '');
+        $statement = $pdo->prepare("SELECT 1 FROM projects WHERE id=? AND status<>'cancelled' AND {$visibility}");
         $statement->execute([$projectId]);
         if (!$statement->fetchColumn()) {
             throw new DomainException('Project is unavailable.');

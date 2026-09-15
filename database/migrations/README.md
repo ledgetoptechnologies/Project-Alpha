@@ -248,3 +248,11 @@ release-evidence check. If a check later fails, local administrator actions are
 made available and the transition is audited. Source lifecycle and relationship
 API routes are not implemented in this release, so configuration is retained
 but cannot yet become effective.
+
+Migration `0100_project_lifecycle_api_foundation.sql` replaces persisted
+Project overdue state with a derived warning, adds reversible archive state and
+permanent canonical revisions, and makes Project change history deletion-
+restricting. It also adds application-and-epoch-scoped receipts for dormant,
+fine-grained API v2 complete, cancel, archive, and restore commands. Existing
+Projects are not assigned synthetic SQL hashes: run the bounded, dry-run-first
+`bin/backfill-api-v2-projects.php` command before enabling any Project API flag.

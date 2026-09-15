@@ -6,7 +6,7 @@ header('Content-Type: application/json');
 $term = trim((string)($_GET['term'] ?? ''));
 if ($term === '') { echo json_encode([]); exit; }
 
-$where = ['p.name LIKE ?'];
+$where = ['p.name LIKE ?', 'p.archived_at IS NULL'];
 $params = ['%'.$term.'%'];
 
 [$scopeWhere, $scopeParams] = scope_clause($pdo, 'p', (int)$_SESSION['user']['id']);

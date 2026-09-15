@@ -23,7 +23,8 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('.project-row-link:focus-visible::after', $view);
         self::assertStringContainsString('.project-row-actions>a,.project-row-actions>form{position:relative;z-index:2}', $view);
         self::assertStringContainsString('<form method="post" action="/?page=project/projects-delete"', $view);
-        self::assertStringContainsString('type="submit">Delete</button>', $view);
+        self::assertStringContainsString("'Archive'", $view);
+        self::assertStringContainsString('name="lifecycle_action"', $view);
         self::assertStringContainsString('>View Project</a>', $view);
     }
 
@@ -974,13 +975,13 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('balance_due>0.005', $receivables);
         self::assertStringContainsString('summarizeProjects', $receivables);
 
-        self::assertStringContainsString('ProjectCloseGuardService($pdo))->transition(', $controller);
+        self::assertStringContainsString('ProjectLifecycleService($pdo))->apply(', $controller);
         self::assertStringContainsString('&closeout_blocked=1', $controller);
         self::assertStringContainsString('&closeout_target=', $controller);
         self::assertStringContainsString('#project-closeout-alert', $controller);
         self::assertStringNotContainsString("\$_POST['redirect']", $controller);
         self::assertStringNotContainsString('UPDATE projects', $controller);
-        $transitionAt = strpos($controller, 'ProjectCloseGuardService($pdo))->transition(');
+        $transitionAt = strpos($controller, 'ProjectLifecycleService($pdo))->apply(');
         $scheduleAt = strpos($controller, 'ScheduleService::syncProject');
         $projectionAt = strpos($controller, 'queueProject($pdo,$id)');
         $commitAt = strrpos($controller, '$pdo->commit()');

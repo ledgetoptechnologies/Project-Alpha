@@ -1,0 +1,140 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Integration;
+
+use App\Services\ProjectRevisionService;
+use PDO;
+use PDOException;
+use PHPUnit\Framework\TestCase;
+
+final class ApiV2ProjectLifecycleMySqlTest extends TestCase
+{
+    private PDO $first;
+    private PDO $second;
+
+    private array $headers = [
+        'source' => '123e4567-e89b-42d3-a456-426614174000',
+        'application' => '223e4567-e89b-42d3-a456-426614174000',
+        'epoch' => '323e4567-e89b-42d3-a456-426614174000',
+    ];
+
+    protected function setUp(): void
+    {
+        $dsn = getenv('API_V2_PROJECT_MYSQL_DSN');
+        $user = getenv('API_V2_PROJECT_MYSQL_USER');
+        $password = getenv('API_V2_PROJECT_MYSQL_PASSWORD');
+        if (!$dsn || !$user || $password === false) {
+            self::markTestSkipped('Run tools/run-api-v2-project-lifecycle-mysql-integration.ps1 for isolated MySQL tests.');
+        }
+        $database = trim((string)(getenv('API_V2_PROJECT_MYSQL_DATABASE') ?: ''));
+        if (getenv('API_V2_PROJECT_MYSQL_ALLOW_DESTRUCTIVE') !== 'isolated-disposable-only'
+            || preg_match('/^api_v2_project_test_[a-f0-9]{32}$/D', $database) !== 1) {
+            throw new \RuntimeException('Project lifecycle MySQL tests require the disposable runner sentinel.');
+        }
+        $options = [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES=>false];
+        $this->first = new PDO($dsn, $user, $password, $options);
+        $this->second = new PDO($dsn, $user, $password, $options);
+        if (!hash_equals($database, (string)$this->first->query('SELECT DATABASE()')->fetchColumn())) {
+            throw new \RuntimeException('Refusing to reset a non-disposable database.');
+        }
+        $this->first->exec('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->second->exec('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ; SET SESSION innodb_lock_wait_timeout=1');
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_lifecycle.php';
+        $this->resetSchema();
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ([$this->first ?? null, $this->second ?? null] as $pdo) {
+            if ($pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
+        }
+    }
+
+    public function testMigrationNormalizesOverdueAndHardDeleteIsRestricted(): void
+    {
+        self::assertSame('active', $this->first->query('SELECT status FROM projects')->fetchColumn());
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM project_retention_guards')->fetchColumn());
+        $this->expectException(PDOException::class);
+        $this->first->exec('DELETE FROM projects WHERE id=1');
+    }
+
+    public function testArchiveReplayAndRevisionFence(): void
+    {
+        $command = ['commandId'=>'423e4567-e89b-42d3-a456-426614174000', 'expectedRevision'=>'1'];
+        $first = \api_v2_project_lifecycle_write($this->first, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'one');
+        self::assertSame(200, $first['status']);
+        self::assertSame('2', $first['payload']['resource']['revision']);
+        self::assertTrue($first['payload']['result']['archived']);
+        $replay = \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'two');
+        self::assertSame(200, $replay['status']);
+        self::assertTrue($replay['payload']['replayed']);
+        $stale = ['commandId'=>'523e4567-e89b-42d3-a456-426614174000', 'expectedRevision'=>'1'];
+        self::assertSame(409, \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'restore', $stale, 7, $this->headers, 'three')['status']);
+    }
+
+    public function testReceiptFailureRollsBackLifecycleHistoryAuditAndSchedule(): void
+    {
+        $this->first->exec("CREATE TRIGGER stop_project_receipt BEFORE INSERT ON api_v2_project_lifecycle_command_receipts FOR EACH ROW SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO=1062, MESSAGE_TEXT='blocked receipt'");
+        $command = ['commandId'=>'623e4567-e89b-42d3-a456-426614174000', 'expectedRevision'=>'1'];
+        self::assertSame(409, \api_v2_project_lifecycle_write($this->first, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'rollback')['status']);
+        $project = $this->first->query('SELECT revision,archived_at FROM projects WHERE id=1')->fetch();
+        self::assertSame(1, (int)$project['revision']);
+        self::assertNull($project['archived_at']);
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM project_changes')->fetchColumn());
+        foreach (['system_audit', 'schedule_entries', 'api_v2_project_lifecycle_command_receipts'] as $table) {
+            self::assertSame(0, (int)$this->first->query("SELECT COUNT(*) FROM `$table`")->fetchColumn(), $table);
+        }
+    }
+
+    public function testApplicationIdentityLockSerializesConcurrentCommands(): void
+    {
+        $this->first->beginTransaction();
+        $this->first->query('SELECT id FROM api_v2_applications WHERE id=3 FOR UPDATE')->fetchColumn();
+        $command = ['commandId'=>'723e4567-e89b-42d3-a456-426614174000', 'expectedRevision'=>'1'];
+        try {
+            \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'blocked');
+            self::fail('Project lifecycle command crossed the application identity lock.');
+        } catch (PDOException $error) {
+            self::assertSame(1205, (int)($error->errorInfo[1] ?? 0), $error->getMessage());
+        }
+        self::assertFalse($this->second->inTransaction());
+        $this->first->commit();
+        self::assertSame(200, \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'after')['status']);
+    }
+
+    private function resetSchema(): void
+    {
+        $tables = ['api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
+        $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
+        foreach ($tables as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
+        $this->first->exec("CREATE TABLE users(id INT PRIMARY KEY) ENGINE=InnoDB;
+            CREATE TABLE api_v2_applications(id BIGINT UNSIGNED PRIMARY KEY,application_id CHAR(36),name VARCHAR(191)) ENGINE=InnoDB;
+            CREATE TABLE api_v2_history_identity(singleton TINYINT UNSIGNED PRIMARY KEY,source_instance_id CHAR(36),history_epoch CHAR(36)) ENGINE=InnoDB;
+            CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL) ENGINE=InnoDB;
+            CREATE TABLE app_config(organization_id INT,config_key VARCHAR(191),config_value TEXT,PRIMARY KEY(organization_id,config_key)) ENGINE=InnoDB;
+            CREATE TABLE organizations(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin) ENGINE=InnoDB;
+            CREATE TABLE clients(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin,organization_id INT NULL) ENGINE=InnoDB;
+            CREATE TABLE projects(id INT PRIMARY KEY,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,client_id INT NULL,organization_id INT NULL,name VARCHAR(255),description TEXT,status ENUM('not_started','active','overdue','completed','cancelled') NOT NULL DEFAULT 'not_started',completed_at DATETIME(6) NULL,source_version VARCHAR(191),estimated_start DATE NULL,estimated_end DATE NULL,updated_at DATETIME(6) NULL) ENGINE=InnoDB;
+            CREATE TABLE contracts(id INT PRIMARY KEY,project_id INT,doc_number VARCHAR(191),status VARCHAR(32),contract_type VARCHAR(32)) ENGINE=InnoDB;
+            CREATE TABLE invoices(id INT PRIMARY KEY,project_id INT,status VARCHAR(32),balance_due DECIMAL(12,2),collection_mode VARCHAR(32),finalized_at DATETIME NULL) ENGINE=InnoDB;
+            CREATE TABLE project_invoices(id INT PRIMARY KEY,project_id INT,status VARCHAR(32),balance_due DECIMAL(12,2),finalized_at DATETIME NULL) ENGINE=InnoDB;
+            CREATE TABLE project_invoice_items(id INT PRIMARY KEY,project_invoice_id INT,invoice_id INT) ENGINE=InnoDB;
+            CREATE TABLE system_audit(id INT AUTO_INCREMENT PRIMARY KEY,user_id INT NULL,organization_id INT NULL,action VARCHAR(191),entity_type VARCHAR(191),entity_id INT,details JSON,ip_address VARCHAR(64),user_agent VARCHAR(255)) ENGINE=InnoDB;
+            CREATE TABLE project_service_locations(id INT PRIMARY KEY,project_id INT,service_location_id INT,is_default TINYINT) ENGINE=InnoDB;
+            CREATE TABLE schedule_entries(id INT AUTO_INCREMENT PRIMARY KEY,project_id INT,job_id INT NULL,service_location_id INT NULL,title VARCHAR(255),starts_at DATETIME NULL,ends_at DATETIME NULL,timezone VARCHAR(64),status VARCHAR(32),source_type VARCHAR(32),source_id INT,created_by INT NULL,UNIQUE KEY uq_schedule_source(source_type,source_id)) ENGINE=InnoDB;
+            INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','test');
+            INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
+            INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
+            INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0');
+            INSERT INTO projects VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,'MySQL Project',NULL,'overdue',NULL,'v1','2026-01-01','2026-01-02',NULL);");
+        $migration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0100_project_lifecycle_api_foundation.sql');
+        self::assertNotFalse($migration);
+        $this->first->exec($migration);
+        $this->first->beginTransaction();
+        (new ProjectRevisionService($this->first))->initialize(1, 'baseline');
+        $this->first->commit();
+    }
+}

@@ -209,6 +209,7 @@ final class PortalServiceAssignmentManager
     {
         if ($subjectId < 1) throw new DomainException('service-assignment-subject-invalid');
         $suffix = $lock ? $this->lockSuffix($pdo) : '';
+        $projectVisibility = ProjectLifecycleSchema::visibility($pdo, 'project', true);
         $query = match ($subjectType) {
             'organization' => 'SELECT public_id,NULL organization_id,NULL client_id FROM organizations WHERE id=?',
             'department' => 'SELECT department.public_id,department.organization_id,NULL client_id
@@ -216,7 +217,7 @@ final class PortalServiceAssignmentManager
             'client', 'standalone_client' => 'SELECT client.public_id,client.organization_id,NULL client_id
                 FROM clients client WHERE client.id=? AND client.archived=0 AND client.deleted_at IS NULL',
             'project' => "SELECT project.public_id,project.organization_id,project.client_id
-                FROM projects project WHERE project.id=? AND project.status<>'cancelled'",
+                FROM projects project WHERE project.id=? AND project.status<>'cancelled' AND {$projectVisibility}",
             default => throw new DomainException('service-assignment-subject-invalid'),
         };
         $statement = $pdo->prepare($query . $suffix);

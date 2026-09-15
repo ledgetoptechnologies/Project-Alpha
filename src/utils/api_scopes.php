@@ -118,6 +118,31 @@ function api_scope_catalog(): array
             'description' => 'Read a bounded inventory of live directory resources, retained tombstones, and this application\'s binding state. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [],
         ],
+        'projects.v2.read' => [
+            'label' => 'API v2 Project read',
+            'description' => 'Read one exact permanently identified Project and its derived overdue warning. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'projects.lifecycle.complete' => [
+            'label' => 'API v2 Project completion',
+            'description' => 'Complete one exact revision-checked Project through the shared closeout rules. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'projects.lifecycle.cancel' => [
+            'label' => 'API v2 Project cancellation',
+            'description' => 'Cancel one exact revision-checked Project through the shared closeout rules. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'projects.lifecycle.archive' => [
+            'label' => 'API v2 Project archive',
+            'description' => 'Reversibly archive one exact Project without deleting financial, document, public identity, or change history. Explicit grant required.',
+            'endpoints' => [],
+        ],
+        'projects.lifecycle.restore' => [
+            'label' => 'API v2 Project restore',
+            'description' => 'Restore one exact archived Project without granting portal or public-link access. Explicit grant required.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

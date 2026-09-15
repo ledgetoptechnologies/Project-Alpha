@@ -56,7 +56,8 @@ final class UnscheduledServiceJobService
         $clientId = $manageAll && !empty($input['client_id']) ? (int)$input['client_id'] : null;
         $projectId = !empty($input['project_id']) ? (int)$input['project_id'] : null;
         if ($projectId) {
-            $project = $this->pdo->prepare("SELECT client_id FROM projects WHERE id=? AND status NOT IN ('completed','cancelled')");
+            $visibility = ProjectLifecycleSchema::visibility($this->pdo, '');
+            $project = $this->pdo->prepare("SELECT client_id FROM projects WHERE id=? AND status NOT IN ('completed','cancelled') AND {$visibility}");
             $project->execute([$projectId]);
             $projectClient = $project->fetchColumn();
             if ($projectClient === false) {

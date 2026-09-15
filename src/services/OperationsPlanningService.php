@@ -171,7 +171,8 @@ final class OperationsPlanningService
 
     private function projectBusinessUnitId(PDO $pdo, int $projectId): int
     {
-        $project = $pdo->prepare("SELECT business_unit_id FROM projects WHERE id=? AND status NOT IN ('cancelled')");
+        $visibility = ProjectLifecycleSchema::visibility($pdo, '');
+        $project = $pdo->prepare("SELECT business_unit_id FROM projects WHERE id=? AND status NOT IN ('cancelled') AND {$visibility}");
         $project->execute([$projectId]);
         $value = $project->fetchColumn();
         if ($value === false) {

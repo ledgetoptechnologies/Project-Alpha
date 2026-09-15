@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/ScheduleService.php';
 require_once __DIR__ . '/../../utils/external_ops.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../services/ProjectRevisionService.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit; }
 csrf_verify_post_or_redirect('project/projects-update');
@@ -358,6 +359,7 @@ if(!empty($opsConfig['enabled'])){
 }
 if($storedBusinessUnitId!==$businessUnitId)audit_log($pdo,'project.business_unit.changed','project',$id,['from'=>$storedBusinessUnitId?:null,'to'=>$businessUnitId?:null]);
 if($storedManagerUserId!==$managerUserId)audit_log($pdo,'project.manager.changed','project',$id,['from'=>$storedManagerUserId?:null,'to'=>$managerUserId?:null]);
+(new \App\Services\ProjectRevisionService($pdo))->advance($id, 'update', null, null, $actorId ?: null);
 $portalProjection->afterMutation($pdo, array_merge($portalBeforeScopes, $portalProjection->projectScopes($pdo, $id)));
 (new \App\Services\PortalServiceAssignmentManager())->reconcileRoots(
 	$pdo,

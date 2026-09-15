@@ -5,6 +5,19 @@ if ($apiV2Path === '/api/v2/capabilities') {
     require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
     exit;
 }
+if (preg_match('#^/api/v2/projects/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_READ_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_read_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/projects/[0-9a-f]{32}/(complete|cancel|archive|restore)/commands$#D', $apiV2Path, $apiV2ProjectLifecycleMatch) === 1) {
+    $apiV2ProjectLifecycleFlag = 'APP_API_V2_PROJECTS_' . strtoupper($apiV2ProjectLifecycleMatch[1]) . '_ENABLED';
+    if (!filter_var(getenv($apiV2ProjectLifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_lifecycle_command_v2.php'; exit;
+}
 if (preg_match('#^/api/v2/directory/(?:clients|organizations)/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_DIRECTORY_READ_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8');
