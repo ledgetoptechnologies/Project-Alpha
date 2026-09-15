@@ -22,7 +22,9 @@ function api_v2_directory_organization_profile_command_parse(string $json): ?arr
     if (!is_string($value['commandId']) || !is_string($value['expectedRevision']) || !is_string($value['expectedAuthorizationGeneration']) || !is_array($value['profile'])
         || preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $value['commandId']) !== 1
         || !api_v2_directory_organization_profile_positive($value['expectedRevision']) || !preg_match('/^(0|[1-9][0-9]{0,18})$/D', $value['expectedAuthorizationGeneration']) || (strlen($value['expectedAuthorizationGeneration']) === 19 && strcmp($value['expectedAuthorizationGeneration'], '9223372036854775807') > 0)) return null;
-    $fields = ['name'=>255, 'generalEmail'=>255, 'generalPhone'=>50, 'addressLine1'=>255, 'addressLine2'=>255, 'city'=>100, 'state'=>100, 'postalCode'=>32, 'country'=>100];
+    // `organizations.name` is VARCHAR(150); reject an overlong value before
+    // starting the command transaction instead of surfacing a MySQL write error.
+    $fields = ['name'=>150, 'generalEmail'=>255, 'generalPhone'=>50, 'addressLine1'=>255, 'addressLine2'=>255, 'city'=>100, 'state'=>100, 'postalCode'=>32, 'country'=>100];
     if (count($value['profile']) !== count($fields) || array_diff(array_keys($value['profile']), array_keys($fields)) !== [] || array_diff(array_keys($fields), array_keys($value['profile'])) !== []) return null;
     foreach ($fields as $field => $limit) {
         $item = $value['profile'][$field] ?? null;

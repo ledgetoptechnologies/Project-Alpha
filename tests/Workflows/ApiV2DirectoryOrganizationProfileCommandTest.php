@@ -29,6 +29,13 @@ final class ApiV2DirectoryOrganizationProfileCommandTest extends TestCase
         self::assertNull(\api_v2_directory_organization_profile_command_parse(json_encode(array_replace_recursive($command, ['profile'=>['notes'=>'no']]), JSON_THROW_ON_ERROR)));
         self::assertNull(\api_v2_directory_organization_profile_command_parse(json_encode(array_replace_recursive($command, ['profile'=>['googlePlaceId'=>'no']]), JSON_THROW_ON_ERROR)));
     }
+    public function testParseAcceptsSchemaMaximumNameAndRejectsOverlongNameBeforeMutation(): void
+    {
+        $maximum = $this->command(); $maximum['profile']['name'] = str_repeat('A', 150);
+        self::assertSame(str_repeat('A', 150), \api_v2_directory_organization_profile_command_parse(json_encode($maximum, JSON_THROW_ON_ERROR))['profile']['name']);
+        $overlong = $this->command(); $overlong['profile']['name'] = str_repeat('A', 151);
+        self::assertNull(\api_v2_directory_organization_profile_command_parse(json_encode($overlong, JSON_THROW_ON_ERROR)));
+    }
     public function testWriteReplaysExactlyAndPreservesPrivateMetadata(): void
     {
         $pdo=$this->database(); $command=\api_v2_directory_organization_profile_command_parse(json_encode($this->command(), JSON_THROW_ON_ERROR)); $first=\api_v2_directory_organization_profile_command_write($pdo, str_repeat('a',32), $command, 7, $this->headers(), '523e4567-e89b-42d3-a456-426614174000');
