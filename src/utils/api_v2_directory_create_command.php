@@ -135,34 +135,6 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             return ['status'=>200, 'payload'=>api_v2_directory_create_result($identity, $type, (string)$receipt['external_id'], (string)$receipt['public_id'], (string)$receipt['result_revision'], (string)$receipt['result_authorization_generation'], $requestId, true)];
         }
 
-        // A tombstoned external ID is intentionally not reusable. Lifecycle
-        // recovery requires a separately authorized explicit binding command.
-        $bindingStatement = $pdo->prepare('SELECT status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND external_id=?' . $lock);
-        $bindingStatement->execute([$appPk, $type, $command['externalId']]);
-        if ($bindingStatement->fetchColumn() !== false) { $pdo->rollBack(); return ['status'=>409]; }
-
-        $organizationId = null;
-        if ($type === 'client' && $command['organization'] !== null) {
-            $organization = $command['organization'];
-            $relationship = $pdo->prepare("SELECT binding.public_id,binding.resource_revision,binding.resource_projection_sha256,binding.status,
-                    state.revision,state.projection_sha256,state.present,organization.id,organization.name,organization.general_email,
-                    organization.general_phone,organization.address_line1,organization.address_line2,organization.city,organization.state,
-                    organization.postal_code,organization.country
-                FROM api_v2_directory_external_bindings binding
-                JOIN api_v2_directory_resource_state state ON state.resource_type='organization' AND state.public_id=binding.public_id
-                JOIN organizations organization ON organization.public_id=binding.public_id
-                WHERE binding.application_pk=? AND binding.resource_type='organization' AND binding.external_id=?" . $lock);
-            $relationship->execute([$appPk, $organization['externalId']]); $related = $relationship->fetch(PDO::FETCH_ASSOC);
-            if (!$related || (string)$related['status'] !== 'active' || (int)$related['present'] !== 1
-                || (string)$related['resource_revision'] !== $organization['expectedRevision']
-                || (string)$related['revision'] !== $organization['expectedRevision']
-                || !hash_equals((string)$related['resource_projection_sha256'], (string)$related['projection_sha256'])
-                || !hash_equals((string)$related['projection_sha256'], api_v2_directory_projection_hash('organization', $related))) {
-                $pdo->rollBack(); return ['status'=>409];
-            }
-            $organizationId = (int)$related['id'];
-        }
-
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
         $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
         if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
@@ -170,6 +142,50 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
             $pdo->rollBack(); return ['status'=>409];
         }
+
+        $organizationId = null;
+        if ($type === 'client' && $command['organization'] !== null) {
+            $organization = $command['organization'];
+            // Resolve the public ID without taking the binding lock, then use
+            // the browser-compatible source -> address -> state -> binding
+            // order. The final locked binding comparison closes the lookup
+            // window and prevents a retarget/tombstone TOCTOU.
+            $relationshipLookup = $pdo->prepare("SELECT public_id FROM api_v2_directory_external_bindings
+                WHERE application_pk=? AND resource_type='organization' AND external_id=?");
+            $relationshipLookup->execute([$appPk, $organization['externalId']]);
+            $organizationPublicId = $relationshipLookup->fetchColumn();
+            if ($organizationPublicId === false || preg_match('/^[0-9a-f]{32}$/D', (string)$organizationPublicId) !== 1) {
+                $pdo->rollBack(); return ['status'=>409];
+            }
+            $organizationStatement = $pdo->prepare('SELECT id,public_id,name,general_email,general_phone,address_line1,address_line2,city,state,postal_code,country
+                FROM organizations WHERE public_id=?' . $lock);
+            $organizationStatement->execute([(string)$organizationPublicId]);
+            $relatedOrganization = $organizationStatement->fetch(PDO::FETCH_ASSOC);
+            if (!$relatedOrganization) { $pdo->rollBack(); return ['status'=>409]; }
+            address_book_default_for_entity($pdo, 'organization', (int)$relatedOrganization['id'], 'billing', true);
+            $relationshipState = $pdo->prepare("SELECT CAST(revision AS CHAR) revision,projection_sha256,present
+                FROM api_v2_directory_resource_state WHERE resource_type='organization' AND public_id=?" . $lock);
+            $relationshipState->execute([(string)$organizationPublicId]); $relatedState = $relationshipState->fetch(PDO::FETCH_ASSOC);
+            $relationshipBinding = $pdo->prepare("SELECT public_id,CAST(resource_revision AS CHAR) resource_revision,resource_projection_sha256,status
+                FROM api_v2_directory_external_bindings
+                WHERE application_pk=? AND resource_type='organization' AND external_id=?" . $lock);
+            $relationshipBinding->execute([$appPk, $organization['externalId']]); $relatedBinding = $relationshipBinding->fetch(PDO::FETCH_ASSOC);
+            if (!$relatedState || !$relatedBinding || (string)$relatedBinding['status'] !== 'active' || (int)$relatedState['present'] !== 1
+                || !hash_equals((string)$relatedBinding['public_id'], (string)$organizationPublicId)
+                || (string)$relatedBinding['resource_revision'] !== $organization['expectedRevision']
+                || (string)$relatedState['revision'] !== $organization['expectedRevision']
+                || !hash_equals((string)$relatedBinding['resource_projection_sha256'], (string)$relatedState['projection_sha256'])
+                || !hash_equals((string)$relatedState['projection_sha256'], api_v2_directory_projection_hash('organization', $relatedOrganization))) {
+                $pdo->rollBack(); return ['status'=>409];
+            }
+            $organizationId = (int)$relatedOrganization['id'];
+        }
+
+        // A tombstoned or active external ID is intentionally not reusable.
+        // Lifecycle recovery requires a separately authorized binding command.
+        $bindingStatement = $pdo->prepare('SELECT status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND external_id=?' . $lock);
+        $bindingStatement->execute([$appPk, $type, $command['externalId']]);
+        if ($bindingStatement->fetchColumn() !== false) { $pdo->rollBack(); return ['status'=>409]; }
 
         if ($type === 'organization') {
             // Organization names are unique in the live schema. Reject a match
@@ -179,10 +195,10 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             if ($duplicate->fetchColumn() !== false) { $pdo->rollBack(); return ['status'=>409]; }
         }
 
-        // Keep API and browser creates on the same authoritative projection
-        // boundary. The shared service may reconcile configured workspace,
-        // relation, eligibility, and outbox projections, but it never creates
-        // credentials or grants solely because this command created a row.
+        // Keep neutral relationship and existing-workspace projection state on
+        // the authoritative transaction boundary without enrolling the new
+        // resource into portal authority. Enrollment remains a separate,
+        // explicitly governed operation.
         $publicId = bin2hex(random_bytes(16));
         $profile = $command['profile'];
         if ($type === 'client') {
@@ -208,7 +224,7 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         $projectionScopes = $type === 'client'
             ? $projection->clientScopes($pdo, $localId)
             : $projection->organizationScopes($pdo, $localId);
-        $projection->afterMutation($pdo, $projectionScopes);
+        $projection->afterMutationProjectionOnly($pdo, $projectionScopes);
         if (!api_v2_directory_record($pdo, $type, $localId)) throw new RuntimeException('Initial directory revision was not created');
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
         $stateStatement->execute([$type, $publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);

@@ -68,6 +68,35 @@ final class ApiV2DirectoryCreateCommandMySqlTest extends TestCase
         self::assertSame(201,\api_v2_directory_create_command_write($this->second,'client',$this->clientCommand(),7,$this->headers(),'after')['status']);
     }
 
+    public function testAssignedCreateContendsWithBrowserOrganizationProfileOrderAndRejectsStaleRetry(): void
+    {
+        self::assertSame(201,\api_v2_directory_create_command_write($this->first,'organization',$this->organizationCommand(),7,$this->headers(),'organization')['status']);
+        $organizationId=(int)$this->first->query('SELECT id FROM organizations')->fetchColumn();
+        $addressColumns=array_fill_keys(['address_line1','address_line2','city','state','postal_code','country'],true);
+
+        $this->first->beginTransaction();
+        (new \App\Services\OrganizationProfileMutationService())->mutate($this->first,$organizationId,[
+            'name'=>'Example Organization Updated','general_email'=>'updated@example.test','general_phone'=>'556','notes'=>'',
+            'address'=>['address_line1'=>'9 Changed','address_line2'=>'','city'=>'Madison','state'=>'WI','postal_code'=>'53704','country'=>'US'],
+            'google_place_id'=>'','address_label'=>'Billing address','actor_id'=>0,
+        ],$addressColumns);
+        self::assertTrue($this->first->inTransaction());
+
+        $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
+        try { \api_v2_directory_create_command_write($this->second,'client',$client,7,$this->headers(),'contended'); self::fail('Assigned create crossed the organization profile lock boundary.'); }
+        catch (PDOException $error) { self::assertSame(1205,(int)($error->errorInfo[1]??0),$error->getMessage()); }
+        self::assertFalse($this->second->inTransaction());
+        self::assertSame(0,(int)$this->second->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+        self::assertSame(1,(int)$this->second->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+
+        $this->first->commit();
+        self::assertSame('2',(string)$this->second->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='organization'")->fetchColumn());
+        self::assertSame(409,\api_v2_directory_create_command_write($this->second,'client',$client,7,$this->headers(),'stale-after-profile')['status']);
+        self::assertSame(0,(int)$this->second->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+        self::assertSame(0,(int)$this->second->query("SELECT COUNT(*) FROM api_v2_directory_create_command_receipts WHERE resource_type='client'")->fetchColumn());
+        self::assertSame(0,(int)$this->second->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetchColumn());
+    }
+
     private function headers(): array { return ['source'=>'123e4567-e89b-42d3-a456-426614174000','application'=>'223e4567-e89b-42d3-a456-426614174000','epoch'=>'323e4567-e89b-42d3-a456-426614174000']; }
     private function organizationCommand(): array { return ['commandId'=>'423e4567-e89b-42d3-a456-426614174000','externalId'=>'org-1','expectedAuthorizationGeneration'=>'0','profile'=>['name'=>'Example Organization','generalEmail'=>'office@example.test','generalPhone'=>'555','addressLine1'=>'1 Main','addressLine2'=>'','city'=>'Madison','state'=>'WI','postalCode'=>'53703','country'=>'US']]; }
     private function clientCommand(?array $organization=null,string $generation='0'): array { return ['commandId'=>'523e4567-e89b-42d3-a456-426614174000','externalId'=>'client-1','expectedAuthorizationGeneration'=>$generation,'profile'=>['name'=>'Example Client','email'=>'client@example.test','phone'=>'555','clientType'=>'business','addressLine1'=>'2 Main','addressLine2'=>'','city'=>'Madison','state'=>'WI','postalCode'=>'53703','country'=>'US'],'organization'=>$organization]; }

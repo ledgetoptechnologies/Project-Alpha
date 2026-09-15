@@ -124,10 +124,12 @@ assigning a new client to an organization also requires the separate
 `directory.clients.organization.assign` scope and an exact active same-app
 organization binding revision. Creation atomically records the resource,
 initial upsert revision, external binding, authorization generation, and
-receipt while crossing the same transaction-bound generic workspace,
-relationship, eligibility, and outbox projection boundary as browser creates.
-It does not initialize private or financial state, create portal credentials,
-or infer an access grant. Managed external ownership must remain unavailable
+receipt while crossing the same transaction-bound neutral relationship and
+existing-workspace outbox projection boundary as browser creates. It does not
+initialize private or financial state, create portal credentials, principals,
+workspaces, memberships, eligibility, access roots, or entitlements, or infer
+an access grant. Portal enrollment remains a separate explicitly governed
+action. Managed external ownership must remain unavailable
 and both route flags must stay disabled until the complete browser/API writer
 inventory and operational handoff are separately accepted.
 

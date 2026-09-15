@@ -169,21 +169,43 @@ final class PortalProjectionMutationService
      */
     public function afterMutation(PDO$pdo,array$scopes,bool$force=false):bool
     {
+        return $this->reconcileAfterMutation($pdo,$scopes,$force,true);
+    }
+
+    /**
+     * Reconcile neutral projections without enrolling portal users or roots.
+     *
+     * This is for externally-created directory records whose authority must be
+     * established by a later governed action. It may update relation/contact
+     * projections and already-existing workspace outbox state, but it never
+     * invokes client provisioning, creates workspaces, principals, memberships,
+     * eligibility, access roots, or default entitlements.
+     *
+     * @param list<array{root_type:string,root_public_id:string}> $scopes
+     */
+    public function afterMutationProjectionOnly(PDO$pdo,array$scopes,bool$force=false):bool
+    {
+        return $this->reconcileAfterMutation($pdo,$scopes,$force,false);
+    }
+
+    /** @param list<array{root_type:string,root_public_id:string}> $scopes */
+    private function reconcileAfterMutation(PDO$pdo,array$scopes,bool$force,bool$provisionPortalAuthority):bool
+    {
         if(!$pdo->inTransaction()||$scopes===[])return true;
         if(!$force&&!$this->hooksEnabled($pdo))return true;
         $scopes=$this->uniqueScopes($scopes);
         // Provisioning is an invitation/eligibility projection only.  It must
         // run before the relationship graph and the resulting outbox changes,
         // but it never binds an identity or grants a delivery folder.
-        (new PortalClientProvisioningService())->ensureScopes($pdo,$scopes);
+        if($provisionPortalAuthority)(new PortalClientProvisioningService())->ensureScopes($pdo,$scopes);
         $this->reconcileRelations($pdo,$scopes);
 
         // Reparenting can affect more than one workspace. Publish every removal
         // before any addition so a receiver never observes simultaneous access
         // through both the old and new root. These remain ordinary ordered
         // events; control-plane revocations alone may bypass normal retry delay.
-        foreach($scopes as$scope)$this->reconcileWorkspace($pdo,$scope,'tombstone');
-        foreach($scopes as$scope)$this->reconcileWorkspace($pdo,$scope,'upsert');
+        foreach($scopes as$scope)$this->reconcileWorkspace($pdo,$scope,'tombstone',$provisionPortalAuthority);
+        foreach($scopes as$scope)$this->reconcileWorkspace($pdo,$scope,'upsert',$provisionPortalAuthority);
         return true;
     }
 
@@ -238,22 +260,34 @@ final class PortalProjectionMutationService
         }
     }
 
-    private function queueWorkspaces(PDO $pdo,array $workspaceIds,?string$onlyAction=null):void
+    private function queueWorkspaces(PDO $pdo,array $workspaceIds,?string$onlyAction=null,bool$includePortalAuthority=true):void
     {
         if($workspaceIds===[])return;
         $profiles=$pdo->prepare('SELECT p.id FROM portal_integration_profiles p JOIN portal_integration_profile_workspaces pw ON pw.profile_id=p.id AND pw.active=1 JOIN portal_v2_workspaces w ON w.id=pw.workspace_id AND w.active=1 WHERE p.enabled=1 AND p.portal_projection_enabled=1 AND w.public_id=? ORDER BY p.id');
         $projection=new PortalProjectionService();
-        foreach(array_unique(array_map('strval',$workspaceIds))as$workspaceId){$profiles->execute([$workspaceId]);foreach($profiles->fetchAll(PDO::FETCH_COLUMN)as$profileId)$projection->queueWorkspaceChanges($pdo,['id'=>(int)$profileId],$workspaceId,$onlyAction);}
+        foreach(array_unique(array_map('strval',$workspaceIds))as$workspaceId){$profiles->execute([$workspaceId]);foreach($profiles->fetchAll(PDO::FETCH_COLUMN)as$profileId){
+            if($includePortalAuthority)$projection->queueWorkspaceChanges($pdo,['id'=>(int)$profileId],$workspaceId,$onlyAction);
+            else$projection->queueWorkspaceNeutralChanges($pdo,['id'=>(int)$profileId],$workspaceId,$onlyAction);
+        }}
     }
 
     /** @param array{root_type:string,root_public_id:string} $scope */
-    private function reconcileWorkspace(PDO$pdo,array$scope,?string$onlyAction=null):void
+    private function reconcileWorkspace(PDO$pdo,array$scope,?string$onlyAction=null,bool$includePortalAuthority=true):void
     {
         $workspace=$pdo->prepare('SELECT * FROM portal_v2_workspaces WHERE root_type=? AND root_public_id=?');$workspace->execute([$scope['root_type'],$scope['root_public_id']]);$row=$workspace->fetch(PDO::FETCH_ASSOC);if(!$row)return;
         if($scope['root_type']==='organization')$root=$pdo->prepare('SELECT o.name FROM organizations o WHERE o.public_id=? AND EXISTS(SELECT 1 FROM clients c WHERE c.organization_id=o.id AND c.archived=0 AND c.deleted_at IS NULL)');
         else$root=$pdo->prepare('SELECT name FROM clients WHERE public_id=? AND organization_id IS NULL AND archived=0 AND deleted_at IS NULL');
         $root->execute([$scope['root_public_id']]);$name=$root->fetchColumn();
         $control=$pdo->prepare('SELECT access_state FROM portal_client_access_roots WHERE root_type=? AND root_public_id=?');$control->execute([$scope['root_type'],$scope['root_public_id']]);$accessState=$control->fetchColumn();if($accessState==='revoked')$name=false;
+        // A neutral directory create can update an already-established
+        // projection, but it must never activate, deactivate, or revoke a
+        // workspace. Those authority transitions belong to governed portal
+        // enrollment and access-management actions.
+        if(!$includePortalAuthority){
+            if($name===false||empty($row['active']))return;
+            $pdo->prepare('UPDATE portal_v2_workspaces SET display_name=?,source_version=? WHERE id=?')->execute([(string)$name,PortalSourceVersion::from(['publicId'=>(string)$row['public_id'],'rootType'=>$scope['root_type'],'rootPublicId'=>$scope['root_public_id'],'displayName'=>(string)$name,'active'=>true]),(int)$row['id']]);
+            $this->queueWorkspaces($pdo,[(string)$row['public_id']],$onlyAction,false);return;
+        }
         if($name===false){
             if($onlyAction==='upsert')return;
             $profiles=$pdo->prepare('SELECT p.* FROM portal_integration_profiles p JOIN portal_integration_profile_workspaces pw ON pw.profile_id=p.id AND pw.active=1 WHERE pw.workspace_id=? AND p.enabled=1 AND p.portal_projection_enabled=1 ORDER BY p.id');$profiles->execute([(int)$row['id']]);$projection=new PortalProjectionService();if(!empty($row['active']))foreach($profiles->fetchAll(PDO::FETCH_ASSOC)as$profile)$projection->queueWorkspaceRevocation($pdo,$profile,(string)$row['public_id']);$pdo->prepare('UPDATE portal_v2_workspaces SET active=0,source_version=? WHERE id=?')->execute([PortalSourceVersion::from(['publicId'=>(string)$row['public_id'],'active'=>false]),(int)$row['id']]);$pdo->prepare('UPDATE portal_integration_profile_workspaces SET active=0 WHERE workspace_id=?')->execute([(int)$row['id']]);return;

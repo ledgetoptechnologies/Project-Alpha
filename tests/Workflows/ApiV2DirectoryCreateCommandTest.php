@@ -8,7 +8,7 @@ require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_create_command.p
 
 final class ApiV2DirectoryCreateCommandTest extends TestCase
 {
-    private function database(bool $projectionHooks = false): PDO
+    private function database(bool $projectionHooks = false, bool $activePortalProfile = false): PDO
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -26,24 +26,34 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
             CREATE TABLE addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,label TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,google_place_id TEXT,source TEXT,created_by INTEGER,archived INTEGER DEFAULT 0);
             CREATE TABLE address_assignments(id INTEGER PRIMARY KEY AUTOINCREMENT,address_id INTEGER,entity_type TEXT,entity_id INTEGER,purpose TEXT,is_default INTEGER,UNIQUE(entity_type,entity_id,purpose,address_id));
             CREATE TABLE invoices(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER,total REAL);
-            CREATE TABLE portal_principal_clients(portal_principal_id INTEGER,client_id INTEGER);
-            CREATE TABLE portal_client_login_eligibility(client_id INTEGER PRIMARY KEY,eligibility_status TEXT);
+            CREATE TABLE portal_principals(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT DEFAULT (lower(hex(randomblob(16)))),email_hint TEXT,display_name TEXT,source_version TEXT,enabled INTEGER,authorization_version INTEGER DEFAULT 1,activated_at TEXT,revoked_at TEXT,created_by INTEGER,updated_by INTEGER);
+            CREATE TABLE portal_principal_clients(portal_principal_id INTEGER,client_id INTEGER,created_by INTEGER,PRIMARY KEY(portal_principal_id,client_id));
+            CREATE TABLE portal_identity_bindings(id INTEGER PRIMARY KEY AUTOINCREMENT,portal_principal_id INTEGER,issuer TEXT,subject_hash TEXT,enabled INTEGER,bound_at TEXT,revoked_at TEXT,created_by INTEGER,updated_by INTEGER);
+            CREATE TABLE portal_v2_entitlements(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT,portal_principal_id INTEGER,capability TEXT,effect TEXT,scope_type TEXT,scope_public_id TEXT,source_version TEXT,active INTEGER,valid_from TEXT,expires_at TEXT,created_by INTEGER,updated_by INTEGER);
+            CREATE TABLE portal_client_login_eligibility(client_id INTEGER PRIMARY KEY,portal_principal_id INTEGER,manual_state TEXT,eligibility_status TEXT,review_reason TEXT,canonical_email TEXT,source_version TEXT,last_reconciled_at TEXT,created_by INTEGER,updated_by INTEGER);
             CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT,PRIMARY KEY(organization_id,config_key));
-            CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,name TEXT);
+            CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,name TEXT,source_version TEXT);
             CREATE TABLE organization_department_contacts(department_id INTEGER,client_id INTEGER,is_primary INTEGER DEFAULT 0);
-            CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,department_id INTEGER,client_id INTEGER,status TEXT);
-            CREATE TABLE portal_v2_workspaces(id INTEGER PRIMARY KEY,public_id TEXT,root_type TEXT,root_public_id TEXT,display_name TEXT,source_version TEXT,active INTEGER);
-            CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,enabled INTEGER,portal_projection_enabled INTEGER);
-            CREATE TABLE portal_integration_profile_workspaces(profile_id INTEGER,workspace_id INTEGER,active INTEGER,PRIMARY KEY(profile_id,workspace_id));
+            CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,organization_id INTEGER,department_id INTEGER,client_id INTEGER,status TEXT,source_version TEXT,completed_at TEXT);
+            CREATE TABLE portal_v2_workspaces(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE,root_type TEXT,root_public_id TEXT,display_name TEXT,source_version TEXT,active INTEGER,created_by INTEGER,updated_by INTEGER,UNIQUE(root_type,root_public_id));
+            CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,application_key TEXT UNIQUE,display_label TEXT,enabled INTEGER,portal_projection_enabled INTEGER,relation_projection_enabled INTEGER DEFAULT 0,contact_assignment_projection_enabled INTEGER DEFAULT 0,portal_route TEXT,delivery_key_id TEXT);
+            CREATE TABLE portal_integration_profile_workspaces(profile_id INTEGER,workspace_id INTEGER,active INTEGER,created_by INTEGER,updated_by INTEGER,PRIMARY KEY(profile_id,workspace_id));
             CREATE TABLE portal_client_access_roots(root_type TEXT,root_public_id TEXT,access_state TEXT,state_reason TEXT,last_reconciled_at TEXT,created_by INTEGER,updated_by INTEGER,PRIMARY KEY(root_type,root_public_id));
             CREATE TABLE portal_v2_contacts(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT DEFAULT (lower(hex(randomblob(16)))),client_id INTEGER UNIQUE,display_name TEXT,source_version TEXT,active INTEGER);
             CREATE TABLE portal_v2_relations(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT DEFAULT (lower(hex(randomblob(16)))),relation_type TEXT,from_type TEXT,from_public_id TEXT,to_type TEXT,to_public_id TEXT,source_version TEXT,active INTEGER,UNIQUE(relation_type,from_type,from_public_id,to_type,to_public_id));
+            CREATE TABLE portal_projection_state(integration_profile_id INTEGER,workspace_public_id TEXT,source_generation TEXT,source_sequence INTEGER,last_snapshot_hash TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id));
+            CREATE TABLE portal_projection_resource_state(integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT,resource_type TEXT,resource_public_id TEXT,source_version TEXT,payload_hash TEXT,record_json TEXT,PRIMARY KEY(integration_profile_id,workspace_public_id,route_type,resource_type,resource_public_id));
+            CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,delivery_id TEXT,workspace_public_id TEXT,schema_version INTEGER,source_sequence INTEGER,delivery_kind TEXT,route_type TEXT,is_revocation INTEGER DEFAULT 0,destination_url TEXT,signing_key_id TEXT,payload_json TEXT,attempts INTEGER DEFAULT 0,next_attempt_at TEXT,claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
             INSERT INTO api_keys VALUES(7,3,NULL);
             INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_directory_authorization_state VALUES(3,0);");
         $pdo->prepare("INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled',?)")
             ->execute([$projectionHooks ? '1' : '0']);
+        if ($activePortalProfile) {
+            $pdo->exec("INSERT INTO portal_integration_profiles(id,application_key,display_label,enabled,portal_projection_enabled,relation_projection_enabled) VALUES(1,'generic_operations','Generic operations',1,1,1);
+                INSERT INTO app_config VALUES(0,'external_ops_client_portal_profile_id','1')");
+        }
         return $pdo;
     }
 
@@ -167,7 +177,12 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
 
     public function testProjectionBoundaryIsAtomicAndExactReplayDoesNotDuplicateIt(): void
     {
-        $pdo=$this->database(true);
+        $pdo=$this->database(true, true);
+        foreach (['portal_v2_workspaces','portal_integration_profile_workspaces','portal_client_access_roots','portal_client_login_eligibility','portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings'] as $table) {
+            foreach (['INSERT','UPDATE','DELETE'] as $operation) {
+                $pdo->exec("CREATE TRIGGER forbid_".strtolower($operation)."_{$table} BEFORE {$operation} ON {$table} BEGIN SELECT RAISE(ABORT,'portal authority mutation forbidden'); END");
+            }
+        }
         self::assertSame(201,api_v2_directory_create_command_write($pdo,'organization',$this->organizationCommand(),7,$this->headers(),'organization')['status']);
         $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
         $first=api_v2_directory_create_command_write($pdo,'client',$client,7,$this->headers(),'client');
@@ -178,16 +193,76 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         self::assertSame(200,$replay['status']); self::assertTrue($replay['payload']['replayed']);
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_v2_relations')->fetchColumn());
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_v2_contacts')->fetchColumn());
+        foreach (['portal_v2_workspaces','portal_client_access_roots','portal_client_login_eligibility','portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings'] as $table) {
+            self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM {$table}")->fetchColumn(),$table);
+        }
 
-        $rollback=$this->database(true);
+        $rollback=$this->database(true, true);
         self::assertSame(201,api_v2_directory_create_command_write($rollback,'organization',$this->organizationCommand(),7,$this->headers(),'organization')['status']);
         $rollback->exec("CREATE TRIGGER stop_relation_projection BEFORE INSERT ON portal_v2_relations BEGIN SELECT RAISE(ABORT,'blocked projection'); END");
         self::assertSame(409,api_v2_directory_create_command_write($rollback,'client',$client,7,$this->headers(),'blocked-client')['status']);
         self::assertSame(0,(int)$rollback->query('SELECT COUNT(*) FROM clients')->fetchColumn());
         self::assertSame(0,(int)$rollback->query('SELECT COUNT(*) FROM portal_v2_contacts')->fetchColumn());
         self::assertSame(0,(int)$rollback->query('SELECT COUNT(*) FROM portal_v2_relations')->fetchColumn());
+        foreach (['portal_v2_workspaces','portal_client_access_roots','portal_client_login_eligibility','portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings'] as $table) {
+            self::assertSame(0,(int)$rollback->query("SELECT COUNT(*) FROM {$table}")->fetchColumn(),$table);
+        }
         self::assertSame(1,(int)$rollback->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
         self::assertSame(1,(int)$rollback->query('SELECT COUNT(*) FROM api_v2_directory_create_command_receipts')->fetchColumn());
+    }
+
+    public function testExistingWorkspaceReceivesOnlyNeutralOutboxChanges(): void
+    {
+        $pdo=$this->database(true, true);
+        $organization=api_v2_directory_create_command_write($pdo,'organization',$this->organizationCommand(),7,$this->headers(),'organization');
+        self::assertSame(201,$organization['status']);
+        $organizationPublicId=(string)$organization['payload']['result']['resource']['publicId'];
+        $pdo->prepare("INSERT INTO portal_v2_workspaces(id,public_id,root_type,root_public_id,display_name,source_version,active) VALUES(1,'workspace-existing','organization',?,'Example Organization','workspace-before',1)")->execute([$organizationPublicId]);
+        $pdo->exec("INSERT INTO portal_integration_profile_workspaces(profile_id,workspace_id,active) VALUES(1,1,1);
+            INSERT INTO portal_projection_state VALUES(1,'workspace-existing','generation-existing',4,'snapshot-existing');
+            INSERT INTO portal_projection_resource_state VALUES
+              (1,'workspace-existing','portal','principal','principal-drift','principal-v1','" . str_repeat('a',64) . "','{}'),
+              (1,'workspace-existing','portal','entitlement','entitlement-drift','entitlement-v1','" . str_repeat('b',64) . "','{}')");
+
+        $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
+        self::assertSame(201,api_v2_directory_create_command_write($pdo,'client',$client,7,$this->headers(),'client')['status']);
+
+        $resources=[];
+        foreach($pdo->query('SELECT payload_json FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_COLUMN)as$payload){
+            $event=json_decode((string)$payload,true,32,JSON_THROW_ON_ERROR)['event']??[];
+            $resources[]=(string)($event['resource']??'');
+        }
+        self::assertNotEmpty($resources);
+        self::assertSame([],array_values(array_intersect(['principal','entitlement','contact_assignment'],$resources)));
+        self::assertContains('entity',$resources);
+        self::assertContains('relation',$resources);
+        self::assertSame(2,(int)$pdo->query("SELECT COUNT(*) FROM portal_projection_resource_state WHERE resource_type IN ('principal','entitlement')")->fetchColumn());
+        self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_v2_workspaces')->fetchColumn());
+        self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_integration_profile_workspaces')->fetchColumn());
+        foreach(['portal_client_access_roots','portal_client_login_eligibility','portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings']as$table)self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM {$table}")->fetchColumn(),$table);
+
+        $outboxCount=(int)$pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
+        $replay=api_v2_directory_create_command_write($pdo,'client',$client,7,$this->headers(),'replay');
+        self::assertSame(200,$replay['status']);
+        self::assertSame($outboxCount,(int)$pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
+    }
+
+    public function testExistingWorkspaceWithoutCheckpointIsNotBootstrappedByCreate(): void
+    {
+        $pdo=$this->database(true, true);
+        $organization=api_v2_directory_create_command_write($pdo,'organization',$this->organizationCommand(),7,$this->headers(),'organization');
+        self::assertSame(201,$organization['status']);
+        $organizationPublicId=(string)$organization['payload']['result']['resource']['publicId'];
+        $pdo->prepare("INSERT INTO portal_v2_workspaces(id,public_id,root_type,root_public_id,display_name,source_version,active) VALUES(1,'workspace-unpublished','organization',?,'Example Organization','workspace-before',1)")->execute([$organizationPublicId]);
+        $pdo->exec('INSERT INTO portal_integration_profile_workspaces(profile_id,workspace_id,active) VALUES(1,1,1)');
+
+        $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
+        self::assertSame(201,api_v2_directory_create_command_write($pdo,'client',$client,7,$this->headers(),'client')['status']);
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM portal_projection_state')->fetchColumn());
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM portal_projection_resource_state')->fetchColumn());
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
+        self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_v2_relations')->fetchColumn());
+        foreach(['portal_client_access_roots','portal_client_login_eligibility','portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings']as$table)self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM {$table}")->fetchColumn(),$table);
     }
 
     public function testRoutesScopesFlagsAndMigrationAreExplicitAndDefaultOff(): void

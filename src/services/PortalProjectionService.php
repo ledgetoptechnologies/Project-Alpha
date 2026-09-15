@@ -121,6 +121,43 @@ final class PortalProjectionService
         return['snapshot'=>null,'events'=>$events];
     }
 
+    /**
+     * Queue only non-authority changes for an already-published workspace.
+     *
+     * This deliberately cannot bootstrap a snapshot and filters both sides of
+     * the diff so a directory create cannot publish or tombstone principals,
+     * entitlements, or contact assignments as incidental authorization drift.
+     */
+    public function queueWorkspaceNeutralChanges(PDO$pdo,array$profile,string$workspacePublicId,?string$onlyAction=null):array
+    {
+        if($onlyAction!==null&&!in_array($onlyAction,['upsert','tombstone'],true))throw new DomainException('portal-change-action-invalid');
+        $profileId=(int)($profile['id']??0);if($profileId<1)throw new DomainException('portal-profile-workspace-denied');
+        $profile=self::lockProfileContract($pdo,$profileId);if(empty($profile['enabled'])||empty($profile['portal_projection_enabled']))throw new DomainException('portal-profile-disabled');
+        $workspace=(new PortalWorkspaceAuthorizationService())->requireWorkspace($pdo,$profileId,$workspacePublicId);$state=$this->stateForUpdate($pdo,$profileId,$workspacePublicId);
+        if(!$state||empty($state['last_snapshot_hash']))return['snapshot'=>null,'events'=>[]];
+        $schemaVersion=$this->portalSchemaVersion($profile);
+        // Schema 4 contact assignments carry separately governed visibility
+        // choices. Build the generic relationship view only.
+        $neutralSchemaVersion=min($schemaVersion,3);
+        $projection=$this->workspaceProjection($pdo,$workspace,$neutralSchemaVersion);
+        $allowed=['workspace','entity','relation','project_lifecycle'];
+        $current=array_filter(
+            $this->portalResourceRecords($workspace,$projection,$neutralSchemaVersion),
+            static fn(array$entry):bool=>in_array((string)$entry['resource'],$allowed,true)
+        );
+        $events=[];
+        foreach($this->resourceChanges($pdo,$profileId,$workspacePublicId,'portal',$current,$allowed)as$change){
+            if($onlyAction!==null&&$change['action']!==$onlyAction)continue;
+            if($change['action']==='upsert')$event=$this->portalUpsertEvent($change['resource'],$change['record']);
+            elseif($change['resource']==='project_lifecycle'){ $this->deleteResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId']);continue; }
+            else$event=['resource'=>$change['resource'],'action'=>'tombstone','publicId'=>$change['publicId'],'sourceVersion'=>$change['sourceVersion']];
+            $events[]=$this->queueEvent($pdo,$profile,$workspacePublicId,$event,false);
+            if($change['action']==='upsert')$this->saveResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId'],$change['sourceVersion'],$change['record']);
+            else$this->deleteResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId']);
+        }
+        return['snapshot'=>null,'events'=>$events];
+    }
+
     /** Queue strict Service Library upsert/tombstone events after a complete snapshot. */
     public function queueCatalogChanges(PDO$pdo,array$profile):array
     {
@@ -360,9 +397,11 @@ final class PortalProjectionService
      * @param array<string,array{resource:string,publicId:string,sourceVersion:string,record:array<string,mixed>}> $current
      * @return list<array{action:string,resource:string,publicId:string,sourceVersion:string,record:array<string,mixed>,existed:bool}>
      */
-    private function resourceChanges(PDO$pdo,int$profileId,string$workspaceId,string$route,array$current):array
+    private function resourceChanges(PDO$pdo,int$profileId,string$workspaceId,string$route,array$current,?array$allowedResourceTypes=null):array
     {
-        $statement=$pdo->prepare('SELECT resource_type,resource_public_id,source_version,payload_hash,record_json FROM portal_projection_resource_state WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=?');$statement->execute([$profileId,$workspaceId,$route]);$existing=[];
+        $sql='SELECT resource_type,resource_public_id,source_version,payload_hash,record_json FROM portal_projection_resource_state WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=?';$parameters=[$profileId,$workspaceId,$route];
+        if($allowedResourceTypes!==null){$allowedResourceTypes=array_values(array_unique(array_filter(array_map('strval',$allowedResourceTypes))));if($allowedResourceTypes===[])return[];$sql.=' AND resource_type IN ('.implode(',',array_fill(0,count($allowedResourceTypes),'?')).')';$parameters=array_merge($parameters,$allowedResourceTypes);}
+        $statement=$pdo->prepare($sql);$statement->execute($parameters);$existing=[];
         foreach($statement->fetchAll(PDO::FETCH_ASSOC)as$row)$existing[(string)$row['resource_type'].'|'.(string)$row['resource_public_id']]=$row;
         $changes=[];foreach($current as$key=>$entry){$hash=hash('sha256',self::canonicalJson($entry['record']));$prior=$existing[$key]??null;if($prior&&hash_equals((string)$prior['payload_hash'],$hash)){unset($existing[$key]);continue;}if($prior&&hash_equals((string)$prior['source_version'],$entry['sourceVersion']))throw new DomainException('portal-source-version-reuse');$changes[]=['action'=>'upsert','existed'=>$prior!==null]+$entry;unset($existing[$key]);}
         foreach($existing as$row){$resource=(string)$row['resource_type'];$publicId=(string)$row['resource_public_id'];$version=PortalSourceVersion::from(['resource'=>$resource,'publicId'=>$publicId,'active'=>false,'previousSourceVersion'=>(string)$row['source_version']]);$changes[]=['action'=>'tombstone','resource'=>$resource,'publicId'=>$publicId,'sourceVersion'=>$version,'record'=>[],'existed'=>true];}
