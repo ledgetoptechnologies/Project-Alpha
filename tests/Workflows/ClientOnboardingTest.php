@@ -34,7 +34,7 @@ final class ClientOnboardingTest extends TestCase
         self::assertStringContainsString('name="general_email"', $createView . $editView);
         self::assertStringContainsString('name="general_phone"', $createView . $editView);
         self::assertStringContainsString('General Contact', $detailView);
-        self::assertStringContainsString("'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone']", $migrationHealth);
+        self::assertStringContainsString("'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone', 'archived', 'deleted_at']", $migrationHealth);
     }
 
     public function testInvitationStoresTokenHashAndEncryptedRecoveryToken(): void

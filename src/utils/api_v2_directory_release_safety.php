@@ -26,24 +26,28 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
 
     foreach (['client' => 'clients', 'organization' => 'organizations'] as $type => $table) {
         $source = $pdo->query('SELECT * FROM ' . $table . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
-        $live = [];
+        $live = []; $seen = [];
         $coverage = [];
         foreach ($source as $row) {
             $resources[$type]['source']++;
             $publicId = (string)($row['public_id'] ?? '');
-            if (preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1 || isset($live[$publicId])) {
+            if (preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1 || isset($seen[$publicId])) {
                 $resources[$type]['invalid']++; $violations['identity']++; continue;
             }
-            $live[$publicId] = true;
+            $seen[$publicId] = true;
+            $archived = array_key_exists('archived',$row) && (int)$row['archived'] === 1
+                && array_key_exists('deleted_at',$row) && $row['deleted_at'] !== null;
+            if (!$archived) $live[$publicId] = true;
             $state = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?');
             $state->execute([$type, $publicId]); $state = $state->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($state) || (string)($state['present'] ?? '') !== '1') {
+            $expectedPresent = $archived ? '0' : '1';
+            if (!is_array($state) || (string)($state['present'] ?? '') !== $expectedPresent) {
                 $resources[$type]['missing']++; $violations['missing_state']++; continue;
             }
             $revision = (string)($state['revision'] ?? '');
             $hash = (string)($state['projection_sha256'] ?? '');
             if (preg_match('/^[1-9][0-9]{0,18}$/D', $revision) !== 1 || (strlen($revision) === 19 && strcmp($revision, '9223372036854775807') > 0)
-                || preg_match('/^[0-9a-f]{64}$/D', $hash) !== 1 || !hash_equals($hash, api_v2_directory_projection_hash($type, $row))) {
+                || preg_match('/^[0-9a-f]{64}$/D', $hash) !== 1 || !hash_equals($hash, $archived ? hash('sha256','') : api_v2_directory_projection_hash($type, $row))) {
                 $resources[$type]['drifted']++; $violations['projection_drift']++; continue;
             }
             $change = $pdo->prepare("SELECT action FROM api_v2_directory_resource_changes WHERE resource_type=? AND public_id=? AND revision=?");
@@ -52,11 +56,11 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
             $future->execute([$type, $publicId, $revision]);
             $historyCount = $pdo->prepare('SELECT COUNT(*) FROM api_v2_directory_resource_changes WHERE resource_type=? AND public_id=? AND revision<=?');
             $historyCount->execute([$type, $publicId, $revision]);
-            if ($change->fetchColumn() !== 'upsert' || $future->fetchColumn() !== false || (int)$historyCount->fetchColumn() !== (int)$revision) {
+            if ($change->fetchColumn() !== ($archived ? 'delete' : 'upsert') || $future->fetchColumn() !== false || (int)$historyCount->fetchColumn() !== (int)$revision) {
                 $resources[$type]['history']++; $violations['history_gap']++; continue;
             }
             $resources[$type]['covered']++;
-            $coverage[] = ['publicId' => $publicId, 'revision' => (int)$revision, 'projectionSha256' => $hash];
+            $coverage[] = ['publicId' => $publicId, 'revision' => (int)$revision, 'present' => !$archived, 'projectionSha256' => $hash];
         }
         $states = $pdo->prepare('SELECT public_id FROM api_v2_directory_resource_state WHERE resource_type=? AND present=1');
         $states->execute([$type]);

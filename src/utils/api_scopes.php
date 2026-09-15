@@ -70,7 +70,52 @@ function api_scope_catalog(): array
         ],
         'directory.clients.organization.assign' => [
             'label' => 'API v2 client organization assignment',
-            'description' => 'Assign a newly created client through an exact active application-bound organization identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'description' => 'Assign an unassigned client through an exact active application-bound organization identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.organization.remove' => [
+            'label' => 'API v2 client organization removal',
+            'description' => 'Remove an exact versioned client-organization relationship. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.organization.move' => [
+            'label' => 'API v2 client organization move',
+            'description' => 'Move an exact versioned client relationship to an application-bound organization. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.archive' => [
+            'label' => 'API v2 client archive',
+            'description' => 'Soft-archive a client without deleting linked financial or historical records. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.restore' => [
+            'label' => 'API v2 client restore',
+            'description' => 'Restore a soft-archived client without reviving external bindings. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.organizations.archive' => [
+            'label' => 'API v2 organization archive',
+            'description' => 'Soft-archive an organization while retaining financial and historical relationships. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.organizations.restore' => [
+            'label' => 'API v2 organization restore',
+            'description' => 'Restore a soft-archived organization without reviving external bindings. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.clients.unbind' => [
+            'label' => 'API v2 client binding revocation',
+            'description' => 'Explicitly revoke one application-scoped client external identity binding. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.organizations.unbind' => [
+            'label' => 'API v2 organization binding revocation',
+            'description' => 'Explicitly revoke one application-scoped organization external identity binding. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'directory.inventory.read' => [
+            'label' => 'API v2 historical directory inventory',
+            'description' => 'Read a bounded inventory of live directory resources, retained tombstones, and this application\'s binding state. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [],
         ],
         'dashboard.read' => [

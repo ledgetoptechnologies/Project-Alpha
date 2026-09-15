@@ -270,6 +270,9 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_directory_management_policy' => 98,
         'api_v2_directory_management_attestations' => 98,
         'api_v2_directory_management_audit' => 98,
+        'api_v2_directory_lifecycle_command_receipts' => 99,
+        'api_v2_directory_relationship_command_receipts' => 99,
+        'api_v2_directory_binding_revoke_command_receipts' => 99,
     ];
 
     return array_values(array_filter(
@@ -285,6 +288,7 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
 function migration_required_columns_for_version(array $requiredColumns, int $throughVersion): array
 {
     $introduced = [
+        'organizations' => ['archived' => 99, 'deleted_at' => 99],
         'project_invoices' => ['revision_number' => 72],
         'pricing_adjustment_definitions' => [
             'organization_id' => 72, 'name' => 72, 'adjustment_kind' => 72,
@@ -447,6 +451,18 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'id'=>98,'event_type'=>98,'outcome'=>98,'reason'=>98,'application_pk'=>98,'actor_user_id'=>98,
             'target_type'=>98,'action_name'=>98,'metadata_json'=>98,'created_at'=>98,
         ],
+        'api_v2_directory_lifecycle_command_receipts' => [
+            'application_pk'=>99,'resource_type'=>99,'history_epoch'=>99,'command_id'=>99,'request_sha256'=>99,'action_name'=>99,
+            'public_id'=>99,'expected_revision'=>99,'expected_authorization_generation'=>99,'result_revision'=>99,'result_authorization_generation'=>99,'created_at'=>99,
+        ],
+        'api_v2_directory_relationship_command_receipts' => [
+            'application_pk'=>99,'history_epoch'=>99,'command_id'=>99,'request_sha256'=>99,'action_name'=>99,'client_public_id'=>99,
+            'expected_client_revision'=>99,'expected_authorization_generation'=>99,'result_client_revision'=>99,'result_authorization_generation'=>99,'created_at'=>99,
+        ],
+        'api_v2_directory_binding_revoke_command_receipts' => [
+            'application_pk'=>99,'resource_type'=>99,'history_epoch'=>99,'command_id'=>99,'request_sha256'=>99,'external_id'=>99,'public_id'=>99,
+            'expected_resource_revision'=>99,'expected_authorization_generation'=>99,'result_authorization_generation'=>99,'created_at'=>99,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -542,6 +558,9 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_create_command_receipts',
         'api_v2_directory_management_policy', 'api_v2_directory_management_attestations',
         'api_v2_directory_management_audit',
+        'api_v2_directory_lifecycle_command_receipts',
+        'api_v2_directory_relationship_command_receipts',
+        'api_v2_directory_binding_revoke_command_receipts',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -569,7 +588,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
 
     $requiredColumns = [
         'users' => ['email', 'password_hash', 'role', 'force_password_reset', 'auth_version', 'totp_reenroll_required'],
-        'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone'],
+        'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone', 'archived', 'deleted_at'],
         'organization_departments' => ['public_id', 'source_version'],
         'clients' => ['public_id', 'source_version', 'organization_id', 'created_by'],
         'archived_clients' => ['public_id', 'client_type', 'portal_principal_id', 'portal_manual_state', 'portal_canonical_email', 'portal_identity_binding_ids_json', 'portal_principal_authorization_version', 'portal_principal_disabled_for_archive', 'portal_principal_was_present', 'portal_entitlement_ids_json', 'portal_affected_workspace_ids_json'],
@@ -597,6 +616,9 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_management_policy' => ['singleton','configured_enabled','ownership_active','application_pk','source_instance_id','application_id','history_epoch','release_attestation_sha256','last_effective','last_reason','configured_by','configured_at','updated_at'],
         'api_v2_directory_management_attestations' => ['attestation_sha256','attestation_json','created_by','created_at'],
         'api_v2_directory_management_audit' => ['id','event_type','outcome','reason','application_pk','actor_user_id','target_type','action_name','metadata_json','created_at'],
+        'api_v2_directory_lifecycle_command_receipts' => ['application_pk','resource_type','history_epoch','command_id','request_sha256','action_name','public_id','expected_revision','expected_authorization_generation','result_revision','result_authorization_generation','created_at'],
+        'api_v2_directory_relationship_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','client_public_id','expected_client_revision','expected_authorization_generation','result_client_revision','result_authorization_generation','created_at'],
+        'api_v2_directory_binding_revoke_command_receipts' => ['application_pk','resource_type','history_epoch','command_id','request_sha256','external_id','public_id','expected_resource_revision','expected_authorization_generation','result_authorization_generation','created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

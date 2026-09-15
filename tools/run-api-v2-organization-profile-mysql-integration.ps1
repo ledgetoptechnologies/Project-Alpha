@@ -37,7 +37,7 @@ try {
     $env:API_V2_ORG_PROFILE_MYSQL_DATABASE = $databaseName
     $env:API_V2_ORG_PROFILE_MYSQL_ALLOW_DESTRUCTIVE = 'isolated-disposable-only'
     Write-Host "Running API v2 organization profile commands against isolated disposable MySQL 8.4 database $databaseName."
-    & php $phpunit (Join-Path $repositoryRoot 'tests/Integration/ApiV2DirectoryOrganizationProfileCommandMySqlTest.php') (Join-Path $repositoryRoot 'tests/Integration/ApiV2DirectoryBindingLifecycleMySqlTest.php') --do-not-cache-result --colors=never --fail-on-skipped
+    & php $phpunit (Join-Path $repositoryRoot 'tests/Integration/ApiV2DirectoryOrganizationProfileCommandMySqlTest.php') (Join-Path $repositoryRoot 'tests/Integration/ApiV2DirectoryBindingLifecycleMySqlTest.php') (Join-Path $repositoryRoot 'tests/Integration/ApiV2DirectoryLifecycleRelationshipMySqlTest.php') --do-not-cache-result --colors=never --fail-on-skipped
     if ($LASTEXITCODE -ne 0) { throw "API v2 organization profile MySQL integration tests failed with exit code $LASTEXITCODE." }
 }
 finally {

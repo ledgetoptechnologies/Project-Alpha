@@ -67,6 +67,31 @@ if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $
     }
     require __DIR__ . '/../src/controllers/api/directory_client_profile_command_v2.php'; exit;
 }
+if (preg_match('#^/api/v2/directory/(clients|organizations)/[0-9a-f]{32}/(archive|restore)/commands$#D', $apiV2Path, $apiV2LifecycleMatch) === 1) {
+    $apiV2LifecycleFlag = 'APP_API_V2_DIRECTORY_' . strtoupper($apiV2LifecycleMatch[1]) . '_' . strtoupper($apiV2LifecycleMatch[2]) . '_ENABLED';
+    if (!filter_var(getenv($apiV2LifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_lifecycle_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/organization/(?:assign|remove|move)/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_relationship_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revoke/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_revoke_command_v2.php'; exit;
+}
+if ($apiV2Path === '/api/v2/directory/inventory') {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_INVENTORY_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_inventory_v2.php'; exit;
+}
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../src/config/db.php';
 require_once __DIR__ . '/../src/utils/request_security.php';

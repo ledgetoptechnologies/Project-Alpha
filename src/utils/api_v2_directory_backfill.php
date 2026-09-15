@@ -77,7 +77,10 @@ function api_v2_directory_backfill_local_id(mixed $value): int
 function api_v2_directory_backfill_source(PDO $pdo, string $type, int $id, bool $lock): array
 {
     $table = $type === 'client' ? 'clients' : 'organizations';
-    $sql = 'SELECT * FROM ' . $table . ' WHERE id=?';
+    $lifecycle = api_v2_directory_backfill_column_exists($pdo,$table,'archived')
+        && api_v2_directory_backfill_column_exists($pdo,$table,'deleted_at')
+        ? ' AND archived=0 AND deleted_at IS NULL' : '';
+    $sql = 'SELECT * FROM ' . $table . ' WHERE id=?' . $lifecycle;
     if ($lock && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') $sql .= ' FOR UPDATE';
     $statement = $pdo->prepare($sql);
     $statement->execute([$id]);
@@ -138,7 +141,10 @@ function api_v2_directory_backfill(PDO $pdo, string $type, ?string $cursor, int 
     foreach ($types as $resourceType) {
         $after = ($parsed !== null && $parsed['type'] === $resourceType) ? $parsed['id'] : 0;
         $table = $resourceType === 'client' ? 'clients' : 'organizations';
-        $statement = $pdo->prepare('SELECT id FROM ' . $table . ' WHERE id>? ORDER BY id ASC LIMIT ' . ($remaining + 1));
+        $lifecycle = api_v2_directory_backfill_column_exists($pdo,$table,'archived')
+            && api_v2_directory_backfill_column_exists($pdo,$table,'deleted_at')
+            ? ' AND archived=0 AND deleted_at IS NULL' : '';
+        $statement = $pdo->prepare('SELECT id FROM ' . $table . ' WHERE id>?' . $lifecycle . ' ORDER BY id ASC LIMIT ' . ($remaining + 1));
         $statement->execute([$after]);
         $found = $statement->fetchAll(PDO::FETCH_COLUMN);
         $hasMore = count($found) > $remaining;
