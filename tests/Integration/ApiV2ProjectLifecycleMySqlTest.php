@@ -43,6 +43,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         $this->second->exec('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ; SET SESSION innodb_lock_wait_timeout=1');
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_lifecycle.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_sync.php';
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_release_safety.php';
         $this->resetSchema();
     }
 
@@ -125,13 +126,21 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         self::assertFalse($this->second->inTransaction());$this->first->commit();$result=\api_v2_project_sync_write($this->second,'bind',$command,7,$this->headers,'after');self::assertSame(200,$result['status']);self::assertSame('1',$result['payload']['result']['authorizationGeneration']);
     }
 
+    public function testReleaseAttestationRequiresAndReadsBackRealMySqlSchema(): void
+    {
+        $before=\api_v2_project_backfill_attestation($this->first);self::assertTrue($before['schemaReady']);self::assertTrue($before['evidenceComplete']);self::assertFalse($before['complete']);
+        $digest=\api_v2_project_backfill_attestation_persist($this->first);self::assertTrue(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
+        $this->first->exec("UPDATE schema_migrations SET checksum='".str_repeat('0',64)."' WHERE version=102");self::assertFalse(\api_v2_project_backfill_attestation_receipt_is_current($this->first,$digest));
+    }
+
     private function resetSchema(): void
     {
-        $tables = ['api_v2_project_command_receipts','api_v2_project_external_bindings','api_v2_project_authorization_state','api_v2_project_backfill_attestations','api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','managed_delivery_intent_outbox','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
+        $tables = ['api_v2_project_command_receipts','api_v2_project_external_bindings','api_v2_project_authorization_state','api_v2_project_backfill_attestations','api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','managed_delivery_intent_outbox','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','schema_migrations','users'];
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
         foreach ($tables as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE users(id INT PRIMARY KEY) ENGINE=InnoDB;
+            CREATE TABLE schema_migrations(version INT UNSIGNED PRIMARY KEY,filename VARCHAR(255),checksum CHAR(64)) ENGINE=InnoDB;
             CREATE TABLE api_v2_applications(id BIGINT UNSIGNED PRIMARY KEY,application_id CHAR(36),name VARCHAR(191)) ENGINE=InnoDB;
             CREATE TABLE api_v2_history_identity(singleton TINYINT UNSIGNED PRIMARY KEY,source_instance_id CHAR(36),history_epoch CHAR(36)) ENGINE=InnoDB;
             CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL) ENGINE=InnoDB;
@@ -160,6 +169,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         $this->first->exec($presentationMigration);
         $syncMigration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0102_api_v2_project_synchronization.sql');
         self::assertNotFalse($syncMigration);$this->first->exec($syncMigration);
+        $checksum=hash_file('sha256',dirname(__DIR__,2).'/database/migrations/0102_api_v2_project_synchronization.sql');$insertMigration=$this->first->prepare('INSERT INTO schema_migrations(version,filename,checksum) VALUES(102,?,?)');$insertMigration->execute(['0102_api_v2_project_synchronization.sql',$checksum]);
         $this->first->beginTransaction();
         (new ProjectRevisionService($this->first))->initialize(1, 'baseline');
         $this->first->commit();

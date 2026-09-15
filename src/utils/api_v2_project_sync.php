@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-use App\Services\PortalProjectionMutationService;
 use App\Services\ProjectRevisionService;
 
 require_once __DIR__ . '/api_v2_project_lifecycle.php';
 require_once __DIR__ . '/api_v2_directory_revision.php';
-require_once __DIR__ . '/portal_projection_hooks.php';
 require_once __DIR__ . '/../services/ScheduleService.php';
 
 const PA_API_V2_PROJECT_GENERATION_MAX = '9223372036854775807';
+
+function api_v2_project_source_version():string{return'v-'.bin2hex(random_bytes(16));}
 
 function api_v2_project_external_id_valid(string $value): bool
 {
@@ -170,7 +170,7 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
             if(!$organization||($command['client']!==null&&!$client)||($client&&((int)($client['organization_id']??0)!==(int)$organization['id']))){$pdo->rollBack();return['status'=>409];}
             $publicId=bin2hex(random_bytes(16));$profile=$command['project'];
             $insert=$pdo->prepare("INSERT INTO projects(public_id,name,description,status,organization_id,client_id,invoice_billing_period,project_invoice_auto_email,portal_publish_enabled,public_project_enabled,estimated_start,estimated_end,source_version,created_by) VALUES(?,?,?,'not_started',?,?,'per_invoice',0,0,0,?,?,?,NULL)");
-            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id'],$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],function_exists('portal_projection_source_version')?portal_projection_source_version():'1']);
+            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id'],$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
             $projectId=(int)$pdo->lastInsertId();if($projectId<1)throw new RuntimeException('Project identity unavailable.');
             $project=(new ProjectRevisionService($pdo))->initialize($projectId,'create',$appPk,$command['commandId']);
         } elseif($type==='update') {
@@ -178,15 +178,11 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
             $changed=(string)$project['name']!==$profile['name']||($project['description']??null)!==$profile['description']||($project['estimated_start']??null)!==$profile['estimatedStart']||($project['estimated_end']??null)!==$profile['estimatedEnd'];
             if($changed){
                 $pdo->prepare('UPDATE projects SET name=?,description=?,estimated_start=?,estimated_end=?,source_version=? WHERE id=?')
-                    ->execute([$profile['name'],$profile['description'],$profile['estimatedStart'],$profile['estimatedEnd'],function_exists('portal_projection_source_version')?portal_projection_source_version():'1',$project['id']]);
+                    ->execute([$profile['name'],$profile['description'],$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version(),$project['id']]);
                 $project=(new ProjectRevisionService($pdo))->advance((int)$project['id'],'update',$appPk,$command['commandId']);
             }
         }
-        if(in_array($type,['create','update'],true)){
-            ScheduleService::syncProject($pdo,(int)$project['id'],getenv('APP_TIMEZONE')?:'UTC',0);
-            (new PortalProjectionMutationService())->afterMutationProjectionOnly($pdo,(new PortalProjectionMutationService())->projectScopes($pdo,(int)$project['id']));
-            $project=api_v2_project_hydrate_relations($pdo,$project);
-        }
+        if(in_array($type,['create','update'],true)){ScheduleService::syncProject($pdo,(int)$project['id'],getenv('APP_TIMEZONE')?:'UTC',0);$project=api_v2_project_hydrate_relations($pdo,$project);}
         $revision=(string)$project['revision'];$hash=ProjectRevisionService::projectionHash($project);
         if($type==='bind'||$type==='create'){
             $pdo->prepare('INSERT INTO api_v2_project_external_bindings(application_pk,external_id,project_public_id,project_revision,project_projection_sha256) VALUES(?,?,?,?,?)')

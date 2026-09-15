@@ -107,6 +107,12 @@ jobs:
           PORTAL_SCOPE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-portal-scope-mysql-integration.ps1
 
+      - name: MySQL API v2 Project synchronization regressions
+        shell: pwsh
+        env:
+          API_V2_PROJECT_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-project-lifecycle-mysql-integration.ps1
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs

@@ -85,9 +85,11 @@ starts `not_started`, uses neutral per-invoice billing with automatic invoice
 email disabled, and starts with portal publication and public links disabled.
 Update changes only those profile fields, rejects archived Projects, preserves
 existing presentation state, advances the canonical Project revision only for
-a content change, and updates schedules and neutral projections in the same
-transaction. It never sends an External Operations event or creates a portal
-authority root. Lifecycle state changes remain the separate lifecycle commands.
+a content change, and maintains PA's internal schedule entry. The API path
+deliberately does not reconcile workspaces, advance portal projection
+generations, or enqueue portal or External Operations delivery. Those remain
+separate PA/browser or deployment-governed actions. Lifecycle state changes
+remain the separate lifecycle commands.
 Terms such as client proposal or approval are deliberately outside this PA
 contract.
 
@@ -116,9 +118,13 @@ maintenance window:
 php bin/backfill-api-v2-projects.php --limit=100 --dry-run
 php bin/backfill-api-v2-projects.php --limit=100 --apply --confirm-api-v2-project-backfill --maintenance-window-confirmed
 php bin/backfill-api-v2-projects.php --limit=100 --dry-run --attest
+php bin/check-api-v2-project-release.php --attestation-sha256=<digest emitted above>
 ```
 
-Continue from the emitted cursor until no cursor remains. Then run focused and
+Continue from the emitted cursor until no cursor remains. The staging release
+must run the check command with the reviewed digest immediately before enabling
+any Project synchronization route; it exits nonzero for a missing/stale receipt,
+partial/wrong 0102 schema, or code/schema/coverage drift. Then run focused and
 full tests plus disposable MySQL concurrency/rollback tests. Provision only the
 needed per-route scopes and enable only the reviewed routes. A missing or
 drifted canonical history row causes reads and commands to fail closed.
@@ -128,6 +134,10 @@ Run the isolated MySQL 8.4 coverage with:
 ```powershell
 tools/run-api-v2-project-lifecycle-mysql-integration.ps1
 ```
+
+CI runs this disposable-MySQL runner explicitly because `tests/Integration` is
+excluded from the normal PHPUnit suite; a green normal PHPUnit step alone is
+not release evidence for this slice.
 
 This repository evidence establishes code and test eligibility only. It does
 not claim that a deployment has applied the migration, completed the backfill,
