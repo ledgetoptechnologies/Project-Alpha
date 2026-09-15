@@ -135,7 +135,8 @@ final class ApiV2DirectoryRevisionFoundationTest extends TestCase
         self::assertSame(410, \api_v2_binding_status_read($pdo, 'client', 'old/external', 7, ['source' => $source, 'application' => $application, 'epoch' => $epoch], '423e4567-e89b-42d3-a456-426614174000')['status']);
 
         // Restoration preserves the stable identity but does not reactivate
-        // either old external authority or permit silent external-ID reuse.
+        // either old external authority. A new explicit command may safely
+        // rebind the same tombstoned external ID at the restored revision.
         // Simulate a legacy row that escaped the delete-side repair; restore
         // must close that gap before publishing the new present revision.
         $pdo->exec("UPDATE api_v2_directory_external_bindings SET status='active',tombstoned_at=NULL WHERE application_pk=3 AND external_id='old/external'; UPDATE api_v2_directory_authorization_state SET authorization_generation=0 WHERE application_pk=3");
@@ -145,10 +146,49 @@ final class ApiV2DirectoryRevisionFoundationTest extends TestCase
         $pdo->commit();
         self::assertSame(0, (int)$pdo->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE status='active'")->fetchColumn());
         self::assertSame(1, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
-        self::assertSame(409, \api_v2_directory_binding_command_write($pdo, 'client', [
+        $rebind = \api_v2_directory_binding_command_write($pdo, 'client', [
             'commandId' => '423e4567-e89b-42d3-a456-426614174000', 'externalId' => 'old/external',
             'expectedPublicId' => $publicId, 'expectedRevision' => '3',
-        ], 7, ['source' => $source, 'application' => $application, 'epoch' => $epoch], '523e4567-e89b-42d3-a456-426614174000')['status']);
+        ], 7, ['source' => $source, 'application' => $application, 'epoch' => $epoch], '523e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200, $rebind['status']);
+        self::assertFalse($rebind['payload']['replayed']);
+        self::assertSame('active', $pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='old/external'")->fetchColumn());
+        self::assertSame(2, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+        self::assertTrue(\api_v2_directory_binding_command_write($pdo, 'client', [
+            'commandId' => '423e4567-e89b-42d3-a456-426614174000', 'externalId' => 'old/external',
+            'expectedPublicId' => $publicId, 'expectedRevision' => '3',
+        ], 7, ['source' => $source, 'application' => $application, 'epoch' => $epoch], '623e4567-e89b-42d3-a456-426614174000')['payload']['replayed']);
+    }
+
+    public function testIdempotentDeleteRepairsEscapedAuthorityBeforeGenerationMutation(): void
+    {
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_revision.php';
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $publicId = str_repeat('f', 32);
+        $pdo->exec("CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER NOT NULL);
+            CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
+            CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
+            CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,tombstoned_at TEXT,PRIMARY KEY(application_pk,resource_type,external_id));
+            INSERT INTO api_v2_directory_authorization_state VALUES(3,0);
+            INSERT INTO api_v2_directory_resource_state VALUES('client','{$publicId}',2,'" . hash('sha256', '') . "',0);
+            INSERT INTO api_v2_directory_external_bindings VALUES(3,'client','escaped','{$publicId}',1,'" . str_repeat('a', 64) . "','active',NULL);");
+        $pdo->beginTransaction();
+        self::assertFalse(\api_v2_directory_record_delete($pdo, 'client', $publicId));
+        $pdo->commit();
+        self::assertSame('tombstoned', $pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='escaped'")->fetchColumn());
+        self::assertSame(1, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+
+        $pdo->exec("UPDATE api_v2_directory_external_bindings SET status='active',tombstoned_at=NULL; UPDATE api_v2_directory_authorization_state SET authorization_generation=9223372036854775807; UPDATE api_v2_directory_resource_state SET revision=1,present=1");
+        $pdo->beginTransaction();
+        try {
+            \api_v2_directory_record_delete($pdo, 'client', $publicId);
+            self::fail('Expected exhausted generation preflight to reject the repair.');
+        } catch (\RuntimeException) {
+            $pdo->rollBack();
+        }
+        self::assertSame('active', $pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='escaped'")->fetchColumn());
+        self::assertSame([1, 1], array_map('intval', $pdo->query("SELECT revision,present FROM api_v2_directory_resource_state WHERE public_id='{$publicId}'")->fetch(PDO::FETCH_NUM)));
     }
 
     public function testBindingLifecycleRollbackLeavesRevisionBindingAndGenerationUntouched(): void
@@ -176,6 +216,22 @@ final class ApiV2DirectoryRevisionFoundationTest extends TestCase
         self::assertSame(1, (int)$pdo->query('SELECT revision FROM api_v2_directory_resource_state')->fetchColumn());
         self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE status='active'")->fetchColumn());
         self::assertSame(0, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+    }
+
+    public function testBindingStatusLocksCanonicalRowsBeforeTheBinding(): void
+    {
+        $source = (string)file_get_contents(dirname(__DIR__, 2) . '/src/utils/api_v2_binding_status.php');
+        $unlockedLookup = strpos($source, "SELECT public_id,status FROM api_v2_directory_external_bindings");
+        $liveLock = strpos($source, "SELECT * FROM ' . \$table . ' WHERE public_id=? LIMIT 2' . \$lock");
+        $stateLock = strpos($source, "SELECT present,CAST(revision AS CHAR) state_revision,projection_sha256");
+        $finalBindingLock = strpos($source, "FROM api_v2_directory_external_bindings binding LEFT JOIN api_v2_directory_authorization_state");
+        self::assertNotFalse($unlockedLookup);
+        self::assertNotFalse($liveLock);
+        self::assertNotFalse($stateLock);
+        self::assertNotFalse($finalBindingLock);
+        self::assertLessThan($liveLock, $unlockedLookup);
+        self::assertLessThan($stateLock, $liveLock);
+        self::assertLessThan($finalBindingLock, $stateLock);
     }
 
     public function testOrganizationDeletionLocksChildrenBeforeParentAndResnapshotsThem(): void

@@ -59,28 +59,44 @@ function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, 
     $pdo->beginTransaction();
     try {
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
-        $statement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,binding.resource_type,binding.external_id,binding.public_id,CAST(binding.resource_revision AS CHAR) resource_revision,binding.resource_projection_sha256,binding.status,binding.created_at,CAST(auth.authorization_generation AS CHAR) authorization_generation
-          FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1
-          JOIN api_v2_directory_external_bindings binding ON binding.application_pk=app.id AND binding.resource_type=? AND binding.external_id=?
-          LEFT JOIN api_v2_directory_authorization_state auth ON auth.application_pk=app.id WHERE api_key.id=? AND api_key.revoked_at IS NULL LIMIT 2' . $lock);
-        $statement->execute([$type, $externalId, $apiKeyId]); $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        if (count($rows) === 0) { $pdo->commit(); return ['status' => 404]; }
-        if (count($rows) !== 1) throw new RuntimeException('ambiguous binding');
-        $row = $rows[0];
-        if (!hash_equals((string)$row['source_instance_id'], (string)($headers['source'] ?? '')) || !hash_equals((string)$row['application_id'], (string)($headers['application'] ?? '')) || !hash_equals((string)$row['history_epoch'], (string)($headers['epoch'] ?? ''))) { $pdo->commit(); return ['status' => 409]; }
-        if ((string)$row['status'] === 'tombstoned') { $pdo->commit(); return ['status' => 410]; }
+        // Do not hold a binding lock while acquiring the canonical source and
+        // revision-state locks. Delete writers use source -> state -> binding;
+        // the initial lookup is intentionally unlocked and the binding is
+        // re-read with a lock after the canonical rows are held.
+        $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id AS application_pk
+          FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id
+          JOIN api_v2_history_identity history ON history.singleton=1
+          WHERE api_key.id=? AND api_key.revoked_at IS NULL LIMIT 2');
+        $identityStatement->execute([$apiKeyId]); $identityRows = $identityStatement->fetchAll(PDO::FETCH_ASSOC);
+        if (count($identityRows) === 0) { $pdo->commit(); return ['status' => 404]; }
+        if (count($identityRows) !== 1) throw new RuntimeException('ambiguous binding identity');
+        $identity = $identityRows[0];
+        if (!hash_equals((string)$identity['source_instance_id'], (string)($headers['source'] ?? '')) || !hash_equals((string)$identity['application_id'], (string)($headers['application'] ?? '')) || !hash_equals((string)$identity['history_epoch'], (string)($headers['epoch'] ?? ''))) { $pdo->commit(); return ['status' => 409]; }
+        $lookup = $pdo->prepare('SELECT public_id,status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND external_id=? LIMIT 2');
+        $lookup->execute([(int)$identity['application_pk'], $type, $externalId]); $bindingRows = $lookup->fetchAll(PDO::FETCH_ASSOC);
+        if (count($bindingRows) === 0) { $pdo->commit(); return ['status' => 404]; }
+        if (count($bindingRows) !== 1) throw new RuntimeException('ambiguous binding');
+        if ((string)$bindingRows[0]['status'] === 'tombstoned') { $pdo->commit(); return ['status' => 410]; }
         $table = $type === 'client' ? 'clients' : 'organizations';
-        $live = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=? LIMIT 2' . $lock); $live->execute([(string)$row['public_id']]); $liveRows = $live->fetchAll(PDO::FETCH_ASSOC);
+        $live = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=? LIMIT 2' . $lock); $live->execute([(string)$bindingRows[0]['public_id']]); $liveRows = $live->fetchAll(PDO::FETCH_ASSOC);
         // Directory writers lock the source row before its revision state.
         // A status read must follow that order to avoid a reader/writer cycle.
         $state = $pdo->prepare('SELECT present,CAST(revision AS CHAR) state_revision,projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
-        $state->execute([$type, (string)$row['public_id']]); $stateRow = $state->fetch(PDO::FETCH_ASSOC);
+        $state->execute([$type, (string)$bindingRows[0]['public_id']]); $stateRow = $state->fetch(PDO::FETCH_ASSOC);
         if ($stateRow && (int)$stateRow['present'] === 0) { $pdo->commit(); return ['status' => 410]; }
-        if (count($liveRows) !== 1 || !$stateRow || $row['authorization_generation'] === null
+        $binding = $pdo->prepare('SELECT binding.resource_type,binding.external_id,binding.public_id,CAST(binding.resource_revision AS CHAR) resource_revision,binding.resource_projection_sha256,binding.status,binding.created_at,CAST(auth.authorization_generation AS CHAR) authorization_generation
+            FROM api_v2_directory_external_bindings binding LEFT JOIN api_v2_directory_authorization_state auth ON auth.application_pk=binding.application_pk
+            WHERE binding.application_pk=? AND binding.resource_type=? AND binding.external_id=? LIMIT 2' . $lock);
+        $binding->execute([(int)$identity['application_pk'], $type, $externalId]); $rows = $binding->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) === 0) { $pdo->commit(); return ['status' => 404]; }
+        if (count($rows) !== 1) throw new RuntimeException('ambiguous binding');
+        $row = $rows[0];
+        if ((string)$row['status'] === 'tombstoned') { $pdo->commit(); return ['status' => 410]; }
+        if ((string)$row['public_id'] !== (string)$bindingRows[0]['public_id'] || count($liveRows) !== 1 || !$stateRow || $row['authorization_generation'] === null
             || (string)$stateRow['state_revision'] !== (string)$row['resource_revision']) { $pdo->commit(); return ['status' => 409]; }
         $liveHash = api_v2_directory_projection_hash($type, $liveRows[0]);
         if (!hash_equals((string)$stateRow['projection_sha256'], $liveHash) || !hash_equals((string)$row['resource_projection_sha256'], $liveHash)) { $pdo->commit(); return ['status' => 409]; }
-        $payload = api_v2_binding_status_payload($row, $requestId, $row);
+        $payload = api_v2_binding_status_payload($identity, $requestId, $row);
         if ($payload === null) throw new RuntimeException('invalid binding');
         $pdo->commit(); return ['status' => 200, 'payload' => $payload];
     } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }

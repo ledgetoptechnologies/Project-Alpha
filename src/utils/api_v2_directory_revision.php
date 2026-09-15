@@ -67,7 +67,18 @@ function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId
         . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
     $state->execute([$type, $publicId]);
     $current = $state->fetch(PDO::FETCH_ASSOC);
-    if ($current && (int)$current['present'] === 0) return false;
+    // A prior interrupted/legacy delete can leave active external authority
+    // beside an already-published tombstone.  Repair it even though no second
+    // resource revision should be emitted.
+    if ($current && (int)$current['present'] === 0) {
+        api_v2_directory_tombstone_bindings($pdo, $type, $publicId);
+        return false;
+    }
+
+    // Check all downstream authorization watermarks while only locks have
+    // been taken. A generation ceiling must not publish a resource tombstone
+    // (or its change event) that cannot also revoke its external authority.
+    api_v2_directory_preflight_tombstone_bindings($pdo, $type, $publicId);
 
     $revision = $current ? (int)$current['revision'] + 1 : 1;
     if ($revision < 1 || $revision > PHP_INT_MAX) throw new OverflowException('Directory revision exhausted');
@@ -98,9 +109,27 @@ function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId
 function api_v2_directory_tombstone_bindings(PDO $pdo, string $type, string $publicId): void
 {
     if (!api_v2_directory_lifecycle_binding_table_exists($pdo)) return;
+    $applicationPks = api_v2_directory_preflight_tombstone_bindings($pdo, $type, $publicId);
+    if ($applicationPks === []) return;
+    $tombstone = $pdo->prepare("UPDATE api_v2_directory_external_bindings
+        SET status='tombstoned', tombstoned_at=CURRENT_TIMESTAMP
+        WHERE resource_type=? AND public_id=? AND status='active'");
+    $tombstone->execute([$type, $publicId]);
+    if ($tombstone->rowCount() !== count($applicationPks)) {
+        throw new RuntimeException('The API v2 external binding tombstone was incomplete.');
+    }
+    foreach ($applicationPks as $applicationPk) {
+        api_v2_advance_authorization_generation($pdo, (int)$applicationPk);
+    }
+}
+
+/** @return list<int> Locked active-binding applications whose watermarks can advance. */
+function api_v2_directory_preflight_tombstone_bindings(PDO $pdo, string $type, string $publicId): array
+{
+    if (!api_v2_directory_lifecycle_binding_table_exists($pdo)) return [];
     $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
     $bindings = $pdo->prepare('SELECT application_pk FROM api_v2_directory_external_bindings
-        WHERE resource_type=? AND public_id=? AND status=\'active\'' . $lock);
+        WHERE resource_type=? AND public_id=? AND status=\'active\' ORDER BY application_pk' . $lock);
     $bindings->execute([$type, $publicId]);
     $applications = [];
     $bindingCount = 0;
@@ -108,17 +137,20 @@ function api_v2_directory_tombstone_bindings(PDO $pdo, string $type, string $pub
         $bindingCount++;
         $applications[(int)$applicationPk] = true;
     }
-    if ($applications === []) return;
-    $tombstone = $pdo->prepare("UPDATE api_v2_directory_external_bindings
-        SET status='tombstoned', tombstoned_at=CURRENT_TIMESTAMP
-        WHERE resource_type=? AND public_id=? AND status='active'");
-    $tombstone->execute([$type, $publicId]);
-    if ($tombstone->rowCount() !== $bindingCount) {
-        throw new RuntimeException('The API v2 external binding tombstone was incomplete.');
+    if ($applications === []) return [];
+    $applicationPks = array_keys($applications);
+    sort($applicationPks, SORT_NUMERIC);
+    // Preserve the writer lock order: source -> revision state -> binding ->
+    // authorization state.  Validate every affected watermark before the
+    // binding UPDATE so a missing/exhausted state fails closed without any
+    // lifecycle mutation.
+    foreach ($applicationPks as $applicationPk) {
+        api_v2_authorization_generation_require_advanceable($pdo, (int)$applicationPk);
     }
-    foreach (array_keys($applications) as $applicationPk) {
-        api_v2_advance_authorization_generation($pdo, (int)$applicationPk);
+    if ($bindingCount !== count($applicationPks)) {
+        throw new RuntimeException('Duplicate API v2 external bindings are not permitted.');
     }
+    return $applicationPks;
 }
 
 /** The binding table is optional until migration 0090 has been applied. */

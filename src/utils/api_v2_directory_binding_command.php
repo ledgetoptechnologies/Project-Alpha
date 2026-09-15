@@ -94,15 +94,32 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             }
             $pdo->commit(); return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, true)];
         }
-        if ($bindings !== []) { $pdo->rollBack(); return ['status' => 409]; }
+        // A resource delete keeps its tombstone so status reads can return
+        // 410.  After a restore, only a new command ID may explicitly rebind
+        // that exact external ID to the same public identity at its current
+        // revision.  It is not a silent revival: this creates a new receipt
+        // and advances the authorization watermark below.
+        $rebind = count($bindings) === 1
+            && (string)$bindings[0]['status'] === 'tombstoned'
+            && hash_equals((string)$bindings[0]['external_id'], $command['externalId'])
+            && (string)$bindings[0]['public_id'] === $command['expectedPublicId'];
+        if ($bindings !== [] && !$rebind) { $pdo->rollBack(); return ['status' => 409]; }
         $auth = $pdo->prepare('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
         $auth->execute([$appPk]); $generation = $auth->fetchColumn();
         if ($generation === false || !preg_match('/^(0|[1-9][0-9]{0,18})$/D', (string)$generation)
             || (strlen((string)$generation) === 19 && strcmp((string)$generation, '9223372036854775807') >= 0)) {
             $pdo->rollBack(); return ['status' => 409];
         }
-        $pdo->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(?,?,?,?,?,?,'active')")
-            ->execute([$appPk, $type, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision'], $state['projection_sha256']]);
+        if ($rebind) {
+            $reactivate = $pdo->prepare("UPDATE api_v2_directory_external_bindings
+                SET resource_revision=?,resource_projection_sha256=?,status='active',tombstoned_at=NULL,created_at=CURRENT_TIMESTAMP
+                WHERE application_pk=? AND resource_type=? AND external_id=? AND public_id=? AND status='tombstoned'");
+            $reactivate->execute([$command['expectedRevision'], $state['projection_sha256'], $appPk, $type, $command['externalId'], $command['expectedPublicId']]);
+            if ($reactivate->rowCount() !== 1) throw new RuntimeException('The API v2 external binding rebind was incomplete.');
+        } else {
+            $pdo->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(?,?,?,?,?,?,'active')")
+                ->execute([$appPk, $type, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision'], $state['projection_sha256']]);
+        }
         $pdo->prepare('INSERT INTO api_v2_directory_binding_command_receipts(application_pk,resource_type,command_id,request_sha256,external_id,public_id,resource_revision) VALUES(?,?,?,?,?,?,?)')
             ->execute([$appPk, $type, $command['commandId'], $requestHash, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision']]);
         $pdo->prepare('UPDATE api_v2_directory_authorization_state SET authorization_generation=authorization_generation+1 WHERE application_pk=?')->execute([$appPk]);

@@ -93,6 +93,61 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         self::assertSame('0', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
     }
 
+    public function testLifecycleMigrationPreflightsAndRetriesAfterTheBindingUpdate(): void
+    {
+        require_once dirname(__DIR__, 2) . '/src/migrations/migration_lib.php';
+        $publicId = str_repeat('a', 32);
+        $secondPublicId = str_repeat('b', 32);
+        $controlPublicId = str_repeat('c', 32);
+        $missingAuthorizationPublicId = str_repeat('e', 32);
+        $hash = str_repeat('d', 64);
+        $sql = (string)file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0095_api_v2_directory_binding_lifecycle.sql');
+        $statements = \migration_statements($sql);
+        self::assertCount(5, $statements);
+        // The staging statement is a fail-closed preflight. An affected
+        // binding without a watermark must not reach the following UPDATE.
+        // The production binding FK permits this application but the damaged
+        // installation lacks its required authorization-state row.
+        $this->first->exec("INSERT INTO api_v2_applications VALUES(99,'523e4567-e89b-42d3-a456-426614174000','Missing authorization state');
+            INSERT INTO api_v2_directory_resource_state VALUES('client','{$missingAuthorizationPublicId}',1,'{$hash}',0)");
+        $this->first->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(99,'client','missing/auth',?,1,?,'active')")
+            ->execute([$missingAuthorizationPublicId, $hash]);
+        $this->first->exec($statements[0]);
+        try {
+            $this->first->exec($statements[1]);
+            self::fail('Expected the migration preflight to reject missing authorization state.');
+        } catch (PDOException $error) {
+            self::assertSame('23000', $error->getCode());
+        }
+        self::assertSame('active', $this->first->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='missing/auth'")->fetchColumn());
+        $this->first->exec($statements[4]);
+        $this->first->exec("DELETE FROM api_v2_directory_external_bindings WHERE external_id='missing/auth'; DELETE FROM api_v2_directory_resource_state WHERE public_id='{$missingAuthorizationPublicId}'");
+        $this->first->exec("UPDATE api_v2_directory_resource_state SET present=0 WHERE resource_type='client' AND public_id='{$publicId}';
+            INSERT INTO api_v2_applications VALUES(4,'423e4567-e89b-42d3-a456-426614174000','Second disposable');
+            INSERT INTO api_v2_directory_authorization_state VALUES(4,5);
+            INSERT INTO api_v2_directory_resource_state VALUES('client','{$secondPublicId}',1,'{$hash}',0);
+            INSERT INTO api_v2_directory_resource_state VALUES('client','{$controlPublicId}',1,'{$hash}',1);");
+        $this->first->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(4,'client','second/missing',?,1,?,'active'),(3,'client','control/present',?,1,?,'active')")
+            ->execute([$secondPublicId, $hash, $controlPublicId, $hash]);
+
+        // The runner can stop after any individually committed statement. Stop
+        // immediately after tombstoning bindings, then execute the real file
+        // again to prove the retained repair ledger advances each app once.
+        for ($index = 0; $index <= 2; $index++) $this->first->exec($statements[$index]);
+        self::assertSame(2, (int)$this->first->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE status='tombstoned'")->fetchColumn());
+        self::assertSame('0', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+        foreach ($statements as $statement) $this->first->exec($statement);
+        self::assertSame('tombstoned', $this->first->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='old/external'")->fetchColumn());
+        self::assertSame('tombstoned', $this->first->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='second/missing'")->fetchColumn());
+        self::assertSame('active', $this->first->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='control/present'")->fetchColumn());
+        self::assertSame('1', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+        self::assertSame('6', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
+        self::assertSame(0, (int)$this->first->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='api_v2_directory_binding_lifecycle_repairs'")->fetchColumn());
+        foreach ($statements as $statement) $this->first->exec($statement);
+        self::assertSame('1', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+        self::assertSame('6', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
+    }
+
     private function headers(): array
     {
         return ['source' => '123e4567-e89b-42d3-a456-426614174000', 'application' => '223e4567-e89b-42d3-a456-426614174000', 'epoch' => '323e4567-e89b-42d3-a456-426614174000'];
@@ -101,7 +156,7 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        foreach (['api_v2_directory_binding_lifecycle_repairs','api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED PRIMARY KEY,application_id CHAR(36) NOT NULL,name VARCHAR(191) NOT NULL) ENGINE=InnoDB;
             CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL,FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;

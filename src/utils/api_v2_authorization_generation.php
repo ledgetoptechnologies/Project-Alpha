@@ -77,3 +77,29 @@ function api_v2_advance_authorization_generation(PDO $pdo, int $applicationPk): 
         throw new RuntimeException('The API v2 authorization generation was not advanced.');
     }
 }
+
+/**
+ * Lock and validate one authorization watermark before a caller changes any
+ * dependent authority.  This deliberately does not advance it: lifecycle
+ * writers use it as a preflight so an exhausted or missing watermark cannot
+ * leave an externally-visible binding half changed.
+ */
+function api_v2_authorization_generation_require_advanceable(PDO $pdo, int $applicationPk): void
+{
+    if (!$pdo->inTransaction() || $applicationPk < 1) {
+        throw new InvalidArgumentException('Authorization generation validation requires an active application transaction.');
+    }
+    if (!api_v2_authorization_generation_table_exists($pdo, 'api_v2_directory_authorization_state')
+        || !api_v2_authorization_generation_column_exists($pdo, 'api_v2_directory_authorization_state', 'authorization_generation')) {
+        throw new RuntimeException('The API v2 authorization state is unavailable.');
+    }
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $statement = $pdo->prepare('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
+    $statement->execute([$applicationPk]);
+    $generation = $statement->fetchColumn();
+    $value = is_scalar($generation) ? (string)$generation : '';
+    if ($generation === false || preg_match('/^(0|[1-9][0-9]{0,18})$/D', $value) !== 1
+        || (strlen($value) === 19 && strcmp($value, PA_API_V2_AUTHORIZATION_GENERATION_MAX) >= 0)) {
+        throw new RuntimeException('The API v2 authorization generation cannot be advanced.');
+    }
+}

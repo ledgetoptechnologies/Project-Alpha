@@ -7,17 +7,31 @@
 CREATE TABLE IF NOT EXISTS api_v2_directory_binding_lifecycle_repairs (
     application_pk BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     target_authorization_generation BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT fk_api_v2_directory_binding_lifecycle_repair_authorization FOREIGN KEY (application_pk)
+        REFERENCES api_v2_directory_authorization_state(application_pk) ON DELETE RESTRICT,
+    CONSTRAINT chk_api_v2_directory_binding_lifecycle_repair_generation CHECK (
+        target_authorization_generation BETWEEN 1 AND 9223372036854775807
+    )
 ) ENGINE=InnoDB;
 
-INSERT IGNORE INTO api_v2_directory_binding_lifecycle_repairs(application_pk,target_authorization_generation)
-SELECT binding.application_pk, authorization_state.authorization_generation + 1
+-- This is a fail-closed preflight, not merely a work list. The FK rejects a
+-- binding whose application lacks authorization state; the CHECK rejects an
+-- exhausted/invalid generation. Both happen before either lifecycle table is
+-- changed. A retained ledger after a statement-level interruption makes the
+-- following updates replay-safe.
+INSERT INTO api_v2_directory_binding_lifecycle_repairs(application_pk,target_authorization_generation)
+SELECT binding.application_pk,
+       CASE WHEN authorization_state.authorization_generation >= 9223372036854775807 THEN 0
+            ELSE authorization_state.authorization_generation + 1 END
 FROM api_v2_directory_external_bindings binding
 JOIN api_v2_directory_resource_state state
   ON state.resource_type=binding.resource_type AND state.public_id=binding.public_id
-JOIN api_v2_directory_authorization_state authorization_state
+LEFT JOIN api_v2_directory_authorization_state authorization_state
   ON authorization_state.application_pk=binding.application_pk
-WHERE binding.status='active' AND state.present=0;
+WHERE binding.status='active' AND state.present=0
+GROUP BY binding.application_pk
+ON DUPLICATE KEY UPDATE target_authorization_generation=VALUES(target_authorization_generation);
 
 UPDATE api_v2_directory_external_bindings binding
 JOIN api_v2_directory_resource_state state
@@ -33,4 +47,4 @@ SET authorization_state.authorization_generation=GREATEST(
     affected.target_authorization_generation
 );
 
-DROP TABLE api_v2_directory_binding_lifecycle_repairs;
+DROP TABLE IF EXISTS api_v2_directory_binding_lifecycle_repairs;
