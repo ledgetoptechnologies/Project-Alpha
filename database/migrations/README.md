@@ -264,3 +264,9 @@ disabled, pending managed deliveries stopped, and lifecycle receipts record the
 disabled presentation result. Restore does not re-enable any of that state;
 the bounded PHP backfill queues pinned-contract revocations for accepted legacy
 managed deliveries, and an authorized browser publish action is required later.
+Migration `0102_api_v2_project_synchronization.sql` adds default-inert,
+application-scoped Project authorization generations, permanent one-to-one
+external bindings, immutable bind/create/update/refresh command receipts, and
+local Project backfill attestation storage. It grants no scope, creates no
+binding, and enables no route. Apply it before enabling any Project
+synchronization flag.

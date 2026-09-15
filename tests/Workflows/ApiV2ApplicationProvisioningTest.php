@@ -18,6 +18,7 @@ final class ApiV2ApplicationProvisioningTest extends TestCase
             CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT);
             CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY AUTOINCREMENT,application_id TEXT UNIQUE,name TEXT);
             CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER NOT NULL);
+            CREATE TABLE api_v2_project_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER NOT NULL);
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_keys(id,scopes,revoked_at,api_v2_application_id) VALUES(7,'" . str_replace("'", "''", $scopes) . "',NULL,NULL);");
         return $pdo;
@@ -35,6 +36,7 @@ final class ApiV2ApplicationProvisioningTest extends TestCase
         $pdo = $this->database(); $result = \api_v2_application_provision($pdo, 7, 'Generic application', false);
         self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $result['applicationId']);
         self::assertSame(0, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame(0, (int)$pdo->query('SELECT authorization_generation FROM api_v2_project_authorization_state')->fetchColumn());
         self::assertSame(1, (int)$pdo->query('SELECT api_v2_application_id FROM api_keys WHERE id=7')->fetchColumn());
         $again = \api_v2_application_provision($pdo, 7, 'Generic application', false);
         self::assertTrue($again['alreadyProvisioned']); self::assertSame($result['applicationId'], $again['applicationId']);

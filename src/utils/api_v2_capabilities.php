@@ -107,6 +107,24 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'projects_restore' => [
             ['projects.lifecycle.restore', '/api/v2/projects/{publicId}/restore/commands', 'POST'],
         ],
+        'projects_create' => [
+            ['projects.create', '/api/v2/projects/commands', 'POST'],
+        ],
+        'projects_write' => [
+            ['projects.write', '/api/v2/projects/profile/commands', 'POST'],
+        ],
+        'projects_binding' => [
+            ['projects.bind', '/api/v2/projects/bindings/commands', 'POST'],
+        ],
+        'projects_binding_refresh' => [
+            ['projects.binding.revision.refresh', '/api/v2/projects/bindings/revisions/commands', 'POST'],
+        ],
+        'projects_binding_status' => [
+            ['projects.binding_status.read', '/api/v2/projects/bindings/status/{base64urlExternalId}'],
+        ],
+        'projects_inventory' => [
+            ['projects.inventory.read', '/api/v2/projects/inventory'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;

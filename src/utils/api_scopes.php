@@ -143,6 +143,36 @@ function api_scope_catalog(): array
             'description' => 'Restore one exact archived Project without granting portal or public-link access. Explicit grant required.',
             'endpoints' => [],
         ],
+        'projects.create' => [
+            'label' => 'API v2 Project create',
+            'description' => 'Create one private Project and bind it to an application-scoped external identity. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
+        'projects.write' => [
+            'label' => 'API v2 Project profile write',
+            'description' => 'Update one explicitly bound Project using revision, projection-hash, and authorization-generation fences. Explicit grant required.',
+            'endpoints' => [],
+        ],
+        'projects.bind' => [
+            'label' => 'API v2 Project identity binding',
+            'description' => 'Bind one existing Project to one application-scoped external identity using exact immutable proof. Explicit grant required.',
+            'endpoints' => [],
+        ],
+        'projects.binding.revision.refresh' => [
+            'label' => 'API v2 Project binding revision refresh',
+            'description' => 'Advance one permanent Project binding to an exact verified current revision without changing its external or PA identity. Explicit grant required.',
+            'endpoints' => [],
+        ],
+        'projects.binding_status.read' => [
+            'label' => 'API v2 Project binding status',
+            'description' => 'Read one exact application-scoped Project binding and reject stale canonical state. Explicit grant required.',
+            'endpoints' => [],
+        ],
+        'projects.inventory.read' => [
+            'label' => 'API v2 Project binding inventory',
+            'description' => 'Read a bounded inventory containing only this application\'s explicit Project bindings. Explicit grant required.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

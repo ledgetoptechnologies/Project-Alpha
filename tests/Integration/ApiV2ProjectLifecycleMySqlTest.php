@@ -42,6 +42,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         $this->first->exec('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         $this->second->exec('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ; SET SESSION innodb_lock_wait_timeout=1');
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_lifecycle.php';
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_project_sync.php';
         $this->resetSchema();
     }
 
@@ -105,9 +106,28 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         self::assertSame(200, \api_v2_project_lifecycle_write($this->second, str_repeat('a', 32), 'archive', $command, 7, $this->headers, 'after')['status']);
     }
 
+    public function testProjectBindingReceiptFailureRollsBackBindingAndGeneration(): void
+    {
+        $this->first->exec("CREATE TRIGGER stop_project_sync_receipt BEFORE INSERT ON api_v2_project_command_receipts FOR EACH ROW SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO=1062, MESSAGE_TEXT='blocked sync receipt'");
+        $project=$this->first->query('SELECT * FROM projects WHERE id=1')->fetch(PDO::FETCH_ASSOC);$project=\api_v2_project_hydrate_relations($this->first,$project);$hash=ProjectRevisionService::projectionHash($project);
+        $command=['commandId'=>'823e4567-e89b-42d3-a456-426614174000','externalId'=>'mysql-project','expectedPublicId'=>str_repeat('a',32),'expectedRevision'=>'1','expectedProjectionSha256'=>$hash,'expectedAuthorizationGeneration'=>'0'];
+        self::assertSame(409,\api_v2_project_sync_write($this->first,'bind',$command,7,$this->headers,'rollback')['status']);
+        self::assertSame(0,(int)$this->first->query('SELECT COUNT(*) FROM api_v2_project_external_bindings')->fetchColumn());
+        self::assertSame(0,(int)$this->first->query('SELECT authorization_generation FROM api_v2_project_authorization_state')->fetchColumn());
+    }
+
+    public function testProjectBindingSerializesOnApplicationLock(): void
+    {
+        $project=$this->first->query('SELECT * FROM projects WHERE id=1')->fetch(PDO::FETCH_ASSOC);$project=\api_v2_project_hydrate_relations($this->first,$project);$hash=ProjectRevisionService::projectionHash($project);
+        $command=['commandId'=>'923e4567-e89b-42d3-a456-426614174000','externalId'=>'mysql-project','expectedPublicId'=>str_repeat('a',32),'expectedRevision'=>'1','expectedProjectionSha256'=>$hash,'expectedAuthorizationGeneration'=>'0'];
+        $this->first->beginTransaction();$this->first->query('SELECT id FROM api_v2_applications WHERE id=3 FOR UPDATE')->fetchColumn();
+        try{\api_v2_project_sync_write($this->second,'bind',$command,7,$this->headers,'blocked');self::fail('Project binding crossed the application lock.');}catch(PDOException$error){self::assertSame(1205,(int)($error->errorInfo[1]??0));}
+        self::assertFalse($this->second->inTransaction());$this->first->commit();$result=\api_v2_project_sync_write($this->second,'bind',$command,7,$this->headers,'after');self::assertSame(200,$result['status']);self::assertSame('1',$result['payload']['result']['authorizationGeneration']);
+    }
+
     private function resetSchema(): void
     {
-        $tables = ['api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','managed_delivery_intent_outbox','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
+        $tables = ['api_v2_project_command_receipts','api_v2_project_external_bindings','api_v2_project_authorization_state','api_v2_project_backfill_attestations','api_v2_project_lifecycle_command_receipts','project_changes','project_retention_guards','managed_delivery_intent_outbox','schedule_entries','project_service_locations','system_audit','project_invoice_items','project_invoices','invoices','contracts','projects','clients','organizations','app_config','api_keys','api_v2_history_identity','api_v2_applications','users'];
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
         foreach ($tables as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -138,6 +158,8 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         $presentationMigration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0101_project_archive_presentation_revocation.sql');
         self::assertNotFalse($presentationMigration);
         $this->first->exec($presentationMigration);
+        $syncMigration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0102_api_v2_project_synchronization.sql');
+        self::assertNotFalse($syncMigration);$this->first->exec($syncMigration);
         $this->first->beginTransaction();
         (new ProjectRevisionService($this->first))->initialize(1, 'baseline');
         $this->first->commit();

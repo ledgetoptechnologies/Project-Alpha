@@ -5,11 +5,13 @@ title: API v2 Project lifecycle
 
 # API v2 Project lifecycle
 
-Project Alpha keeps the authoritative Project record. This foundation exposes
-exact Project reads and reversible lifecycle commands to explicitly provisioned
-API v2 applications. It is generic, disabled by default, and does not select a
-Project by name, create portal membership, publish documents, enable a public
-link, or inherit access from a legacy `full` key.
+Project Alpha keeps the authoritative Project record. The optional API exposes
+exact reads, reversible lifecycle commands, and application-scoped Project
+synchronization to explicitly provisioned API v2 applications. Every route is
+generic and disabled by default. Nothing selects a Project, client, or
+organization by name or email, creates portal membership, publishes documents,
+enables a public link, activates delivery, or inherits access from a legacy
+`full` key.
 
 ## Lifecycle model
 
@@ -44,6 +46,12 @@ route capability, and matching `X-PA-Source-Instance-ID`,
 - `POST /api/v2/projects/{publicId}/cancel/commands` requires `projects.lifecycle.cancel`.
 - `POST /api/v2/projects/{publicId}/archive/commands` requires `projects.lifecycle.archive`.
 - `POST /api/v2/projects/{publicId}/restore/commands` requires `projects.lifecycle.restore`.
+- `POST /api/v2/projects/commands` requires `projects.create`.
+- `POST /api/v2/projects/profile/commands` requires `projects.write`.
+- `POST /api/v2/projects/bindings/commands` requires `projects.bind`.
+- `POST /api/v2/projects/bindings/revisions/commands` requires `projects.binding.revision.refresh`.
+- `GET /api/v2/projects/bindings/status/{base64urlExternalId}` requires `projects.binding_status.read`.
+- `GET /api/v2/projects/inventory?limit=100&cursor=...` requires `projects.inventory.read`.
 
 Every command body has exactly two fields:
 
@@ -60,15 +68,54 @@ history, and the receipt share one database transaction.
 Lifecycle results and exact-replay receipts include `portalPublished` and
 `publicLinkEnabled`; archive and restore record both values as false.
 
+## Project synchronization contract
+
+Each application has a separate authorization generation and a permanent
+one-to-one mapping between its external Project ID and one PA Project public
+ID. An external ID and PA public ID cannot be reused or remapped. Existing PA
+Projects are bound only by a deliberate command carrying the exact public ID,
+revision, canonical projection SHA-256, and generation. A Project created by
+the API is bound atomically and must cite an active, same-application
+organization directory binding; an optional client binding must belong to that
+organization. This keeps the Project eligible for ordinary PA ownership rules
+without guessing from names or email addresses.
+
+Create accepts one shared Project name, description, and estimated dates. It
+starts `not_started`, uses neutral per-invoice billing with automatic invoice
+email disabled, and starts with portal publication and public links disabled.
+Update changes only those profile fields, rejects archived Projects, preserves
+existing presentation state, advances the canonical Project revision only for
+a content change, and updates schedules and neutral projections in the same
+transaction. It never sends an External Operations event or creates a portal
+authority root. Lifecycle state changes remain the separate lifecycle commands.
+Terms such as client proposal or approval are deliberately outside this PA
+contract.
+
+Every sync command uses canonical strict JSON, UUIDv4 command IDs, a request
+hash, authorization generation, and revision/projection-hash CAS where a
+Project already exists. Exact retries return the immutable receipt; a changed
+body using the same command ID conflicts. After a legitimate PA/browser edit,
+the separately scoped refresh command requires the pinned prior revision plus
+the current live public ID, revision, projection hash, and generation. It can
+only advance the existing mapping and never changes Project content or
+presentation.
+
+Binding status verifies the pinned revision and hash against live canonical
+history. Inventory is capped at 200 entries and lists only the calling
+application's bindings; unbound browser-created Projects are invisible. These
+responses contain no billing, budget, invoice, payment, document, portal URL,
+public action link, or other financial/publishing content.
+
 ## Release gate
 
 Keep every `APP_API_V2_PROJECTS_*_ENABLED` flag false while preparing a release.
-After migrations 0100 and 0101, run bounded dry runs and then apply during a confirmed
+After migrations 0100 through 0102, run bounded dry runs and then apply during a confirmed
 maintenance window:
 
 ```text
 php bin/backfill-api-v2-projects.php --limit=100 --dry-run
 php bin/backfill-api-v2-projects.php --limit=100 --apply --confirm-api-v2-project-backfill --maintenance-window-confirmed
+php bin/backfill-api-v2-projects.php --limit=100 --dry-run --attest
 ```
 
 Continue from the emitted cursor until no cursor remains. Then run focused and
@@ -82,10 +129,7 @@ Run the isolated MySQL 8.4 coverage with:
 tools/run-api-v2-project-lifecycle-mysql-integration.ps1
 ```
 
-## Deliberate boundary
-
-This release does not implement external Project create, profile update,
-external-ID binding, inventory, binding revocation, or application generation
-fences. Those need a separately reviewed one-to-one ownership contract. Project
-selection remains the caller's responsibility; this API accepts only the exact
-permanent Project public ID.
+This repository evidence establishes code and test eligibility only. It does
+not claim that a deployment has applied the migration, completed the backfill,
+provisioned a key, enabled a route, or cut over an external application.
+Project binding revocation, remapping, and hard deletion are not supported.

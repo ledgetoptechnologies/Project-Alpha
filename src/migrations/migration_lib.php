@@ -276,6 +276,10 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'project_changes' => 100,
         'project_retention_guards' => 100,
         'api_v2_project_lifecycle_command_receipts' => 100,
+        'api_v2_project_authorization_state' => 102,
+        'api_v2_project_external_bindings' => 102,
+        'api_v2_project_command_receipts' => 102,
+        'api_v2_project_backfill_attestations' => 102,
     ];
 
     return array_values(array_filter(
@@ -478,6 +482,10 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'result_completed_at'=>100,'result_archived_at'=>100,'outcome'=>100,'created_at'=>100,
             'result_portal_publish_enabled'=>101,'result_public_project_enabled'=>101,
         ],
+        'api_v2_project_authorization_state' => ['application_pk'=>102,'authorization_generation'=>102,'updated_at'=>102],
+        'api_v2_project_external_bindings' => ['application_pk'=>102,'external_id'=>102,'project_public_id'=>102,'project_revision'=>102,'project_projection_sha256'=>102,'created_at'=>102,'updated_at'=>102],
+        'api_v2_project_command_receipts' => ['application_pk'=>102,'history_epoch'=>102,'command_id'=>102,'command_type'=>102,'request_sha256'=>102,'external_id'=>102,'project_public_id'=>102,'expected_revision'=>102,'expected_prior_revision'=>102,'expected_projection_sha256'=>102,'expected_authorization_generation'=>102,'result_revision'=>102,'result_projection_sha256'=>102,'result_authorization_generation'=>102,'result_portal_publish_enabled'=>102,'result_public_project_enabled'=>102,'created_at'=>102],
+        'api_v2_project_backfill_attestations' => ['attestation_sha256'=>102,'attestation_json'=>102,'created_at'=>102],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -577,6 +585,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_relationship_command_receipts',
         'api_v2_directory_binding_revoke_command_receipts',
         'project_retention_guards', 'project_changes', 'api_v2_project_lifecycle_command_receipts',
+        'api_v2_project_authorization_state','api_v2_project_external_bindings','api_v2_project_command_receipts','api_v2_project_backfill_attestations',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);
     $deadTables = [
@@ -638,6 +647,10 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'project_changes' => ['project_public_id','revision','action_name','projection_sha256','application_pk','command_id','actor_user_id','changed_at'],
         'project_retention_guards' => ['project_public_id','established_at'],
         'api_v2_project_lifecycle_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','project_public_id','expected_revision','result_revision','result_status','result_completed_at','result_archived_at','result_portal_publish_enabled','result_public_project_enabled','outcome','created_at'],
+        'api_v2_project_authorization_state' => ['application_pk','authorization_generation','updated_at'],
+        'api_v2_project_external_bindings' => ['application_pk','external_id','project_public_id','project_revision','project_projection_sha256','created_at','updated_at'],
+        'api_v2_project_command_receipts' => ['application_pk','history_epoch','command_id','command_type','request_sha256','external_id','project_public_id','expected_revision','expected_prior_revision','expected_projection_sha256','expected_authorization_generation','result_revision','result_projection_sha256','result_authorization_generation','result_portal_publish_enabled','result_public_project_enabled','created_at'],
+        'api_v2_project_backfill_attestations' => ['attestation_sha256','attestation_json','created_at'],
         'api_usage' => ['api_key_id', 'used_at'],
         'portal_integration_audit' => ['integration_profile_id','api_key_id','correlation_id','action','outcome','target_type','target_public_id','metadata_json'],
         'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],

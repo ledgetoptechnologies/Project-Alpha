@@ -53,12 +53,24 @@ function api_v2_application_provision_schema_ready(PDO $pdo): bool
     foreach ([['api_keys', 'api_v2_application_id'], ['api_v2_history_identity', 'source_instance_id'], ['api_v2_history_identity', 'history_epoch'], ['api_v2_applications', 'application_id'], ['api_v2_applications', 'name'], ['api_v2_directory_authorization_state', 'application_pk'], ['api_v2_directory_authorization_state', 'authorization_generation']] as [$table, $column]) {
         if (!api_v2_application_provision_column_exists($pdo, $table, $column)) return false;
     }
+    if(api_v2_application_provision_table_exists($pdo,'api_v2_project_authorization_state')
+        &&(!api_v2_application_provision_column_exists($pdo,'api_v2_project_authorization_state','application_pk')
+            ||!api_v2_application_provision_column_exists($pdo,'api_v2_project_authorization_state','authorization_generation')))return false;
     $stmt = $pdo->prepare('SELECT version,filename FROM schema_migrations WHERE version IN (88,89)');
     $stmt->execute();
     $applied = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) $applied[(int)$row['version']] = (string)$row['filename'];
+    $projectMigration=$pdo->prepare('SELECT filename FROM schema_migrations WHERE version=102');$projectMigration->execute();$projectFilename=$projectMigration->fetchColumn();
     return ($applied[88] ?? null) === '0088_api_v2_application_identity.sql'
-        && ($applied[89] ?? null) === '0089_api_v2_directory_revision_foundation.sql';
+        && ($applied[89] ?? null) === '0089_api_v2_directory_revision_foundation.sql'
+        && ($projectFilename===false||($projectFilename==='0102_api_v2_project_synchronization.sql'&&api_v2_application_project_authorization_available($pdo)));
+}
+
+function api_v2_application_project_authorization_available(PDO $pdo): bool
+{
+    return api_v2_application_provision_table_exists($pdo,'api_v2_project_authorization_state')
+        && api_v2_application_provision_column_exists($pdo,'api_v2_project_authorization_state','application_pk')
+        && api_v2_application_provision_column_exists($pdo,'api_v2_project_authorization_state','authorization_generation');
 }
 
 function api_v2_application_provision_name_valid(string $name): bool
@@ -110,7 +122,9 @@ function api_v2_application_provision(PDO $pdo, int $apiKeyId, string $name, boo
                 && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $existing['application_id']) === 1;
             $validGeneration = is_scalar($generation) && preg_match('/^(0|[1-9][0-9]{0,18})$/D', (string)$generation) === 1
                 && (strlen((string)$generation) < 19 || strcmp((string)$generation, '9223372036854775807') <= 0);
-            if (!$validId || !hash_equals((string)$existing['name'], $name) || !$validGeneration) {
+            $validProjectGeneration=true;
+            if(api_v2_application_project_authorization_available($pdo)){$projectAuthorization=$pdo->prepare('SELECT authorization_generation FROM api_v2_project_authorization_state WHERE application_pk=?'.$lock);$projectAuthorization->execute([(int)$row['api_v2_application_id']]);$projectGeneration=$projectAuthorization->fetchColumn();$validProjectGeneration=is_scalar($projectGeneration)&&preg_match('/^(0|[1-9][0-9]{0,18})$/D',(string)$projectGeneration)===1&&(strlen((string)$projectGeneration)<19||strcmp((string)$projectGeneration,'9223372036854775807')<=0);}
+            if (!$validId || !hash_equals((string)$existing['name'], $name) || !$validGeneration || !$validProjectGeneration) {
                 throw new RuntimeException('The selected API key has an incompatible or incomplete existing API v2 binding.');
             }
             $pdo->rollBack();
@@ -128,6 +142,7 @@ function api_v2_application_provision(PDO $pdo, int $apiKeyId, string $name, boo
         if ($applicationPk < 1) throw new RuntimeException('Application identity creation failed.');
         $pdo->prepare('INSERT INTO api_v2_directory_authorization_state(application_pk,authorization_generation) VALUES(?,0)')
             ->execute([$applicationPk]);
+        if(api_v2_application_project_authorization_available($pdo))$pdo->prepare('INSERT INTO api_v2_project_authorization_state(application_pk,authorization_generation) VALUES(?,0)')->execute([$applicationPk]);
         $bind = $pdo->prepare('UPDATE api_keys SET api_v2_application_id=? WHERE id=? AND revoked_at IS NULL AND api_v2_application_id IS NULL');
         $bind->execute([$applicationPk, $apiKeyId]);
         if ($bind->rowCount() !== 1) throw new RuntimeException('The selected API key changed during provisioning.');

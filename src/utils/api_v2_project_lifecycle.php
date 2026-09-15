@@ -162,11 +162,11 @@ function api_v2_project_payload(array $identity, array $project, string $request
     return [
         'apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],
         'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'replayed'=>$replayed,'accepted'=>$accepted,
-        'resource'=>['type'=>'project','id'=>$project['public_id'],'revision'=>(string)$project['revision']],
+        'resource'=>['type'=>'project','id'=>$project['public_id'],'revision'=>(string)$project['revision'],'projectionSha256'=>ProjectRevisionService::projectionHash($project)],
         'data'=>[
-            'name'=>(string)($project['name'] ?? ''),'status'=>$project['status'],'archived'=>($project['archived_at'] ?? null) !== null,
+            'name'=>(string)($project['name'] ?? ''),'description'=>$project['description'] ?? null,'status'=>$project['status'],'archived'=>($project['archived_at'] ?? null) !== null,
             'overdueWarning'=>ProjectRevisionService::derivedOverdue($project),
-            'completedAt'=>$project['completed_at'] ?? null,'estimatedStart'=>$project['estimated_start'] ?? null,
+            'completedAt'=>$project['completed_at'] ?? null,'archivedAt'=>$project['archived_at'] ?? null,'estimatedStart'=>$project['estimated_start'] ?? null,
             'estimatedEnd'=>$project['estimated_end'] ?? null,'clientPublicId'=>$project['client_public_id'] ?? null,
             'organizationPublicId'=>$project['organization_public_id'] ?? null,
         ],

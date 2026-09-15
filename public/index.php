@@ -5,6 +5,30 @@ if ($apiV2Path === '/api/v2/capabilities') {
     require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
     exit;
 }
+if (in_array($apiV2Path, ['/api/v2/projects/commands','/api/v2/projects/profile/commands','/api/v2/projects/bindings/commands','/api/v2/projects/bindings/revisions/commands'], true)) {
+    $flag = match ($apiV2Path) {
+        '/api/v2/projects/commands' => 'APP_API_V2_PROJECTS_CREATE_ENABLED',
+        '/api/v2/projects/profile/commands' => 'APP_API_V2_PROJECTS_WRITE_ENABLED',
+        '/api/v2/projects/bindings/revisions/commands' => 'APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED',
+        default => 'APP_API_V2_PROJECTS_BINDING_ENABLED',
+    };
+    if (!filter_var(getenv($flag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_sync_command_v2.php'; exit;
+}
+if ($apiV2Path === '/api/v2/projects/inventory') {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_INVENTORY_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_inventory_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/projects/bindings/status(?:/|$)#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_binding_status_v2.php'; exit;
+}
 if (preg_match('#^/api/v2/projects/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_PROJECTS_READ_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;

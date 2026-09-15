@@ -73,6 +73,12 @@ try {
         'projects_cancel' => api_v2_enabled('APP_API_V2_PROJECTS_CANCEL_ENABLED'),
         'projects_archive' => api_v2_enabled('APP_API_V2_PROJECTS_ARCHIVE_ENABLED'),
         'projects_restore' => api_v2_enabled('APP_API_V2_PROJECTS_RESTORE_ENABLED'),
+        'projects_create' => api_v2_enabled('APP_API_V2_PROJECTS_CREATE_ENABLED'),
+        'projects_write' => api_v2_enabled('APP_API_V2_PROJECTS_WRITE_ENABLED'),
+        'projects_binding' => api_v2_enabled('APP_API_V2_PROJECTS_BINDING_ENABLED'),
+        'projects_binding_refresh' => api_v2_enabled('APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED'),
+        'projects_binding_status' => api_v2_enabled('APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED'),
+        'projects_inventory' => api_v2_enabled('APP_API_V2_PROJECTS_INVENTORY_ENABLED'),
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {
