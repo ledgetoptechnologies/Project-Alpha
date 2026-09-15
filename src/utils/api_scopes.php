@@ -246,8 +246,8 @@ function api_scope_endpoint_map(): array
 function api_scope_options_for_form(): array
 {
     return ['full' => [
-        'label' => 'Full API access',
-        'description' => 'Allow every current and future API endpoint.',
+        'label' => 'Legacy broad API access',
+        'description' => 'Allow legacy endpoints that accept the broad scope. Fine-grained API v2 endpoints always require their explicit scopes and do not inherit this grant.',
         'endpoints' => ['*'],
     ]] + api_scope_catalog();
 }

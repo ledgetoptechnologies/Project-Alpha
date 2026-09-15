@@ -53,14 +53,17 @@ route capability, and matching `X-PA-Source-Instance-ID`,
 - `GET /api/v2/projects/bindings/status/{base64urlExternalId}` requires `projects.binding_status.read`.
 - `GET /api/v2/projects/inventory?limit=100&cursor=...` requires `projects.inventory.read`.
 
-Every command body has exactly two fields:
+Lifecycle command bodies have exactly two fields:
 
 ```json
 {"commandId":"423e4567-e89b-42d3-a456-426614174000","expectedRevision":"7"}
 ```
 
-Command IDs are UUIDv4 values. Revisions are canonical positive decimal
-strings. Receipts are isolated by application and history epoch. An exact
+Project synchronization commands use the separately documented strict shapes
+for create, update, bind, and binding-revision refresh; they are not represented
+by the lifecycle example above. Command IDs are UUIDv4 values. Revisions are
+canonical positive decimal strings. Receipts are isolated by application and
+history epoch. An exact
 replay returns the recorded result; reuse of a command ID with another target,
 action, revision, or body fails with conflict. Closeout contract guards,
 receivable auditing, schedule synchronization, portal reconciliation, revision
