@@ -408,6 +408,18 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'result_projection_sha256' => 92, 'expected_authorization_generation' => 92,
             'result_authorization_generation' => 92, 'created_at' => 92,
         ],
+        'api_v2_directory_organization_profile_command_receipts' => [
+            'application_pk' => 93, 'command_id' => 93, 'request_sha256' => 93,
+            'public_id' => 93, 'expected_revision' => 93,
+            'expected_authorization_generation' => 93, 'result_revision' => 93,
+            'result_projection_sha256' => 93, 'created_at' => 93,
+        ],
+        'api_v2_directory_client_profile_command_receipts' => [
+            'application_pk' => 94, 'command_id' => 94, 'request_sha256' => 94,
+            'public_id' => 94, 'expected_revision' => 94,
+            'expected_authorization_generation' => 94, 'result_revision' => 94,
+            'result_projection_sha256' => 94, 'created_at' => 94,
+        ],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,

@@ -172,6 +172,8 @@ final class MigrationLibraryTest extends TestCase
             'portal_integration_profiles' => ['service_assignment_projection_enabled', 'contact_assignment_projection_enabled'],
             'portal_client_provisioning_backfill' => ['integration_profile_id', 'root_type', 'contract_fingerprint'],
             'portal_projection_recoveries' => ['integration_profile_id', 'workspace_public_id', 'activation_delivery_id', 'state'],
+            'api_v2_directory_organization_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
+            'api_v2_directory_client_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
             'archived_clients' => ['public_id', 'client_type', 'portal_principal_id', 'portal_identity_binding_ids_json', 'portal_principal_authorization_version', 'portal_principal_disabled_for_archive', 'portal_principal_was_present', 'portal_entitlement_ids_json', 'portal_affected_workspace_ids_json'],
         ];
         $this->assertSame(
@@ -185,6 +187,8 @@ final class MigrationLibraryTest extends TestCase
         $pre85 = $columns;
         unset($pre85['archived_clients']);
         unset($pre85['portal_projection_recoveries']);
+        unset($pre85['api_v2_directory_organization_profile_command_receipts']);
+        unset($pre85['api_v2_directory_client_profile_command_receipts']);
         $through79 = $pre85;
         unset($through79['portal_integration_profiles']);
         unset($through79['portal_client_provisioning_backfill']);
@@ -199,9 +203,14 @@ final class MigrationLibraryTest extends TestCase
         $this->assertSame($through82, migration_required_columns_for_version($columns, 82));
         $this->assertSame($pre85, migration_required_columns_for_version($columns, 83));
         $this->assertSame($pre85, migration_required_columns_for_version($columns, 84));
-        $through86=$columns;unset($through86['portal_projection_recoveries']);
+        $through86=$columns;unset($through86['portal_projection_recoveries'],$through86['api_v2_directory_organization_profile_command_receipts'],$through86['api_v2_directory_client_profile_command_receipts']);
         $this->assertSame($through86, migration_required_columns_for_version($columns, 85));
         $this->assertSame($through86,migration_required_columns_for_version($columns,86));
-        $this->assertSame($columns,migration_required_columns_for_version($columns,87));
+        $pre93=$columns;unset($pre93['api_v2_directory_organization_profile_command_receipts'],$pre93['api_v2_directory_client_profile_command_receipts']);
+        $this->assertSame($pre93,migration_required_columns_for_version($columns,87));
+        $through93=$columns;unset($through93['api_v2_directory_client_profile_command_receipts']);
+        $this->assertSame($pre93,migration_required_columns_for_version($columns,92));
+        $this->assertSame($through93,migration_required_columns_for_version($columns,93));
+        $this->assertSame($columns,migration_required_columns_for_version($columns,94));
     }
 }

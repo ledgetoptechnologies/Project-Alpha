@@ -59,7 +59,20 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         if ($receipt) { $pdo->commit(); return ['status'=>200, 'payload'=>api_v2_directory_client_profile_result($identity, $publicId, (string)$receipt['result_revision'], (string)$receipt['expected_authorization_generation'], $requestId, true)]; }
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock); $authorizationStatement->execute([(int)$identity['application_pk']]); $authorizationGeneration = $authorizationStatement->fetchColumn();
         if ($authorizationGeneration === false || (string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) { $pdo->rollBack(); return ['status'=>409]; }
-        $liveStatement = $pdo->prepare('SELECT * FROM clients WHERE public_id=?' . $lock); $liveStatement->execute([$publicId]); $live = $liveStatement->fetch(PDO::FETCH_ASSOC);
+        // Resolve without a lock, then acquire the same dependency order used
+        // by browser mutations: projects, department contacts, client,
+        // organization, address, and finally directory revision state.
+        // Reversing client/address with those shared scope locks can deadlock
+        // an API write against an ordinary browser update on MySQL.
+        $candidateStatement = $pdo->prepare('SELECT id FROM clients WHERE public_id=?');
+        $candidateStatement->execute([$publicId]); $candidateId = (int)($candidateStatement->fetchColumn() ?: 0);
+        if ($candidateId < 1) { $pdo->rollBack(); return ['status'=>409]; }
+        (new \App\Services\PortalProjectionMutationService())->lockedClientScopes($pdo, $candidateId);
+        $liveStatement = $pdo->prepare('SELECT * FROM clients WHERE id=? AND public_id=?' . $lock); $liveStatement->execute([$candidateId, $publicId]); $live = $liveStatement->fetch(PDO::FETCH_ASSOC);
+        if (!$live) { $pdo->rollBack(); return ['status'=>409]; }
+        // Keep provider metadata and the selected reusable address private;
+        // only address values mirrored by the client row are commandable.
+        $currentAddress = address_book_default_for_entity($pdo, 'client', (int)$live['id'], 'billing', true) ?: [];
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'client\' AND public_id=?' . $lock); $stateStatement->execute([$publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$live || !$state || (int)$state['present'] !== 1 || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash('client', $live))) { $pdo->rollBack(); return ['status'=>409]; }
         if ((string)$state['revision'] !== $command['expectedRevision']) { $pdo->rollBack(); return ['status'=>409]; }
@@ -68,9 +81,6 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         $hasProfileChange = false;
         foreach ($profileFields as $field => $value) if ((string)($live[$field] ?? '') !== $value) { $hasProfileChange = true; break; }
         if ($hasProfileChange) {
-            // Keep provider metadata and the selected reusable address private;
-            // only address values mirrored by the client row are commandable.
-            $currentAddress = address_book_default_for_entity($pdo, 'client', (int)$live['id'], 'billing', true) ?: [];
             (new ClientProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'organization_id'=>(int)($live['organization_id'] ?? 0), 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'address_id'=>(int)($currentAddress['id'] ?? 0), 'actor_id'=>0]);
         }
         $resultStateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'client\' AND public_id=?' . $lock); $resultStateStatement->execute([$publicId]); $result = $resultStateStatement->fetch(PDO::FETCH_ASSOC);
