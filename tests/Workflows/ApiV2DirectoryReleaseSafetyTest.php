@@ -13,7 +13,7 @@ final class ApiV2DirectoryReleaseSafetyTest extends TestCase
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) self::markTestSkipped('pdo_sqlite unavailable');
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_release_safety.php';
         $pdo = new PDO('sqlite::memory:'); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT); INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql');
+        $pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT); INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql'),(96,'0096_api_v2_directory_backfill_attestations.sql');
             CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
             CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,general_email TEXT,general_phone TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
@@ -50,6 +50,31 @@ final class ApiV2DirectoryReleaseSafetyTest extends TestCase
         self::assertFalse(\api_v2_directory_backfill_attestation_receipt_is_current($pdo, $digest));
     }
 
+    public function testReceiptDigestChangesForAProperlyRecordedSameCountMutation(): void
+    {
+        $pdo = $this->database(); \api_v2_directory_backfill($pdo, 'all', null, 10, false);
+        $first = \api_v2_directory_backfill_attestation_persist($pdo);
+        $pdo->beginTransaction();
+        $pdo->exec("UPDATE clients SET name='Revised' WHERE id=1");
+        \api_v2_directory_record($pdo, 'client', 1); $pdo->commit();
+        $second = \api_v2_directory_backfill_attestation_persist($pdo);
+        self::assertNotSame($first, $second); self::assertFalse(\api_v2_directory_backfill_attestation_receipt_is_current($pdo, $first));
+        self::assertTrue(\api_v2_directory_backfill_attestation_receipt_is_current($pdo, $second));
+    }
+
+    public function testReceiptMigrationIsRequiredOnlyAtThroughVersionNinetySix(): void
+    {
+        $pdo = $this->database();
+        self::assertTrue(\api_v2_directory_backfill_attestation_receipt_schema_ready($pdo, 96));
+        $pdo->exec('DROP TABLE api_v2_directory_backfill_attestations; CREATE TABLE api_v2_directory_backfill_attestations(attestation_sha256 TEXT PRIMARY KEY,attestation_json TEXT NOT NULL)');
+        self::assertFalse(\api_v2_directory_backfill_attestation_receipt_schema_ready($pdo, 96), 'Migration 96 requires every receipt column.');
+        $pdo->exec('DELETE FROM schema_migrations WHERE version=96; DROP TABLE api_v2_directory_backfill_attestations');
+        self::assertTrue(\api_v2_directory_backfill_schema_ready($pdo), 'The existing backfill remains usable through migration 95.');
+        self::assertTrue(\api_v2_directory_backfill_attestation_receipt_schema_ready($pdo, 95));
+        self::assertFalse(\api_v2_directory_backfill_attestation_receipt_schema_ready($pdo, 96));
+        self::assertSame(2, \api_v2_directory_backfill($pdo, 'all', null, 10, true)['scanned']);
+    }
+
     public function testAttestationRejectsOrphanedActiveStateAndHistoryBeyondState(): void
     {
         $pdo = $this->database(); \api_v2_directory_backfill($pdo, 'all', null, 10, false);
@@ -76,6 +101,7 @@ final class ApiV2DirectoryReleaseSafetyTest extends TestCase
             self::assertFileExists($root . '/' . $entry['path']); self::assertArrayNotHasKey($entry['path'], $listed);
             $listed[$entry['path']] = $entry; $source = (string)file_get_contents($root . '/' . $entry['path']);
             self::assertStringContainsString($entry['evidence'], $source, $entry['path']);
+            self::assertSame($entry['mutationCount'], preg_match_all('/(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+[`]?(?:clients|organizations)[`]?/i', $source), $entry['path']);
             if ($entry['governance'] === 'revision') self::assertMatchesRegularExpression('/api_v2_directory_record(?:_delete)?\\s*\\(/', $source, $entry['path']);
         }
         $writers = [];

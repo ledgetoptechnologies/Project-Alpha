@@ -9,14 +9,14 @@ require_once __DIR__ . '/api_v2_directory_backfill.php';
  * callers must still keep the API capability disabled until their release
  * process accepts a complete result.
  *
- * @return array{attestationVersion:int,schemaReady:bool,complete:bool,resources:array<string,array<string,int>>,violations:array<string,int>}
+ * @return array{attestationVersion:int,schemaReady:bool,complete:bool,resources:array<string,array<string,int|string>>,violations:array<string,int>}
  */
 function api_v2_directory_backfill_attestation(PDO $pdo): array
 {
     if ($pdo->inTransaction()) throw new LogicException('Directory backfill attestation requires no active transaction.');
     $resources = [
-        'client' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0],
-        'organization' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0],
+        'client' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
+        'organization' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
     ];
     $violations = ['schema' => 0, 'identity' => 0, 'missing_state' => 0, 'projection_drift' => 0, 'history_gap' => 0, 'orphaned_state' => 0];
     if (!api_v2_directory_backfill_schema_ready($pdo)) {
@@ -27,6 +27,7 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
     foreach (['client' => 'clients', 'organization' => 'organizations'] as $type => $table) {
         $source = $pdo->query('SELECT * FROM ' . $table . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
         $live = [];
+        $coverage = [];
         foreach ($source as $row) {
             $resources[$type]['source']++;
             $publicId = (string)($row['public_id'] ?? '');
@@ -55,28 +56,37 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
                 $resources[$type]['history']++; $violations['history_gap']++; continue;
             }
             $resources[$type]['covered']++;
+            $coverage[] = ['publicId' => $publicId, 'revision' => (int)$revision, 'projectionSha256' => $hash];
         }
         $states = $pdo->prepare('SELECT public_id FROM api_v2_directory_resource_state WHERE resource_type=? AND present=1');
         $states->execute([$type]);
         foreach ($states->fetchAll(PDO::FETCH_COLUMN) as $publicId) {
             if (!isset($live[(string)$publicId])) { $resources[$type]['orphaned']++; $violations['orphaned_state']++; }
         }
+        usort($coverage, static fn(array $left, array $right): int => strcmp($left['publicId'], $right['publicId']));
+        $resources[$type]['coverageDigest'] = hash('sha256', json_encode($coverage, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
     $complete = array_sum($violations) === 0;
     return ['attestationVersion' => 1, 'schemaReady' => true, 'complete' => $complete, 'resources' => $resources, 'violations' => $violations];
 }
 
-/** @param array{attestationVersion:int,schemaReady:bool,complete:bool,resources:array<string,array<string,int>>,violations:array<string,int>} $attestation */
+/** @param array{attestationVersion:int,schemaReady:bool,complete:bool,resources:array<string,array<string,int|string>>,violations:array<string,int>} $attestation */
 function api_v2_directory_backfill_attestation_json(array $attestation): string
 {
     return json_encode($attestation, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
-function api_v2_directory_backfill_attestation_receipt_schema_ready(PDO $pdo): bool
+function api_v2_directory_backfill_attestation_receipt_schema_ready(PDO $pdo, int $throughVersion = 96): bool
 {
+    if ($throughVersion < 89 || $throughVersion > 96) throw new InvalidArgumentException('Unsupported directory release-safety migration version.');
+    if ($throughVersion < 96) return true;
+    $migration = $pdo->prepare('SELECT filename FROM schema_migrations WHERE version=96');
+    $migration->execute();
+    if ($migration->fetchColumn() !== '0096_api_v2_directory_backfill_attestations.sql') return false;
     return api_v2_directory_backfill_table_exists($pdo, 'api_v2_directory_backfill_attestations')
         && api_v2_directory_backfill_column_exists($pdo, 'api_v2_directory_backfill_attestations', 'attestation_sha256')
-        && api_v2_directory_backfill_column_exists($pdo, 'api_v2_directory_backfill_attestations', 'attestation_json');
+        && api_v2_directory_backfill_column_exists($pdo, 'api_v2_directory_backfill_attestations', 'attestation_json')
+        && api_v2_directory_backfill_column_exists($pdo, 'api_v2_directory_backfill_attestations', 'created_at');
 }
 
 /**
@@ -122,29 +132,29 @@ function api_v2_directory_backfill_attestation_receipt_is_current(PDO $pdo, stri
  * `caller` is the one restoration service, whose only runtime caller does so;
  * `non_projection` entries are deliberately excluded after source review.
  *
- * @return list<array{path:string,target:string,governance:string,evidence:string}>
+ * @return list<array{path:string,target:string,governance:string,evidence:string,mutationCount:int}>
  */
 function api_v2_directory_writer_inventory(): array
 {
     return [
-        ['path' => 'src/controllers/client/client_onboarding_review.php', 'target' => 'both', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/client/clients_create.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/client/clients_delete.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete'],
-        ['path' => 'src/controllers/client/clients_purge.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete'],
-        ['path' => 'src/controllers/organization/organization_add_client.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/organization/organization_remove_client.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/organization/org_create.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/organization/organizations_create.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/controllers/organization/organizations_delete.php', 'target' => 'both', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete'],
-        ['path' => 'src/controllers/organization/organizations_update.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/services/ClientProfileMutationService.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/services/OrganizationProfileMutationService.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/services/PaymentProcessorImportService.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record'],
-        ['path' => 'src/services/ClientArchivePortalStateService.php', 'target' => 'client', 'governance' => 'caller', 'evidence' => 'consumeAndRestore'],
-        ['path' => 'src/controllers/organization/organization-update-notes.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET notes'],
-        ['path' => 'src/controllers/organization/organizations_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET tax_exempt_file'],
-        ['path' => 'src/controllers/organization/organization_document_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET {$dbFileColumn}'],
-        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET link_strategy'],
-        ['path' => 'src/services/StripeService.php', 'target' => 'client', 'governance' => 'non_projection', 'evidence' => 'UPDATE clients SET stripe_customer_id'],
+        ['path' => 'src/controllers/client/client_onboarding_review.php', 'target' => 'both', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 6],
+        ['path' => 'src/controllers/client/clients_create.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/controllers/client/clients_delete.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete', 'mutationCount' => 1],
+        ['path' => 'src/controllers/client/clients_purge.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organization_add_client.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organization_remove_client.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/org_create.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organizations_create.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organizations_delete.php', 'target' => 'both', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record_delete', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organizations_update.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 2],
+        ['path' => 'src/services/ClientProfileMutationService.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/services/OrganizationProfileMutationService.php', 'target' => 'organization', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 1],
+        ['path' => 'src/services/PaymentProcessorImportService.php', 'target' => 'client', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 2],
+        ['path' => 'src/services/ClientArchivePortalStateService.php', 'target' => 'client', 'governance' => 'caller', 'evidence' => 'consumeAndRestore', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organization-update-notes.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET notes', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organizations_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET tax_exempt_file', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organization_document_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET {$dbFileColumn}', 'mutationCount' => 1],
+        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET link_strategy', 'mutationCount' => 2],
+        ['path' => 'src/services/StripeService.php', 'target' => 'client', 'governance' => 'non_projection', 'evidence' => 'UPDATE clients SET stripe_customer_id', 'mutationCount' => 1],
     ];
 }
