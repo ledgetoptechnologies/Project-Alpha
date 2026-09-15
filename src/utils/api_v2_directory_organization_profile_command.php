@@ -77,6 +77,11 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock); $authorizationStatement->execute([(int)$identity['application_pk']]); $authorizationGeneration = $authorizationStatement->fetchColumn();
         if ($authorizationGeneration === false || (string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) { $pdo->rollBack(); return ['status'=>409]; }
         $liveStatement = $pdo->prepare('SELECT * FROM organizations WHERE public_id=?' . $lock); $liveStatement->execute([$publicId]); $live = $liveStatement->fetch(PDO::FETCH_ASSOC);
+        if (!$live) { $pdo->rollBack(); return ['status'=>409]; }
+        // Browser profile writes acquire the organization row, its reusable
+        // billing address, and then the directory revision. Match that order
+        // so an API update cannot deadlock against an interactive update.
+        $currentAddress = address_book_default_for_entity($pdo, 'organization', (int)$live['id'], 'billing', true) ?: [];
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'organization\' AND public_id=?' . $lock); $stateStatement->execute([$publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$live || !$state || (int)$state['present'] !== 1 || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash('organization', $live))) { $pdo->rollBack(); return ['status'=>409]; }
         if ((string)$state['revision'] !== $command['expectedRevision']) { $pdo->rollBack(); return ['status'=>409]; }
@@ -90,9 +95,6 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
             if ((string)($live[$field] ?? '') !== $value) { $hasProfileChange = true; break; }
         }
         if ($hasProfileChange) {
-            // The default billing-address row is locked in this same transaction;
-            // MySQL cannot replace hidden address metadata between this read and save.
-            $currentAddress = address_book_default_for_entity($pdo, 'organization', (int)$live['id'], 'billing', true) ?: [];
             (new OrganizationProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'general_email'=>$profile['generalEmail'], 'general_phone'=>$profile['generalPhone'], 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'actor_id'=>0], $addressColumns);
         }
         $resultStateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'organization\' AND public_id=?' . $lock); $resultStateStatement->execute([$publicId]); $result = $resultStateStatement->fetch(PDO::FETCH_ASSOC);
