@@ -53,6 +53,11 @@ function api_scope_catalog(): array
             'description' => 'Update one application-bound organization profile through a version-checked API v2 command. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [],
         ],
+        'directory.clients.write' => [
+            'label' => 'API v2 client directory write',
+            'description' => 'Update one application-bound client profile through a version-checked API v2 command. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',

@@ -59,6 +59,9 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_organization_write' => [
             ['directory.organizations.write', '/api/v2/directory/organizations/{publicId}/profile/commands', 'POST'],
         ],
+        'directory_client_write' => [
+            ['directory.clients.write', '/api/v2/directory/clients/{publicId}/profile/commands', 'POST'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;

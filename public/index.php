@@ -51,6 +51,13 @@ if (preg_match('#^/api/v2/directory/organizations/[0-9a-f]{32}/profile/commands$
     }
     require __DIR__ . '/../src/controllers/api/directory_organization_profile_command_v2.php'; exit;
 }
+if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store');
+        http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_client_profile_command_v2.php'; exit;
+}
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../src/config/db.php';
 require_once __DIR__ . '/../src/utils/request_security.php';

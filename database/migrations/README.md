@@ -102,6 +102,21 @@ recover the immutable first result on exact retry. Do not enable the route
 until the existing-row backfill, complete writer inventory, real-MySQL
 concurrency/rollback checks, and external-management handoff are accepted.
 
+Migration `0094_api_v2_directory_client_profile_command_receipts.sql` adds
+application-scoped idempotency receipts for conditional client profile
+updates. The generic command route is independently disabled by default
+through `APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED` and requires the same
+bound API v2 application key to hold both `api.capabilities.read` and the
+explicit `directory.clients.write` scope; legacy `full` access does not
+inherit it. Commands change only shared client-profile fields, preserve
+organization membership, portal access, billing identifiers, notes, and
+address-provider metadata, use the shared browser/API transaction, reject
+stale resource or authorization generations, record no-op success without
+revision churn, and recover the immutable first result on exact retry. Do not
+enable the route until the existing-row backfill, complete writer inventory,
+real-MySQL concurrency/rollback checks, and external-management handoff are
+accepted.
+
 For an operator-approved dedicated API key, the generic provisioning CLI can
 bind its numeric key ID to a new API v2 application and initialize that
 application's authorization generation at zero. It requires migrations 0088

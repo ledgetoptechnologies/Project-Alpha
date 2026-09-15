@@ -149,6 +149,21 @@ final class MigrationLibraryTest extends TestCase
         $this->assertContains('portal_projection_recoveries', migration_required_tables_for_version([
             'portal_projection_recoveries',
         ], 87));
+        $this->assertSame([], migration_required_tables_for_version([
+            'api_v2_directory_organization_profile_command_receipts',
+            'api_v2_directory_client_profile_command_receipts',
+        ], 92));
+        $this->assertSame(['api_v2_directory_organization_profile_command_receipts'], migration_required_tables_for_version([
+            'api_v2_directory_organization_profile_command_receipts',
+            'api_v2_directory_client_profile_command_receipts',
+        ], 93));
+        $this->assertSame([
+            'api_v2_directory_organization_profile_command_receipts',
+            'api_v2_directory_client_profile_command_receipts',
+        ], migration_required_tables_for_version([
+            'api_v2_directory_organization_profile_command_receipts',
+            'api_v2_directory_client_profile_command_receipts',
+        ], 94));
 
         $columns = [
             'invoices' => ['organization_id', 'generation_key'],

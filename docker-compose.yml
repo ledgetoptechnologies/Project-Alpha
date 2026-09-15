@@ -44,6 +44,8 @@ services:
       AUTOPAY_BETA_ENABLED: "false"
       # Generic API v2 organization profile commands are intentionally dormant.
       APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED: "false"
+      # Generic API v2 client profile commands are intentionally dormant.
+      APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED: "false"
       # Optional inbound portal adapter credentials. Outbound portal events use
       # the External Operations connection saved in administrator settings.
       PORTAL_INTEGRATION_HMAC_SECRETS_JSON: ""

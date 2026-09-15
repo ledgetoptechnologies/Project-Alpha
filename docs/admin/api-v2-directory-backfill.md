@@ -53,3 +53,27 @@ Before an operator may enable this route, require all of the following:
 This document records a release gate, not enablement instructions. Keep the
 flag false through rollout review; changing the flag, provisioning a key, or
 deploying a receiver is a separate operator-controlled action.
+
+## Client profile command release gate
+
+`POST /api/v2/directory/clients/{publicId}/profile/commands` is a generic,
+installation-local API v2 command contract. It is not a portal command or an
+integration-profile setting. It remains unroutable while
+`APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED=false`.
+
+The command requires a bound API v2 application key with both
+`api.capabilities.read` and `directory.clients.write`; a legacy `full` key is
+refused. UUID-v4 `commandId` receipts make exact retries return the immutable
+first result. Callers must use the current resource revision, authorization
+generation, source instance ID, application ID, and history epoch. The only
+writable values are the shared client profile fields; membership, portal
+access, billing identifiers, private notes, credentials, and address-provider
+metadata are retained from the locked row.
+
+Before enabling it, complete the directory backfill and writer inventory, then
+pass isolated SQLite and disposable MySQL checks for lock contention, stale
+revision and authorization rejection, source/application/epoch rejection,
+exact replay, no-op revision stability, and receipt-failure rollback. Review
+the external-management handoff and provision one least-privilege key only as
+a separate approved action. This is a release gate, not enablement guidance:
+leave the flag false through rollout review.
