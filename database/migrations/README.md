@@ -210,3 +210,14 @@ Migration `0087_portal_projection_recovery.sql` records bounded, audited
 replacement-snapshot recovery for terminal workspace projection deliveries.
 Failed payloads remain immutable; a recovery becomes complete only after the
 receiver acknowledges the replacement generation's activation record.
+
+Migration `0095_api_v2_directory_binding_lifecycle.sql` repairs the generic
+binding lifecycle boundary: active bindings for already-tombstoned resources
+are permanently tombstoned and each affected application's authorization
+generation is advanced. All client and organization delete, archive, purge,
+restore, and organization-delete paths must keep this operation in the same
+transaction as the resource revision. Restore never reactivates a prior
+external ID; rebinding is an explicit later command and a tombstoned external
+ID remains reserved. Do not enable generic binding or status routes until the
+SQLite and disposable MySQL 8.4 lifecycle, concurrency, fail-closed status,
+external-ID reuse, and rollback gates pass.

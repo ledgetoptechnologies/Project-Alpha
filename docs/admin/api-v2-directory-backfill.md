@@ -20,6 +20,31 @@ The tool validates migrations `0088_api_v2_application_identity.sql` and `0089_a
 
 After all resume cursors are exhausted, perform a coverage audit: compare the count of valid existing clients and organizations with present directory-state rows and matching `upsert` change rows, and resolve every refusal before enabling any directory route or capability.
 
+## Generic external-binding lifecycle release gate
+
+Migration `0095_api_v2_directory_binding_lifecycle.sql` repairs any binding
+that was active while its resource already had a deletion tombstone. It
+permanently marks that binding `tombstoned` and advances each affected
+application's authorization generation. The same operation is performed
+inside every client or organization delete/purge transaction (including an
+organization delete and its child-resource mutations).
+
+The migration uses a retry-safe repair ledger because the migration runner
+executes SQL statements individually. Verify no affected application is at
+`9223372036854775807` (the API v2 generation ceiling) before applying it; an
+exhausted generation is an operator-blocking condition and must be resolved
+without reusing or resetting the application identity.
+
+Deletion and archive tests must prove that every active binding is tombstoned
+atomically, exact status reads fail closed (`410` for a known tombstone), and
+rollback leaves both the resource revision and bindings unchanged. Restore
+must preserve the same public ID and revision history but must not reactivate
+external authority. A later bind is an explicit command: old external IDs
+remain permanently reserved by their tombstone and cannot be silently reused.
+Before enabling any generic binding or status route, pass these checks with
+SQLite and a disposable MySQL 8.4 database, including concurrent delete/bind
+mutation, generation advancement, and failed-generation rollback.
+
 ## Organization profile command release gate
 
 `POST /api/v2/directory/organizations/{publicId}/profile/commands` is a

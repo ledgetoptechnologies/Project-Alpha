@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/api_v2_authorization_generation.php';
+
 /** The one canonical profile projection used by writers and live readers. */
 function api_v2_directory_projection_hash(string $type, array $row): string
 {
@@ -33,6 +35,13 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
     $state->execute([$type, $row['public_id']]);
     $current = $state->fetch(PDO::FETCH_ASSOC);
     if ($current && (int)$current['present'] === 1 && hash_equals((string)$current['projection_sha256'], $hash)) return false;
+    // A restore must not revive authority left behind by an older writer or
+    // partial pre-0095 deployment. Treat the first post-tombstone upsert as a
+    // lifecycle boundary too; the explicit binding command remains the only
+    // way to establish new external authority.
+    if ($current && (int)$current['present'] === 0) {
+        api_v2_directory_tombstone_bindings($pdo, $type, (string)$row['public_id']);
+    }
     $revision = $current ? (int)$current['revision'] + 1 : 1;
     if ($revision < 1 || $revision > PHP_INT_MAX) throw new OverflowException('Directory revision exhausted');
     if ($current) {
@@ -74,5 +83,53 @@ function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId
     }
     $pdo->prepare("INSERT INTO api_v2_directory_resource_changes(resource_type,public_id,revision,action) VALUES (?,?,?,'delete')")
         ->execute([$type, $publicId, $revision]);
+
+    // A resource tombstone is also an authorization boundary.  Existing
+    // external identities must be tombstoned in this same transaction so a
+    // concurrent status read cannot observe a deleted resource as active, and
+    // every affected application must move its authorization watermark.  The
+    // binding table was introduced after the revision foundation; tolerate an
+    // older installation that has not applied that optional migration yet.
+    api_v2_directory_tombstone_bindings($pdo, $type, $publicId);
     return true;
+}
+
+/** Tombstone all active authority for a resource and advance each app once. */
+function api_v2_directory_tombstone_bindings(PDO $pdo, string $type, string $publicId): void
+{
+    if (!api_v2_directory_lifecycle_binding_table_exists($pdo)) return;
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $bindings = $pdo->prepare('SELECT application_pk FROM api_v2_directory_external_bindings
+        WHERE resource_type=? AND public_id=? AND status=\'active\'' . $lock);
+    $bindings->execute([$type, $publicId]);
+    $applications = [];
+    $bindingCount = 0;
+    foreach ($bindings->fetchAll(PDO::FETCH_COLUMN) as $applicationPk) {
+        $bindingCount++;
+        $applications[(int)$applicationPk] = true;
+    }
+    if ($applications === []) return;
+    $tombstone = $pdo->prepare("UPDATE api_v2_directory_external_bindings
+        SET status='tombstoned', tombstoned_at=CURRENT_TIMESTAMP
+        WHERE resource_type=? AND public_id=? AND status='active'");
+    $tombstone->execute([$type, $publicId]);
+    if ($tombstone->rowCount() !== $bindingCount) {
+        throw new RuntimeException('The API v2 external binding tombstone was incomplete.');
+    }
+    foreach (array_keys($applications) as $applicationPk) {
+        api_v2_advance_authorization_generation($pdo, (int)$applicationPk);
+    }
+}
+
+/** The binding table is optional until migration 0090 has been applied. */
+function api_v2_directory_lifecycle_binding_table_exists(PDO $pdo): bool
+{
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        $statement = $pdo->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
+        $statement->execute(['api_v2_directory_external_bindings']);
+        return $statement->fetchColumn() !== false;
+    }
+    $statement = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?");
+    $statement->execute(['api_v2_directory_external_bindings']);
+    return $statement->fetchColumn() !== false;
 }
