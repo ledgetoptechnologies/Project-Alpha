@@ -207,6 +207,16 @@ if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints
 if ($syncContractV2Enabled) {
     $moduleRoutes['/api/v2/ops/snapshot'] = 'api-ops-snapshot-v2';
 }
+
+// Every API v2 request must resolve to an explicit route. This keeps the
+// namespace fail-closed once Apache sends it through the front controller.
+if (preg_match('#^/api/v2(?:/|$)#D', $requestPath) === 1 && !isset($moduleRoutes[$requestPath])) {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store');
+    http_response_code(404);
+    echo json_encode(['error' => 'Not found']);
+    exit;
+}
 if (preg_match('#^/quotes/([a-f0-9]{32})/edit/?$#D', $requestPath, $quotePublicRoute) === 1) {
     $_GET['_quote_public_id'] = $quotePublicRoute[1];
     $moduleRoutes[$requestPath] = 'quote/quotes-edit-public';
