@@ -18,6 +18,7 @@ final class OrganizationProfileMutationServiceTest extends TestCase
     public function testNonUploadProfileWriterKeepsAllAuthoritativeEffectsInOneMutation(): void
     {
         $writer = (string) file_get_contents($this->root . '/src/services/OrganizationProfileMutationService.php');
+        $writer = str_replace(["\r\n", "\r"], "\n", $writer);
 
         self::assertStringContainsString('portal_projection_mutate(', $writer);
         self::assertStringContainsString('source_version = ?', $writer);
