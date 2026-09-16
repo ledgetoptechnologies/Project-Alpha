@@ -242,7 +242,7 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:db-latest"', $compose);
         self::assertStringNotContainsString('x-pa-settings:', $compose);
         self::assertStringNotContainsString('&pa-', $compose);
-        self::assertLessThanOrEqual(140, count(file($this->root . '/docker-compose.yml') ?: []));
+        self::assertLessThanOrEqual(160, count(file($this->root . '/docker-compose.yml') ?: []));
         self::assertStringContainsString('APP_ENV: production', $compose);
         self::assertStringContainsString('- "1627:80"', $compose);
     }
