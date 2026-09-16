@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $runId = [Guid]::NewGuid().ToString('N')
-$containerName = "pa-api-v2-client-profile-mysql-test-$runId"
-$networkName = "pa-api-v2-client-profile-mysql-test-$runId"
+$containerName = "pa-api-v2-client-mysql-$runId"
+$networkName = "pa-api-v2-client-mysql-$runId"
 $databaseName = "api_v2_client_profile_test_$runId"
 $databaseUser = 'api_v2_client_profile'
 $rootPassword = [Guid]::NewGuid().ToString('N')
