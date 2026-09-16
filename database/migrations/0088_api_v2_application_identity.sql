@@ -12,7 +12,7 @@ INSERT IGNORE INTO api_v2_history_identity (singleton, source_instance_id, histo
 SELECT 1,
     LOWER(CONCAT(SUBSTR(source_hex,1,8),'-',SUBSTR(source_hex,9,4),'-4',SUBSTR(source_hex,14,3),'-8',SUBSTR(source_hex,18,3),'-',SUBSTR(source_hex,21,12))),
     LOWER(CONCAT(SUBSTR(epoch_hex,1,8),'-',SUBSTR(epoch_hex,9,4),'-4',SUBSTR(epoch_hex,14,3),'-8',SUBSTR(epoch_hex,18,3),'-',SUBSTR(epoch_hex,21,12)))
-FROM (SELECT HEX(RANDOM_BYTES(16)) AS source_hex, HEX(RANDOM_BYTES(16)) AS epoch_hex) AS generated;
+FROM (SELECT HEX(RANDOM_BYTES(16)) AS source_hex, HEX(RANDOM_BYTES(16)) AS epoch_hex) AS random_values;
 
 CREATE TABLE IF NOT EXISTS api_v2_applications (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
