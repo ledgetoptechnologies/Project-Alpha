@@ -245,9 +245,11 @@ and an audit trail. It creates no application, API key, grant, or active policy.
 The policy stays inactive unless the selected application and its non-legacy
 key pass every live scope, route, identity, authorization, schema, writer, and
 release-evidence check. If a check later fails, local administrator actions are
-made available and the transition is audited. Source lifecycle and relationship
-API routes are not implemented in this release, so configuration is retained
-but cannot yet become effective.
+made available and the transition is audited. Migration `0099` supplies the
+schema and receipt foundation required by the source lifecycle and relationship
+API routes, which remain independently disabled by default; retained
+configuration cannot become effective until those routes and every other
+release gate are ready.
 
 Migration `0100_project_lifecycle_api_foundation.sql` replaces persisted
 Project overdue state with a derived warning, adds reversible archive state and
