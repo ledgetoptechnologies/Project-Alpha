@@ -29,7 +29,7 @@ if (!function_exists('api_keys_scope_labels')) {
         foreach ($selected as $scope) {
             $labels[] = (string)($scopeOptions[$scope]['label'] ?? $scope);
         }
-        return implode(', ', $labels ?: ['Full API access']);
+        return implode(', ', $labels ?: ['Legacy broad API access']);
     }
 }
 

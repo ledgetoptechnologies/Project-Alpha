@@ -166,21 +166,21 @@ final class OpsSnapshotService
                 'booleans' => ['is_lead'],
             ],
             'clients' => [
-                'sql' => 'SELECT id,name,email,phone,address_line1,address_line2,city,state,postal_code,country,
+                'sql' => 'SELECT id,public_id,name,email,phone,address_line1,address_line2,city,state,postal_code,country,
                                  organization_id,client_type,archived,deleted_at,created_at,updated_at
                           FROM clients ORDER BY id',
                 'integers' => ['id', 'organization_id'],
                 'booleans' => ['archived'],
             ],
             'organizations' => [
-                'sql' => 'SELECT id,name,address_line1,address_line2,city,state,postal_code,country,
+                'sql' => 'SELECT id,public_id,name,address_line1,address_line2,city,state,postal_code,country,
                                  link_strategy,created_at,updated_at
                           FROM organizations ORDER BY id',
                 'integers' => ['id'],
                 'booleans' => [],
             ],
             'projects' => [
-                'sql' => 'SELECT id,client_id,parent_id,organization_id,department_id,business_unit_id,manager_user_id,created_by,name,description,status,
+                'sql' => 'SELECT id,public_id,client_id,parent_id,organization_id,department_id,business_unit_id,manager_user_id,created_by,name,description,status,
                                  start_date,end_date,estimated_start,estimated_end,created_at,updated_at
                           FROM projects ORDER BY id',
                 'integers' => ['id', 'client_id', 'parent_id', 'organization_id', 'department_id', 'business_unit_id', 'manager_user_id', 'created_by'],
@@ -273,6 +273,13 @@ final class OpsSnapshotService
      */
     private function normalizeRow(array $row, array $definition): array
     {
+        // Migration 0062 assigns these once. Export the source-issued value,
+        // never synthesize an identity or replace the existing numeric keys.
+        if (array_key_exists('public_id', $row)
+            && (!is_string($row['public_id']) || !preg_match('/^[0-9a-f]{32}$/D', $row['public_id']))
+        ) {
+            throw new \UnexpectedValueException('The operations source public ID is missing or invalid.');
+        }
         foreach ($definition['integers'] as $field) {
             if (array_key_exists($field, $row) && $row[$field] !== null) {
                 $row[$field] = (int)$row[$field];

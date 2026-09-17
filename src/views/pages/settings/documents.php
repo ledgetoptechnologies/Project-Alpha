@@ -55,7 +55,7 @@ $docTab = isset($_GET['doc_tab']) ? preg_replace('/[^a-z]/i', '', $_GET['doc_tab
       <label>
         <input type="checkbox" name="contract_scope_enabled" value="1" <?php echo !empty($appConfig['contract_scope_enabled']) || !isset($appConfig['contract_scope_enabled']) ? 'checked' : ''; ?>
         <span class="font-600">Enable "Scope of Contract" field</span>
-        <div style="margin-top:4px;color:var(--muted);font-size:12px">Available for both regular and long-term contracts. If left blank, excluded from PDF.</div>
+        <div style="margin-top:4px;color:var(--muted);font-size:12px">Available for regular, long-term, and on-demand contracts. If left blank, excluded from PDF and public links.</div>
       </label>
       <label>
         <input type="checkbox" name="contract_memo_enabled" value="1" <?php echo !empty($appConfig['contract_memo_enabled']) ? 'checked' : ''; ?>

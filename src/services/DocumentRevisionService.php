@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/address_book.php';
+require_once __DIR__ . '/../utils/document_organization.php';
 
 final class DocumentRevisionService
 {
@@ -76,7 +77,7 @@ final class DocumentRevisionService
 
     private static function snapshotAddresses(PDO $pdo, string $type, int $id, int $revision, array $row): void
     {
-        $organizationId = (int)($row['organization_id'] ?? 0);
+        $organizationId = (int)(pa_document_effective_organization_id($pdo, $type, $id) ?? 0);
         $billing = $organizationId > 0
             ? address_book_default_for_entity($pdo, 'organization', $organizationId, 'billing')
             : null;

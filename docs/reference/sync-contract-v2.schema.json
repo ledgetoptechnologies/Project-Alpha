@@ -15,6 +15,10 @@
       "type": "string",
       "pattern": "^(0|[1-9][0-9]*)$"
     },
+    "sourcePublicId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
     "resource": {
       "type": "object",
       "additionalProperties": false,
@@ -57,7 +61,34 @@
         "data": {
           "type": "object"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "resource": {
+                "properties": {
+                  "type": {
+                    "enum": ["organization", "client", "project"]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "required": ["public_id"],
+                "properties": {
+                  "public_id": {
+                    "$ref": "#/$defs/sourcePublicId"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "snapshot": {
       "type": "object",
@@ -168,7 +199,36 @@
             "null"
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": { "const": "upsert" },
+              "resource": {
+                "properties": {
+                  "type": {
+                    "enum": ["organization", "client", "project"]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "type": "object",
+                "required": ["public_id"],
+                "properties": {
+                  "public_id": {
+                    "$ref": "#/$defs/sourcePublicId"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -6,6 +6,7 @@ require_once __DIR__ . '/invoice_due_dates.php';
 require_once __DIR__ . '/invoice_numbers.php';
 require_once __DIR__ . '/document_pdf.php';
 require_once __DIR__ . '/general_recipient_invoices.php';
+require_once __DIR__ . '/public_links.php';
 
 function invoice_notification_timezone(array $appConfig): DateTimeZone
 {
@@ -76,7 +77,9 @@ function invoice_notification_enqueue_generated(PDO $pdo, int $invoiceId, array 
         return false;
     }
     $invoice = invoice_notification_invoice($pdo, $invoiceId);
-    if (!$invoice || pa_invoice_is_general_recipient($invoice) || ($invoice['invoice_type'] ?? '') !== 'long_term'
+    if (!$invoice || pa_invoice_is_general_recipient($invoice)
+        || ($invoice['collection_mode'] ?? 'direct') !== 'direct'
+        || ($invoice['invoice_type'] ?? '') !== 'long_term'
         || ($invoice['finalization_source'] ?? '') !== 'recurring_schedule') {
         return false;
     }
@@ -258,12 +261,11 @@ function invoice_notification_process(
             $url = '';
             if (!empty($appConfig['public_links_in_email'])) {
                 $base = invoice_notification_public_base($appConfig);
-                $token = bin2hex(random_bytes(32));
-                $pdo->prepare(
-                    'INSERT INTO public_links (document_type,document_id,token,expires_at,expire_when_paid,revoked,created_at)
-                     VALUES ("invoice",?,?,NULL,1,0,NOW())'
-                )->execute([(int)$row['invoice_id'], $token]);
-                $linkId = (int)$pdo->lastInsertId();
+                $publicLink = pa_public_link_reuse_or_create(
+                    $pdo, 'invoice', (int)$row['invoice_id'], null, true
+                );
+                $token = (string)$publicLink['token'];
+                $linkId = !empty($publicLink['created']) ? (int)$publicLink['id'] : 0;
                 $url = $base . '/?page=public-doc&type=invoice&token=' . rawurlencode($token);
             }
             $doc = $row['doc_number'] ?: $row['invoice_id'];
@@ -297,9 +299,6 @@ function invoice_notification_process(
                 'message_key' => 'invoice-notification:' . $id,
             ]);
             if (!$ok) {
-                if ($linkId > 0) {
-                    $pdo->prepare('UPDATE public_links SET revoked=1 WHERE id=?')->execute([$linkId]);
-                }
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }
             $pdo->prepare(
@@ -311,9 +310,6 @@ function invoice_notification_process(
                 ->execute([$now->format('Y-m-d H:i:s'), (int)$row['invoice_id']]);
             $stats['sent']++;
         } catch (Throwable $error) {
-            if (!empty($linkId)) {
-                try { $pdo->prepare('UPDATE public_links SET revoked=1 WHERE id=?')->execute([$linkId]); } catch (Throwable $ignored) {}
-            }
             $attempt = max(1, (int)$row['attempt_count']);
             $delayMinutes = min(1440, 5 * (2 ** min(8, $attempt - 1)));
             $next = $now->modify('+' . $delayMinutes . ' minutes')->format('Y-m-d H:i:s');

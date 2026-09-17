@@ -22,8 +22,8 @@ if (($invitationId <= 0 && $token === '') || $name === '') {
 
 $state = client_onboarding_clean_text($_POST['state'] ?? '', 100);
 $email = client_onboarding_normalize_email($_POST['email'] ?? '');
-if ($email !== '' && (mb_strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL))) {
-    header('Location: /?page=client-onboarding&error=' . urlencode('Enter a valid email address.'));
+if ($email === '' || mb_strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    header('Location: /?page=client-onboarding&error=' . urlencode('Enter your email address.'));
     exit;
 }
 $clientType = (string)($_POST['client_type'] ?? 'consumer');
@@ -57,7 +57,7 @@ $data = [
     'address_line2' => client_onboarding_clean_text($_POST['address_line2'] ?? '', 255),
     'city' => client_onboarding_clean_text($_POST['city'] ?? '', 100),
     'state' => $state,
-    'postal_code' => client_onboarding_clean_text($_POST['postal_code'] ?? '', 20),
+    'postal_code' => client_onboarding_clean_text($_POST['postal_code'] ?? '', 32),
     'country' => client_onboarding_clean_text($_POST['country'] ?? 'US', 100) ?: 'US',
     'client_type' => $clientType,
 ];

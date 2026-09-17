@@ -33,6 +33,103 @@ function pa_public_link_redirect_path(string $type, string $reason): string
     return '/?page=public-redirect&type=' . rawurlencode($type) . '&reason=' . rawurlencode($reason);
 }
 
+/**
+ * Return the newest currently accessible link for a document without changing
+ * any historical row. Revoked and expired links deliberately do not qualify.
+ *
+ * @return array{id:int,token:string,expires_at:?string,expire_when_paid:int}|null
+ */
+function pa_public_link_active(PDO $pdo, string $type, int $id): ?array
+{
+    if (!in_array($type, ['quote', 'contract', 'invoice', 'project_invoice'], true) || $id <= 0) {
+        throw new InvalidArgumentException('Unsupported public-link document.');
+    }
+    $stmt = $pdo->prepare(
+        'SELECT id,token,expires_at,expire_when_paid
+         FROM public_links
+         WHERE document_type=? AND document_id=? AND revoked=0
+           AND (expires_at IS NULL OR expires_at>CURRENT_TIMESTAMP)
+         ORDER BY created_at DESC,id DESC
+         LIMIT 1'
+    );
+    $stmt->execute([$type, $id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row || trim((string)($row['token'] ?? '')) === '') {
+        return null;
+    }
+    return [
+        'id' => (int)$row['id'],
+        'token' => (string)$row['token'],
+        'expires_at' => $row['expires_at'] !== null ? (string)$row['expires_at'] : null,
+        'expire_when_paid' => (int)($row['expire_when_paid'] ?? 0),
+    ];
+}
+
+/**
+ * Reuse an active document link or create one when none is active. This helper
+ * never updates, reactivates, revokes, or rotates an existing row.
+ *
+ * @return array{id:int,token:string,created:bool}
+ */
+function pa_public_link_reuse_or_create(
+    PDO $pdo,
+    string $type,
+    int $id,
+    ?string $expiresAt,
+    bool $expireWhenPaid
+): array {
+    $tables = [
+        'quote' => 'quotes',
+        'contract' => 'contracts',
+        'invoice' => 'invoices',
+        'project_invoice' => 'project_invoices',
+    ];
+    if (!isset($tables[$type]) || $id <= 0) {
+        throw new InvalidArgumentException('Unsupported public-link document.');
+    }
+
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $lockSuffix = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? '' : ' FOR UPDATE';
+        $document = $pdo->prepare('SELECT id FROM ' . $tables[$type] . ' WHERE id=?' . $lockSuffix);
+        $document->execute([$id]);
+        if (!$document->fetchColumn()) {
+            throw new DomainException('Public-link document not found.');
+        }
+
+        // Recheck only after locking the document. Concurrent email workers now
+        // converge on one stable token instead of creating competing links.
+        $active = pa_public_link_active($pdo, $type, $id);
+        if ($active !== null) {
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+            return ['id' => $active['id'], 'token' => $active['token'], 'created' => false];
+        }
+
+        $token = bin2hex(random_bytes(32));
+        $stmt = $pdo->prepare(
+            'INSERT INTO public_links
+             (document_type,document_id,token,redirect,expires_at,expire_when_paid,revoked)
+             VALUES (?,?,?,NULL,?,?,0)'
+        );
+        $stmt->execute([$type, $id, $token, $expiresAt, $expireWhenPaid ? 1 : 0]);
+        $result = ['id' => (int)$pdo->lastInsertId(), 'token' => $token, 'created' => true];
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return $result;
+    } catch (Throwable $error) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $error;
+    }
+}
+
 function pa_public_link_terminal_reason(PDO $pdo, string $type, int $id): ?string
 {
     if ($id <= 0) {

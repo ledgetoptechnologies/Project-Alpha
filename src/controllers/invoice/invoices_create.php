@@ -44,11 +44,8 @@ $dueDateWasProvided = trim((string)($_POST['due_date'] ?? '')) !== '';
 $due_date = $_POST['due_date'] ?? null;
 $dueDateSource = $dueDateWasProvided ? 'manual' : 'terms';
 $paymentTermsDays = null;
-if (!$dueDateWasProvided) {
-    $paymentTermsDays = project_invoice_terms_days($pdo, $project_id, $appConfig);
-    $documentDate = date('Y-m-d');
-    $due_date = project_invoice_due_date($pdo, $project_id, $appConfig, $documentDate);
-}
+$isMonthlyProjectBilling = false;
+$invoiceCollectionMode = 'direct';
 
 $item = $_POST['item'] ?? [];
 $desc = $_POST['item_desc'] ?? [];
@@ -82,15 +79,6 @@ if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_i
 }
 $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId);
 $showContactOnDocument = $__orgId && !empty($_POST['show_contact_on_document']) ? 1 : 0;
-$isMonthlyProjectBilling = $recipientPresentationMode !== PA_GENERAL_RECIPIENT_MODE
-    && $project_id
-    && project_uses_monthly_invoice_billing($pdo, $project_id);
-if ($isMonthlyProjectBilling && $finalizeAndSend) {
-    // Project-aggregate children are finalized for the statement, never sent
-    // directly. Enforce this server-side even if JS is absent or stale.
-    $finalizeAndSend = false;
-    $finalizeOnly = true;
-}
 
 $items = [];
 $subtotal = 0.0;
@@ -266,12 +254,6 @@ try {
             throw new DomainException('The Project derived from tracked time is not available for this client.');
         }
         $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId);
-        if (!$dueDateWasProvided) {
-            $paymentTermsDays = project_invoice_terms_days($pdo, $project_id, $appConfig);
-            $documentDate = date('Y-m-d');
-            $due_date = project_invoice_due_date($pdo, $project_id, $appConfig, $documentDate);
-        }
-
         $groups = $pdo->prepare(
             "SELECT DISTINCT approval_snapshot_id FROM work_billing_consumptions
              WHERE billing_time_entry_id IN ($placeholders)"
@@ -290,6 +272,26 @@ try {
             }
         }
     }
+    $projectBillingContext = project_invoice_billing_context(
+        $pdo,
+        $recipientPresentationMode === PA_GENERAL_RECIPIENT_MODE ? null : $project_id,
+        $appConfig,
+        date('Y-m-d'),
+        true
+    );
+    $invoiceCollectionMode = (string)$projectBillingContext['collection_mode'];
+    $isMonthlyProjectBilling = $invoiceCollectionMode === 'project_aggregate';
+    if (!$dueDateWasProvided) {
+        $paymentTermsDays = (int)$projectBillingContext['net_terms_days'];
+        $due_date = (string)$projectBillingContext['due_date'];
+    }
+    if ($isMonthlyProjectBilling && $finalizeAndSend) {
+        // Project-aggregate children are finalized for the statement, never sent
+        // directly. Enforce this server-side even if JS is absent or stale.
+        $finalizeAndSend = false;
+        $finalizeOnly = true;
+    }
+
     foreach ($items as $row) {
         if (!$row['mileage_allocation_ids']) continue;
         $placeholders = implode(',', array_fill(0, count($row['mileage_allocation_ids']), '?'));
@@ -318,18 +320,15 @@ try {
         'INSERT INTO invoices
          (client_id,recipient_presentation_mode,show_contact_on_document,project_id,billing_mode,discount_type,discount_value,tax_percent,
           subtotal,tax_amount,total,balance_due,status,due_date,payment_terms_days,due_date_source,
-          custom_fields,organization_id,created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          custom_fields,organization_id,created_by,collection_mode)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     );
     $stmt->execute([
         $client_id, $recipientPresentationMode, $showContactOnDocument, $project_id, $billing_mode, $discount_type, $discount_value, $tax_percent,
         $subtotal, $tax_amount, $total, $total, 'draft', $due_date ?: null,
-        $paymentTermsDays, $dueDateSource, $customFieldsJson, $__orgId, $__creator,
+        $paymentTermsDays, $dueDateSource, $customFieldsJson, $__orgId, $__creator, $invoiceCollectionMode,
     ]);
     $invoice_id = (int)$pdo->lastInsertId();
-    if ($isMonthlyProjectBilling) {
-        $pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$invoice_id]);
-    }
     // Assign a new Project ID and doc_number
     if ($recipientPresentationMode === PA_GENERAL_RECIPIENT_MODE) {
         $projectCode = '';

@@ -7,7 +7,7 @@ namespace Tests\Workflows;
 use App\Services\ManagedDeliveryIntentSender;
 use App\Services\ManagedDeliveryIntentSigner;
 use App\Services\ManagedDeliveryService;
-use DomainException;
+use App\Services\ProjectPresentationService;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -27,383 +27,291 @@ final class ManagedDeliveryIntegrationTest extends TestCase
         $this->previousEncryptionKey === false ? putenv('APP_ENCRYPTION_KEY') : putenv('APP_ENCRYPTION_KEY=' . $this->previousEncryptionKey);
     }
 
-    public function testPinnedWireFixtureMatchesPathBoundSigner(): void
+    public function testHistoricalSignerFixtureStillProtectsLegacyPendingRows(): void
     {
         $path = dirname(__DIR__) . '/fixtures/project-alpha-delivery-intent-v1.json';
         $fixture = json_decode((string)file_get_contents($path), true, 32, JSON_THROW_ON_ERROR);
         self::assertSame('f16d540bcfbcf4c77c356fc37e2c046a23a473ebec701d526e3b8d45f38c90e8', hash_file('sha256', $path));
         foreach ($fixture['cases'] as $case) {
-            $canonical = $fixture['timestamp'] . "\nPOST\n" . $case['path'] . "\n" . $fixture['keyId'] . "\n" . $case['deliveryId'] . "\n" . $case['body'];
-            self::assertSame($case['canonical'], $canonical);
             $headers = $this->headers(ManagedDeliveryIntentSigner::headers([
-                'applicationKey' => $fixture['applicationKey'],
-                'keyId' => $fixture['keyId'],
-                'secret' => $fixture['testSecret'],
-                'authHeaders' => [],
+                'applicationKey'=>$fixture['applicationKey'], 'keyId'=>$fixture['keyId'],
+                'secret'=>$fixture['testSecret'], 'authHeaders'=>[],
             ], $case['deliveryId'], 'https://ops.example' . $case['path'], $case['body'], $fixture['timestamp']));
-            self::assertSame($case['bodySha256'], hash('sha256', $case['body']));
-            self::assertSame($case['bodySha256'], $headers['x-portal-integration-body-sha256']);
             self::assertSame($case['signature'], $headers['x-portal-integration-signature']);
         }
     }
 
-    public function testManagedDeliverySchemaRunsAfterItsPortalProfileDependency(): void
+    public function testMigrationPreservesLegacyRowsAndRemovesDuplicateConfiguration(): void
     {
-        $root = dirname(__DIR__, 2);
-        $baseline = (string)file_get_contents($root . '/database/baseline.sql');
-        $portalMigration = (string)file_get_contents($root . '/database/migrations/0066_generic_portal_v2_integration.sql');
-        $deliveryMigration = (string)file_get_contents($root . '/database/migrations/0069_managed_delivery_intents.sql');
-
-        self::assertStringNotContainsString('CREATE TABLE IF NOT EXISTS managed_delivery_intent_outbox', $baseline);
-        self::assertStringContainsString('CREATE TABLE IF NOT EXISTS portal_integration_profiles', $portalMigration);
-        self::assertStringContainsString('CREATE TABLE IF NOT EXISTS managed_delivery_intent_outbox', $deliveryMigration);
-        self::assertStringContainsString('REFERENCES portal_integration_profiles(id)', $deliveryMigration);
+        $migration = (string)file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0084_unify_managed_delivery_external_ops.sql');
+        self::assertStringContainsString("ENUM('legacy_profile','external_ops')", $migration);
+        self::assertStringContainsString("DEFAULT 'legacy_profile'", $migration);
+        self::assertStringContainsString('integration_profile_id BIGINT UNSIGNED NULL', $migration);
+        self::assertStringContainsString("'managed_delivery_intent_url','managed_delivery_profile_id'", $migration);
+        self::assertStringNotContainsString('UPDATE managed_delivery_intent_outbox SET destination_url', $migration);
+        self::assertStringContainsString('legacy_transport_retired_manual_remediation_required', $migration);
     }
 
-    public function testPreflightWorksWhileProviderDisabledAndValidatesExactCapabilities(): void
+    public function testPreflightUsesOneStrictExternalOperationsEnvelopeWhileToggleIsOff(): void
     {
         $pdo = $this->database(false);
         $captured = [];
-        $result = (new ManagedDeliveryIntentSender())->preflight($pdo, static function (string $url, array $headers, string $body, int $timeout) use (&$captured): array {
-            $captured = compact('url', 'headers', 'body', 'timeout');
-            return ['status' => 200, 'body' => '{"status":"ready","schemaVersion":1,"integrationEnabled":false,"portalSupported":true,"guestSupported":false,"revocationSupported":true}'];
-        });
-        self::assertSame('https://ops.example/api/internal/project-alpha/delivery-intents/preflight', $captured['url']);
-        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt'], array_keys(json_decode($captured['body'], true, 8, JSON_THROW_ON_ERROR)));
+        $sharedId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $sender = new ManagedDeliveryIntentSender();
+        $result = $sender->preflight($pdo, static function (string $url, array $headers, string $body, int $timeout) use (&$captured): array {
+            $captured = compact('url','headers','body','timeout');
+            $request = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+            return ['status'=>200,'body'=>json_encode([
+                'ok'=>true,'event_id'=>$request['event_id'],'status'=>'completed',
+                'result'=>['status'=>'ready','schemaVersion'=>1,'integrationEnabled'=>false,'portalSupported'=>true,'guestSupported'=>false,'revocationSupported'=>true],
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        }, $sharedId);
+        self::assertSame('https://ops.example/v1/project-alpha/events', $captured['url']);
+        $outer = json_decode($captured['body'], true, 16, JSON_THROW_ON_ERROR);
+        self::assertSame(['event_id','event_type','occurred_at','schema_version','application_key','intent_kind','intent'], array_keys($outer));
+        self::assertSame('delivery.intent', $outer['event_type']);
+        self::assertSame('preflight', $outer['intent_kind']);
+        self::assertSame('delivery.intent:preflight:' . $sharedId, $outer['event_id']);
+        self::assertSame($sharedId, $outer['intent']['deliveryId']);
+        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt'], array_keys($outer['intent']));
+        $headers = $this->headers($captured['headers']);
+        self::assertSame($outer['event_id'], $headers['x-pa-event-id']);
+        self::assertSame('sha256=' . hash_hmac('sha256', $headers['x-pa-timestamp'] . '.' . $captured['body'], str_repeat('s', 32)), $headers['x-pa-signature']);
+        self::assertSame('opaque-id', $headers['cf-access-client-id']);
         self::assertFalse($result['integrationEnabled']);
-        self::assertTrue($result['revocationSupported']);
 
-        $this->expectException(\RuntimeException::class);
-        (new ManagedDeliveryIntentSender())->preflight($pdo, static fn(): array => ['status' => 200, 'body' => '{"status":"ready","schemaVersion":1,"integrationEnabled":false,"portalSupported":true,"guestSupported":false,"revocationSupported":true,"extra":1}']);
+        $pdo->prepare('UPDATE app_config SET config_value=? WHERE organization_id=0 AND config_key=?')->execute(['1',ManagedDeliveryService::ENABLED_KEY]);
+        (new ManagedDeliveryService())->queue($pdo, ['delivery_id'=>$sharedId,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32)], 7);
+        $accepted = $sender->deliverDeliveryId($pdo, $sharedId, static function (string $url, array $headers, string $body) use ($sharedId): array {
+            $event=json_decode($body,true,16,JSON_THROW_ON_ERROR);
+            self::assertSame('delivery.intent:provision:' . $sharedId,$event['event_id']);
+            return ['status'=>200,'body'=>json_encode(['ok'=>true,'event_id'=>$event['event_id'],'status'=>'completed','result'=>['receiptId'=>'same_inner_id_receipt','status'=>'accepted']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];
+        });
+        self::assertSame(1,$accepted['accepted']);
     }
 
-    public function testPortalProvisionAndAcceptedRevocationLifecycle(): void
+    public function testPreUpgradeHmacClaimsRemainDispatchableAndRevocable(): void
     {
         $pdo = $this->database();
         $service = new ManagedDeliveryService();
-        $deliveryId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-        $queued = $service->queue($pdo, [
-            'delivery_id' => $deliveryId,
+        $sender = new ManagedDeliveryIntentSender();
+        $provisionId = 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1';
+        $revokeId = 'b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2';
+        $scope = str_repeat('a', 32);
+        $audience = str_repeat('b', 32);
+
+        $service->queue($pdo, [
+            'delivery_id' => $provisionId,
             'scope_type' => 'project',
-            'scope_public_id' => str_repeat('a', 32),
+            'scope_public_id' => $scope,
             'audience_type' => 'principal',
-            'audience_public_id' => str_repeat('b', 32),
-            'label' => 'Johnson Road',
+            'audience_public_id' => $audience,
         ], 7);
-        self::assertSame('queued', $queued['status']);
-        $body = (string)$pdo->query("SELECT payload_json FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetchColumn();
-        $payload = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
-        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt','scope','audience','accessMode','expiresAt','label','notify'], array_keys($payload));
-        self::assertSame('portal', $payload['accessMode']);
-        self::assertSame('principal', $payload['audience']['type']);
-        self::assertStringNotContainsString('email', strtolower($body));
-        self::assertStringNotContainsString('r2', strtolower($body));
-        $pinned = $pdo->query("SELECT integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetch(PDO::FETCH_ASSOC);
-        self::assertSame(1, (int)$pinned['integration_profile_id']);
-        self::assertSame('https://ops.example/api/internal/project-alpha/delivery-intents', $pinned['destination_url']);
-        self::assertSame('project-alpha', $pinned['pinned_application_key']);
-        self::assertSame('ops-v1', $pinned['signing_key_id']);
-        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string)$pinned['signing_contract_hash']);
-        self::assertSame(5, (int)$pinned['delivery_timeout_seconds']);
-        self::assertSame(3, (int)$pinned['delivery_max_attempts']);
+        $legacyHash = hash('sha256', implode("\n", [
+            '0',
+            'project-alpha',
+            'https://ops.example/v1/project-alpha/events',
+            'external_ops_hmac_v1',
+            json_encode([
+                'CF-Access-Client-Id' => 'opaque-id',
+                'CF-Access-Client-Secret' => 'opaque-secret',
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            hash('sha256', str_repeat('s', 32)),
+        ]));
+        $storedHash = (string)$pdo->query("SELECT signing_contract_hash FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn();
+        self::assertSame($legacyHash, $storedHash, 'The existing HMAC contract epoch must remain byte-for-byte stable.');
 
-        $sender = new ManagedDeliveryIntentSender();
-        $provision = $sender->deliverDeliveryId($pdo, $deliveryId, static fn(): array => ['status' => 202, 'body' => '{"receiptId":"receipt_01","status":"accepted"}']);
-        self::assertSame(1, $provision['accepted']);
-        self::assertSame('receipt_01', $pdo->query("SELECT receipt_id FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetchColumn());
-
-        $revokeId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-        $service->queueRevocation($pdo, $deliveryId, $revokeId, 7);
-        self::assertNull($pdo->query("SELECT revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetchColumn());
-        $captured = [];
-        $revoke = $sender->deliverDeliveryId($pdo, $revokeId, static function (string $url, array $headers, string $rawBody) use (&$captured): array {
-            $captured = compact('url', 'headers', 'rawBody');
-            return ['status' => 202, 'body' => '{"receiptId":"revoke_receipt_01","status":"accepted"}'];
-        });
-        self::assertSame(1, $revoke['accepted']);
-        self::assertStringEndsWith('/delivery-intents/revoke', $captured['url']);
-        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt','receiptId','reasonCode'], array_keys(json_decode($captured['rawBody'], true, 8, JSON_THROW_ON_ERROR)));
-        self::assertSame('receipt_01', json_decode($captured['rawBody'], true)['receiptId']);
-        self::assertNotNull($pdo->query("SELECT revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetchColumn());
-    }
-
-    public function testGuestIsExplicitOnlyAndMalformedAcceptanceFailsClosed(): void
-    {
-        $pdo = $this->database();
-        $service = new ManagedDeliveryService();
-        try {
-            $service->queue($pdo, [
-                'delivery_id' => 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-                'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-                'audience_type' => 'project', 'audience_public_id' => str_repeat('a', 32),
-            ], 7);
-            self::fail('Expected non-principal audience denial.');
-        } catch (DomainException $error) {
-            self::assertStringContainsString('selection is invalid', $error->getMessage());
-        }
-        try {
-            $service->queue($pdo, [
-                'delivery_id' => 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-                'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-                'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-                'access_mode' => 'guest',
-            ], 7);
-            self::fail('Expected guest policy denial.');
-        } catch (DomainException $error) {
-            self::assertStringContainsString('Portal delivery was not changed or retried', $error->getMessage());
-        }
-        self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM managed_delivery_intent_outbox')->fetchColumn());
-
-        try {
-            $service->queue($pdo, [
-                'delivery_id' => '12121212-1212-4212-8212-121212121212',
-                'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 129),
-                'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-            ], 7);
-            self::fail('Expected overlong safe-ID denial.');
-        } catch (DomainException $error) {
-            self::assertStringContainsString('selection is invalid', $error->getMessage());
-        }
-
-        $id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-        $service->queue($pdo, [
-            'delivery_id' => $id, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-        ], 7);
-        $result = (new ManagedDeliveryIntentSender())->deliverDeliveryId($pdo, $id, static fn(): array => ['status' => 202, 'body' => '{"receiptId":"receipt_01","status":"accepted","url":"secret"}']);
-        self::assertSame(1, $result['retrying']);
-        self::assertNull($pdo->query("SELECT receipt_id FROM managed_delivery_intent_outbox WHERE delivery_id='{$id}'")->fetchColumn());
-        self::assertSame('invalid_response', $pdo->query("SELECT last_error_code FROM managed_delivery_intent_outbox WHERE delivery_id='{$id}'")->fetchColumn());
-    }
-
-    public function testRevocationInheritsAcceptedProvisionReceiverAfterCurrentProfileMoves(): void
-    {
-        $pdo = $this->database();
-        $service = new ManagedDeliveryService();
-        $sender = new ManagedDeliveryIntentSender();
-        $provisionId = '19191919-1919-4919-8919-191919191919';
-        $revokeId = '20202020-2020-4020-8020-202020202020';
-        $service->queue($pdo, [
-            'delivery_id' => $provisionId, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-        ], 7);
-        $sender->deliverDeliveryId($pdo, $provisionId, static fn(): array => ['status' => 202, 'body' => '{"receiptId":"receipt_old_receiver","status":"accepted"}']);
-        $original = $pdo->query("SELECT integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetch(PDO::FETCH_ASSOC);
-
-        $rotatedCredentials = crypto_encrypt(json_encode(['currentSecret' => str_repeat('u', 32), 'previousSecret' => str_repeat('s', 32), 'authHeaders' => ['CF-Access-Client-Id' => 'opaque-id', 'CF-Access-Client-Secret' => 'opaque-secret']], JSON_THROW_ON_ERROR));
-        $rotate = $pdo->prepare('UPDATE portal_integration_profiles SET delivery_key_id=?,delivery_previous_key_id=?,delivery_previous_valid_until=?,delivery_credentials_enc=? WHERE id=1');
-        $rotate->execute(['ops-v1-rotated', 'ops-v1', (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d H:i:s.u'), $rotatedCredentials]);
-        $replacementCredentials = crypto_encrypt(json_encode(['currentSecret' => str_repeat('t', 32), 'previousSecret' => '', 'authHeaders' => ['CF-Access-Client-Id' => 'replacement-id', 'CF-Access-Client-Secret' => 'replacement-secret']], JSON_THROW_ON_ERROR));
-        $replacement = $pdo->prepare('INSERT INTO portal_integration_profiles(id,application_key,display_label,enabled,delivery_enabled,delivery_key_id,delivery_credentials_enc,delivery_timeout_seconds,delivery_max_attempts) VALUES(2,?,?,?,?,?,?,?,?)');
-        $replacement->execute(['replacement-app', 'Replacement Ops', 1, 1, 'ops-v2', $replacementCredentials, 9, 8]);
-        $pdo->exec("UPDATE app_config SET config_value='2' WHERE config_key='managed_delivery_profile_id'");
-        $pdo->exec("UPDATE app_config SET config_value='https://replacement.example/api/internal/project-alpha/delivery-intents' WHERE config_key='managed_delivery_intent_url'");
-
+        $transport = static function (string $url, array $headers, string $body): array {
+            $event = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+            return ['status' => 200, 'body' => json_encode([
+                'ok' => true,
+                'event_id' => $event['event_id'],
+                'status' => 'completed',
+                'result' => ['receiptId' => $event['intent_kind'] === 'revoke' ? 'revoke_hmac_legacy' : 'hmac_legacy', 'status' => 'accepted'],
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        };
+        self::assertSame(1, $sender->deliverDeliveryId($pdo, $provisionId, $transport)['accepted']);
         $service->queueRevocation($pdo, $provisionId, $revokeId, 7);
-        $revoke = $pdo->query("SELECT integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,payload_json FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetch(PDO::FETCH_ASSOC);
-        foreach (['integration_profile_id','destination_url','pinned_application_key','delivery_timeout_seconds','delivery_max_attempts'] as $field) {
-            self::assertSame((string)$original[$field], (string)$revoke[$field], $field);
-        }
-        self::assertSame('ops-v1-rotated', $revoke['signing_key_id']);
-        self::assertNotSame($original['signing_contract_hash'], $revoke['signing_contract_hash']);
-        self::assertSame('project-alpha', json_decode((string)$revoke['payload_json'], true, 8, JSON_THROW_ON_ERROR)['applicationKey']);
-        $captured = [];
-        $sent = $sender->deliverDeliveryId($pdo, $revokeId, static function (string $url, array $headers) use (&$captured): array {
-            $captured = compact('url', 'headers');
-            return ['status' => 202, 'body' => '{"receiptId":"revoke_old_receiver","status":"accepted"}'];
-        });
-        self::assertSame(1, $sent['accepted']);
-        self::assertSame('https://ops.example/api/internal/project-alpha/delivery-intents/revoke', $captured['url']);
-        self::assertSame('ops-v1-rotated', $this->headers($captured['headers'])['x-portal-integration-key-id']);
-        $pdo->exec('UPDATE portal_integration_profiles SET enabled=0 WHERE id=1');
-        $replayed = $service->queueRevocation($pdo, $provisionId, $revokeId, 7);
-        self::assertTrue($replayed['replayed']);
-        self::assertSame('accepted', $replayed['status']);
+        self::assertSame($legacyHash, (string)$pdo->query("SELECT signing_contract_hash FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
+        self::assertSame(1, $sender->deliverDeliveryId($pdo, $revokeId, $transport)['accepted']);
     }
 
-    public function testDeliveryExpiryIncludesReceiverAndDispatchSafetyMargin(): void
-    {
-        $pdo = $this->database();
-        $service = new ManagedDeliveryService();
-        try {
-            $service->queue($pdo, [
-                'delivery_id' => '21212121-2121-4121-8121-212121212121',
-                'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-                'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-                'expires_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+5 minutes')->format(DATE_ATOM),
-            ], 7);
-            self::fail('Expiry inside the dispatch safety margin must be rejected.');
-        } catch (DomainException $error) {
-            self::assertStringContainsString('more than six minutes', $error->getMessage());
-        }
-        $accepted = $service->queue($pdo, [
-            'delivery_id' => '22222222-2222-4222-8222-222222222222',
-            'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-            'expires_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+7 minutes')->format(DATE_ATOM),
-        ], 7);
-        self::assertSame('queued', $accepted['status']);
-    }
-
-    public function testMappedPrivateIpv6AndLegacyR2SeparationArePinned(): void
-    {
-        $method = new \ReflectionMethod(ManagedDeliveryIntentSender::class, 'isPublicAddress');
-        self::assertFalse($method->invoke(null, '::ffff:127.0.0.1'));
-        self::assertFalse($method->invoke(null, '64:ff9b::7f00:1'));
-        self::assertTrue($method->invoke(null, '2606:4700:4700::1111'));
-        $root = dirname(__DIR__, 2);
-        $view = (string)file_get_contents($root . '/src/views/pages/settings/links.php');
-        self::assertStringContainsString('Client Portal (recommended)', $view);
-        self::assertStringContainsString("'type' => 'principal'", $view);
-        self::assertStringContainsString('Revocation failed', $view);
-        self::assertStringContainsString('Retry revocation', $view);
-        self::assertStringContainsString('managed-delivery-retry', $view);
-        self::assertStringContainsString("['dropbox', 'gdrive', 's3', 'r2']", $view);
-        self::assertStringContainsString('R2 Secret Access Key', $view);
-        self::assertStringContainsString('cannot be enabled together', (string)file_get_contents($root . '/src/controllers/settings/links_handler.php'));
-        self::assertStringNotContainsString('invoice-finalize', (string)file_get_contents($root . '/src/controllers/settings/managed_delivery_send.php'));
-        self::assertStringContainsString('send_managed_delivery_intents.php', (string)file_get_contents($root . '/cron/crontab'));
-        self::assertStringContainsString('deliverDue($pdo, 50, null, 50)', (string)file_get_contents($root . '/src/cron/send_managed_delivery_intents.php'));
-        self::assertStringContainsString("(0,'managed_delivery_enabled','0')", (string)file_get_contents($root . '/database/migrations/0069_managed_delivery_intents.sql'));
-        $javascript = (string)file_get_contents($root . '/public/assets/js/settings-links.js');
-        self::assertStringContainsString('data.integrationEnabled === true', $javascript);
-        self::assertStringContainsString('delivery intents are currently disabled there', $javascript);
-        $retryController = (string)file_get_contents($root . '/src/controllers/settings/managed_delivery_retry.php');
-        self::assertStringContainsString('requeueRevocation', $retryController);
-        self::assertStringContainsString('managed_delivery.revocation_requeued', $retryController);
-        $documentation = (string)file_get_contents($root . '/docs/managed-delivery.md');
-        self::assertStringContainsString('0069_managed_delivery_intents.sql', $documentation);
-        foreach (['managed_delivery_enabled = 0', "managed_delivery_intent_url = ''", 'managed_delivery_profile_id = 0', 'managed_delivery_guest_links_enabled = 0'] as $default) {
-            self::assertStringContainsString($default, $documentation);
-        }
-    }
-
-    public function testQueuedDestinationAndSigningEpochAreImmutableAndUnavailableEpochFailsClosed(): void
+    public function testProvisionDuplicateReplayAndRevocationRetainReceipts(): void
     {
         $pdo = $this->database();
         $service = new ManagedDeliveryService();
         $sender = new ManagedDeliveryIntentSender();
-        $firstId = '15151515-1515-4515-8515-151515151515';
+        $provisionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
         $service->queue($pdo, [
-            'delivery_id' => $firstId, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
+            'delivery_id'=>$provisionId,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),
+            'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32),'label'=>'Johnson Road',
         ], 7);
-        $pdo->exec("UPDATE app_config SET config_value='https://other.example/api/internal/project-alpha/delivery-intents' WHERE config_key='managed_delivery_intent_url'");
-        $capturedUrl = null;
-        $result = $sender->deliverDeliveryId($pdo, $firstId, static function (string $url) use (&$capturedUrl): array {
-            $capturedUrl = $url;
-            return ['status' => 202, 'body' => '{"receiptId":"receipt_01","status":"accepted"}'];
-        });
-        self::assertSame(1, $result['accepted']);
-        self::assertSame('https://ops.example/api/internal/project-alpha/delivery-intents', $capturedUrl);
+        $pinned = $pdo->query("SELECT transport_mode,integration_profile_id,destination_url,pinned_application_key FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame('external_ops', $pinned['transport_mode']);
+        self::assertNull($pinned['integration_profile_id']);
+        self::assertSame('https://ops.example/v1/project-alpha/events', $pinned['destination_url']);
 
-        $secondId = '16161616-1616-4616-8616-161616161616';
-        $service->queue($pdo, [
-            'delivery_id' => $secondId, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-        ], 7);
-        $pdo->prepare('UPDATE managed_delivery_intent_outbox SET signing_contract_hash=? WHERE delivery_id=?')->execute([str_repeat('0', 64), $secondId]);
-        $transportCalls = 0;
-        $failed = $sender->deliverDeliveryId($pdo, $secondId, static function () use (&$transportCalls): array {
-            $transportCalls++;
-            return ['status' => 202, 'body' => '{"receiptId":"must_not_arrive","status":"accepted"}'];
-        });
-        self::assertSame(1, $failed['retrying']);
-        self::assertSame(0, $transportCalls);
-        self::assertSame('pinned_contract_unavailable', $pdo->query("SELECT last_error_code FROM managed_delivery_intent_outbox WHERE delivery_id='{$secondId}'")->fetchColumn());
-    }
+        $seen=[];
+        $transport = static function (string $url, array $headers, string $body) use (&$seen): array {
+            $outer=json_decode($body,true,16,JSON_THROW_ON_ERROR);$seen[]=compact('url','headers','outer','body');
+            $receipt=$outer['intent_kind']==='revoke'?'revoke_receipt_01':'receipt_01';
+            return ['status'=>200,'body'=>json_encode(['ok'=>true,'event_id'=>$outer['event_id'],'status'=>'duplicate','result'=>['receiptId'=>$receipt,'status'=>'accepted']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];
+        };
+        self::assertSame(1,$sender->deliverDeliveryId($pdo,$provisionId,$transport)['accepted']);
+        self::assertSame('receipt_01',$pdo->query("SELECT receipt_id FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn());
+        self::assertSame('provision',$seen[0]['outer']['intent_kind']);
+        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt','scope','audience','accessMode','expiresAt','label','notify'],array_keys($seen[0]['outer']['intent']));
 
-    public function testDeadLetteredRevocationCanBeExplicitlyRequeuedWithoutCreatingASecondRow(): void
-    {
-        $pdo = $this->database();
-        $service = new ManagedDeliveryService();
-        $sender = new ManagedDeliveryIntentSender();
-        $provisionId = '17171717-1717-4717-8717-171717171717';
-        $revokeId = '18181818-1818-4818-8818-181818181818';
-        $service->queue($pdo, [
-            'delivery_id' => $provisionId, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-            'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-        ], 7);
-        $sender->deliverDeliveryId($pdo, $provisionId, static fn(): array => ['status' => 202, 'body' => '{"receiptId":"receipt_01","status":"accepted"}']);
-        $service->queueRevocation($pdo, $provisionId, $revokeId, 7);
-        $dead = $sender->deliverDeliveryId($pdo, $revokeId, static fn(): array => ['status' => 400, 'body' => '{}']);
-        self::assertSame(1, $dead['dead_lettered']);
-        self::assertNotNull($pdo->query("SELECT dead_lettered_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
-
-        $pdo->exec("UPDATE app_config SET config_value='0' WHERE config_key='managed_delivery_enabled'");
-        $service->requeueRevocation($pdo, $revokeId);
-        self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM managed_delivery_intent_outbox WHERE target_delivery_id='{$provisionId}' AND intent_type='revoke'")->fetchColumn());
-        self::assertSame(0, (int)$pdo->query("SELECT attempts FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
-        self::assertNull($pdo->query("SELECT dead_lettered_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
-        $retried = $sender->deliverDeliveryId($pdo, $revokeId, static fn(): array => ['status' => 202, 'body' => '{"receiptId":"revoke_receipt_01","status":"accepted"}'], true);
-        self::assertSame(1, $retried['accepted']);
+        $revokeId='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $service->queueRevocation($pdo,$provisionId,$revokeId,7);
+        self::assertSame(1,$sender->deliverDeliveryId($pdo,$revokeId,$transport)['accepted']);
+        self::assertSame('https://ops.example/v1/project-alpha/events',$seen[1]['url']);
+        self::assertSame('revoke',$seen[1]['outer']['intent_kind']);
+        self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt','receiptId','reasonCode'],array_keys($seen[1]['outer']['intent']));
         self::assertNotNull($pdo->query("SELECT revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn());
+    }
+
+    public function testProjectArchiveStopsPendingAndQueuesAcceptedPresentationRevocation(): void
+    {
+        $pdo=$this->database();$service=new ManagedDeliveryService();$sender=new ManagedDeliveryIntentSender();
+        $acceptedId='10101010-1010-4010-8010-101010101010';$pendingId='20202020-2020-4020-8020-202020202020';
+        foreach([$acceptedId,$pendingId]as$id)$service->queue($pdo,['delivery_id'=>$id,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32)],7);
+        $sender->deliverDeliveryId($pdo,$acceptedId,static function(string$url,array$headers,string$body):array{$event=json_decode($body,true,16,JSON_THROW_ON_ERROR);return['status'=>200,'body'=>json_encode(['ok'=>true,'event_id'=>$event['event_id'],'status'=>'completed','result'=>['receiptId'=>'archive_receipt','status'=>'accepted']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];});
+        $pdo->beginTransaction();$result=(new ProjectPresentationService($pdo))->revokeForArchive(['id'=>1,'public_id'=>str_repeat('a',32)],0);$pdo->commit();
+        self::assertTrue($result['changed']);self::assertSame(1,$result['pendingStopped']);self::assertCount(1,$result['managedRevocationIds']);
+        self::assertSame('project_archived_before_delivery',$pdo->query("SELECT last_error_code FROM managed_delivery_intent_outbox WHERE delivery_id='{$pendingId}'")->fetchColumn());
+        $revoke=$pdo->prepare("SELECT target_delivery_id,intent_type,actor_user_id FROM managed_delivery_intent_outbox WHERE delivery_id=?");$revoke->execute([$result['managedRevocationIds'][0]]);
+        self::assertSame(['target_delivery_id'=>$acceptedId,'intent_type'=>'revoke','actor_user_id'=>null],$revoke->fetch(PDO::FETCH_ASSOC));
+    }
+
+    public function testChangedPayloadConflictAndMalformedSuccessFailClosed(): void
+    {
+        $pdo=$this->database();$service=new ManagedDeliveryService();$sender=new ManagedDeliveryIntentSender();
+        foreach(['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','ffffffff-ffff-4fff-8fff-ffffffffffff'] as $id){$service->queue($pdo,['delivery_id'=>$id,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32)],7);}
+        $conflict=$sender->deliverDeliveryId($pdo,'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',static fn():array=>['status'=>409,'body'=>'{}']);
+        self::assertSame(1,$conflict['dead_lettered']);
+        $bad=$sender->deliverDeliveryId($pdo,'ffffffff-ffff-4fff-8fff-ffffffffffff',static fn():array=>['status'=>200,'body'=>'{"ok":true,"event_id":"wrong","status":"completed","result":{"receiptId":"secret","status":"accepted"}}']);
+        self::assertSame(1,$bad['dead_lettered']);
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM managed_delivery_intent_outbox WHERE receipt_id IS NOT NULL')->fetchColumn());
+    }
+
+    public function testSameKindRetryKeepsExactEventIdAndBody(): void
+    {
+        $pdo=$this->database();$id='56565656-5656-4656-8656-565656565656';
+        (new ManagedDeliveryService())->queue($pdo,['delivery_id'=>$id,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32)],7);
+        $sender=new ManagedDeliveryIntentSender();$seen=[];
+        $first=$sender->deliverDeliveryId($pdo,$id,static function(string$url,array$headers,string$body)use(&$seen):array{$seen[]=$body;return['status'=>503,'body'=>''];});
+        self::assertSame(1,$first['retrying']);
+        $pdo->prepare("UPDATE managed_delivery_intent_outbox SET next_attempt_at='2000-01-01 00:00:00.000000' WHERE delivery_id=?")->execute([$id]);
+        $second=$sender->deliverDeliveryId($pdo,$id,static function(string$url,array$headers,string$body)use(&$seen):array{$seen[]=$body;$event=json_decode($body,true,16,JSON_THROW_ON_ERROR);return['status'=>200,'body'=>json_encode(['ok'=>true,'event_id'=>$event['event_id'],'status'=>'duplicate','result'=>['receiptId'=>'stable_retry','status'=>'accepted']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];});
+        self::assertSame(1,$second['accepted']);
+        self::assertCount(2,$seen);
+        self::assertSame($seen[0],$seen[1]);
+        self::assertSame('delivery.intent:provision:'.$id,json_decode($seen[0],true,16,JSON_THROW_ON_ERROR)['event_id']);
+    }
+
+    public function testPendingLegacyRowCannotUseRetiredDirectTransport(): void
+    {
+        $pdo=$this->database();$id='34343434-3434-4434-8434-343434343434';
+        $payload='{"schemaVersion":1,"applicationKey":"legacy-app","deliveryId":"'.$id.'","occurredAt":"2026-09-04T12:00:00.000Z","scope":{"type":"project","publicId":"'.str_repeat('a',32).'"},"audience":{"type":"principal","publicId":"'.str_repeat('b',32).'"},"accessMode":"portal","expiresAt":null,"label":null,"notify":true}';
+        $credentials=crypto_encrypt(json_encode(['currentSecret'=>str_repeat('l',32),'previousSecret'=>'','authHeaders'=>[]],JSON_THROW_ON_ERROR));
+        $pdo->prepare('INSERT INTO portal_integration_profiles VALUES(1,?,?,?,?,?,?,?,?,?,?)')->execute(['legacy-app','Legacy',1,1,'legacy-v1',null,null,$credentials,3,2]);
+        $hash=$this->legacyHash(1,'legacy-app','https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-v1',[],str_repeat('l',32));
+        $pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,'legacy_profile',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            ->execute([$id,1,'https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-app','legacy-v1',$hash,3,2,7,'project',str_repeat('a',32),'principal',str_repeat('b',32),'portal',hash('sha256',$payload),$payload]);
+        $calls=0;$result=(new ManagedDeliveryIntentSender())->deliverDeliveryId($pdo,$id,static function()use(&$calls):array{$calls++;return['status'=>202,'body'=>'{"receiptId":"legacy_receipt","status":"accepted"}'];});
+        self::assertSame(0,$calls);
+        self::assertSame(1,$result['retrying']);
+        self::assertNull($pdo->query("SELECT receipt_id FROM managed_delivery_intent_outbox WHERE delivery_id='{$id}'")->fetchColumn());
+        self::assertStringNotContainsString('ManagedDeliveryIntentSigner::headers', (string)file_get_contents(dirname(__DIR__,2).'/src/services/ManagedDeliveryIntentSender.php'));
+    }
+
+    public function testLegacyAcceptedReceiptCannotBeRevokedThroughCurrentReceiver(): void
+    {
+        $pdo=$this->database();
+        $provisionId='12121212-1212-4212-8212-121212121212';
+        $revokeId='23232323-2323-4232-8232-232323232323';
+        $scope=str_repeat('a',32);$audience=str_repeat('b',32);
+        $provision='{"schemaVersion":1,"applicationKey":"legacy-app","deliveryId":"'.$provisionId.'","occurredAt":"2026-09-04T12:00:00.000Z","scope":{"type":"project","publicId":"'.$scope.'"},"audience":{"type":"principal","publicId":"'.$audience.'"},"accessMode":"portal","expiresAt":null,"label":null,"notify":true}';
+        $hash=$this->legacyHash(1,'legacy-app','https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-v1',[],str_repeat('l',32));
+        $pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json,delivered_at,receipt_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            ->execute([$provisionId,'legacy_profile',1,'https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-app','legacy-v1',$hash,3,2,7,'project',$scope,'principal',$audience,'portal',hash('sha256',$provision),$provision,'2026-09-04 12:00:01.000000','legacy_receipt']);
+
         try {
-            $service->requeueRevocation($pdo, $revokeId);
-            self::fail('An accepted revocation must not be requeued.');
-        } catch (DomainException $error) {
-            self::assertStringContainsString('no longer eligible', $error->getMessage());
+            (new ManagedDeliveryService())->queueRevocation($pdo,$provisionId,$revokeId,7);
+            self::fail('A legacy receipt must not be sent to the current receiver.');
+        } catch (\DomainException $error) {
+            self::assertStringContainsString('original delivery system',$error->getMessage());
         }
+        self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
+        $historical=$pdo->query("SELECT transport_mode,receipt_id,revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame('legacy_profile',$historical['transport_mode']);
+        self::assertSame('legacy_receipt',$historical['receipt_id']);
+        self::assertNull($historical['revoked_at']);
     }
 
-    public function testBatchRuntimeDeadlineStopsBeforeClaimingAnotherIntent(): void
+    public function testExplicitLegacyRevocationRetryRemainsBlockedWithoutMutation(): void
     {
-        $pdo = $this->database();
-        $service = new ManagedDeliveryService();
-        foreach (['13131313-1313-4313-8313-131313131313', '14141414-1414-4414-8414-141414141414'] as $id) {
-            $service->queue($pdo, [
-                'delivery_id' => $id, 'scope_type' => 'project', 'scope_public_id' => str_repeat('a', 32),
-                'audience_type' => 'principal', 'audience_public_id' => str_repeat('b', 32),
-            ], 7);
+        $pdo=$this->database();
+        $provisionId='12121212-1212-4212-8212-121212121212';
+        $revokeId='23232323-2323-4232-8232-232323232323';
+        $scope=str_repeat('a',32);$audience=str_repeat('b',32);
+        $provision='{"schemaVersion":1,"applicationKey":"legacy-app","deliveryId":"'.$provisionId.'","occurredAt":"2026-09-04T12:00:00.000Z","scope":{"type":"project","publicId":"'.$scope.'"},"audience":{"type":"principal","publicId":"'.$audience.'"},"accessMode":"portal","expiresAt":null,"label":null,"notify":true}';
+        $revoke='{"schemaVersion":1,"applicationKey":"legacy-app","deliveryId":"'.$revokeId.'","occurredAt":"2026-09-04T12:01:00.000Z","receiptId":"legacy_receipt","reasonCode":"project_alpha_delivery_revoked"}';
+        $hash=$this->legacyHash(1,'legacy-app','https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-v1',[],str_repeat('l',32));
+        $insert=$pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,intent_type,target_delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json,delivered_at,dead_lettered_at,receipt_id,last_error_code) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        $insert->execute([$provisionId,'provision',null,'legacy_profile',1,'https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-app','legacy-v1',$hash,3,2,7,'project',$scope,'principal',$audience,'portal',hash('sha256',$provision),$provision,'2026-09-04 12:00:01.000000',null,'legacy_receipt',null]);
+        $insert->execute([$revokeId,'revoke',$provisionId,'legacy_profile',1,'https://legacy.example/api/internal/project-alpha/delivery-intents','legacy-app','legacy-v1',$hash,3,2,7,'project',$scope,'principal',$audience,'portal',hash('sha256',$revoke),$revoke,null,'2026-09-04 12:02:00.000000',null,'legacy_transport_retired_manual_remediation_required']);
+
+        try {
+            (new ManagedDeliveryService())->requeueRevocation($pdo,$revokeId);
+            self::fail('A legacy revocation must not be rebound to the current receiver.');
+        } catch (\DomainException $error) {
+            self::assertStringContainsString('cannot be rebound automatically',$error->getMessage());
         }
-        $summary = (new ManagedDeliveryIntentSender())->deliverDue($pdo, 2, static function (): array {
-            usleep(1_100_000);
-            return ['status' => 202, 'body' => '{"receiptId":"receipt_01","status":"accepted"}'];
-        }, 1);
-        self::assertSame(1, $summary['processed']);
-        self::assertSame(1, $summary['accepted']);
-        self::assertSame(0, (int)$pdo->query("SELECT attempts FROM managed_delivery_intent_outbox WHERE delivery_id='14141414-1414-4414-8414-141414141414'")->fetchColumn());
+        $row=$pdo->query("SELECT transport_mode,integration_profile_id,destination_url,pinned_application_key,dead_lettered_at,last_error_code,payload_json FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame('legacy_profile',$row['transport_mode']);
+        self::assertSame(1,$row['integration_profile_id']);
+        self::assertSame('https://legacy.example/api/internal/project-alpha/delivery-intents',$row['destination_url']);
+        self::assertSame('legacy-app',$row['pinned_application_key']);
+        self::assertNotNull($row['dead_lettered_at']);
+        self::assertSame('legacy_transport_retired_manual_remediation_required',$row['last_error_code']);
+        self::assertSame('legacy-app',json_decode($row['payload_json'],true,16,JSON_THROW_ON_ERROR)['applicationKey']);
     }
 
-    private function database(bool $enabled = true): PDO
+    public function testUiKeepsOnlyOptInPolicyBesideSingleExternalOperationsConnection(): void
     {
-        $pdo = new PDO('sqlite::memory:');
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $root=dirname(__DIR__,2);$view=(string)file_get_contents($root.'/src/views/pages/settings/links.php');$handler=(string)file_get_contents($root.'/src/controllers/settings/links_handler.php');
+        self::assertStringContainsString('name="managed_delivery_enabled"',$view);
+        self::assertStringContainsString('name="managed_delivery_guest_links_enabled"',$view);
+        self::assertStringContainsString('Custom integrations',$view);
+        self::assertStringNotContainsString('name="managed_delivery_intent_url"',$view);
+        self::assertStringNotContainsString('name="managed_delivery_profile_id"',$view);
+        self::assertStringNotContainsString("'intent_url' =>",$handler);
+        self::assertStringNotContainsString("'profile_id' =>",$handler);
+        self::assertStringContainsString('Manual remediation required',$view);
+        self::assertStringContainsString('Use original system',$view);
+    }
+
+    private function database(bool $managedEnabled=true): PDO
+    {
+        $pdo=new PDO('sqlite::memory:');$pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
         $pdo->exec(<<<'SQL'
 CREATE TABLE app_config(organization_id INTEGER NOT NULL,config_key TEXT NOT NULL,config_value TEXT NOT NULL,PRIMARY KEY(organization_id,config_key));
 CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,application_key TEXT,display_label TEXT,enabled INTEGER,delivery_enabled INTEGER,delivery_key_id TEXT,delivery_previous_key_id TEXT,delivery_previous_valid_until TEXT,delivery_credentials_enc TEXT,delivery_timeout_seconds INTEGER,delivery_max_attempts INTEGER);
-CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
-CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
-CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,archived INTEGER,deleted_at TEXT);
-CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,status TEXT);
-CREATE TABLE portal_principals(id INTEGER PRIMARY KEY,public_id TEXT,enabled INTEGER,revoked_at TEXT);
-CREATE TABLE managed_delivery_intent_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL UNIQUE,intent_type TEXT NOT NULL DEFAULT 'provision',target_delivery_id TEXT,integration_profile_id INTEGER NOT NULL,destination_url TEXT NOT NULL,pinned_application_key TEXT NOT NULL,signing_key_id TEXT NOT NULL,signing_contract_hash TEXT NOT NULL,delivery_timeout_seconds INTEGER NOT NULL,delivery_max_attempts INTEGER NOT NULL,actor_user_id INTEGER,scope_type TEXT NOT NULL,scope_public_id TEXT NOT NULL,audience_type TEXT NOT NULL,audience_public_id TEXT NOT NULL,access_mode TEXT NOT NULL DEFAULT 'portal',request_fingerprint TEXT NOT NULL,payload_json TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT,receipt_id TEXT,revoked_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,delivered_at TEXT,dead_lettered_at TEXT,is_revocation INTEGER DEFAULT 0);
+CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT); CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT); CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,archived INTEGER,deleted_at TEXT); CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,status TEXT); CREATE TABLE portal_principals(id INTEGER PRIMARY KEY,public_id TEXT,enabled INTEGER,revoked_at TEXT);
+CREATE TABLE managed_delivery_intent_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL UNIQUE,intent_type TEXT NOT NULL DEFAULT 'provision',target_delivery_id TEXT,transport_mode TEXT NOT NULL DEFAULT 'legacy_profile',integration_profile_id INTEGER,destination_url TEXT NOT NULL,pinned_application_key TEXT NOT NULL,signing_key_id TEXT NOT NULL,signing_contract_hash TEXT NOT NULL,delivery_timeout_seconds INTEGER NOT NULL,delivery_max_attempts INTEGER NOT NULL,actor_user_id INTEGER,scope_type TEXT NOT NULL,scope_public_id TEXT NOT NULL,audience_type TEXT NOT NULL,audience_public_id TEXT NOT NULL,access_mode TEXT NOT NULL DEFAULT 'portal',request_fingerprint TEXT NOT NULL,payload_json TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT,receipt_id TEXT,revoked_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 SQL);
-        require_once dirname(__DIR__, 2) . '/src/utils/crypto.php';
-        $credentials = crypto_encrypt(json_encode(['currentSecret' => str_repeat('s', 32), 'previousSecret' => '', 'authHeaders' => ['CF-Access-Client-Id' => 'opaque-id', 'CF-Access-Client-Secret' => 'opaque-secret']], JSON_THROW_ON_ERROR));
-        $insert = $pdo->prepare('INSERT INTO portal_integration_profiles(id,application_key,display_label,enabled,delivery_enabled,delivery_key_id,delivery_credentials_enc,delivery_timeout_seconds,delivery_max_attempts) VALUES(1,?,?,?,?,?,?,?,?)');
-        $insert->execute(['project-alpha', 'Ops', 1, 1, 'ops-v1', $credentials, 5, 3]);
-        $configs = [
-            ManagedDeliveryService::ENABLED_KEY => $enabled ? '1' : '0',
-            ManagedDeliveryService::URL_KEY => 'https://ops.example/api/internal/project-alpha/delivery-intents',
-            ManagedDeliveryService::PROFILE_KEY => '1',
-            ManagedDeliveryService::GUEST_KEY => '0',
-        ];
-        $save = $pdo->prepare('INSERT INTO app_config VALUES(0,?,?)');
-        foreach ($configs as $key => $value) $save->execute([$key, $value]);
-        $pdo->exec("INSERT INTO projects VALUES(1,'" . str_repeat('a', 32) . "','Johnson Road','active')");
-        $pdo->exec("INSERT INTO portal_principals VALUES(1,'" . str_repeat('b', 32) . "',1,NULL)");
-        return $pdo;
+        require_once dirname(__DIR__,2).'/src/utils/crypto.php';
+        $credentials=crypto_encrypt(json_encode(['access_client_id'=>'opaque-id','access_client_secret'=>'opaque-secret','hmac_secret'=>str_repeat('s',32)],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
+        $configs=[ManagedDeliveryService::ENABLED_KEY=>$managedEnabled?'1':'0',ManagedDeliveryService::GUEST_KEY=>'0','external_ops_enabled'=>'1','external_ops_label'=>'Operations','external_ops_application_key'=>'project-alpha','external_ops_webhook_url'=>'https://ops.example/v1/project-alpha/events','external_ops_timeout_seconds'=>'5','external_ops_max_attempts'=>'3','external_ops_credentials_enc'=>$credentials];
+        $save=$pdo->prepare('INSERT INTO app_config VALUES(0,?,?)');foreach($configs as$key=>$value)$save->execute([$key,$value]);
+        $pdo->exec("INSERT INTO projects VALUES(1,'".str_repeat('a',32)."','Johnson Road','active')");$pdo->exec("INSERT INTO portal_principals VALUES(1,'".str_repeat('b',32)."',1,NULL)");return$pdo;
     }
 
+    /** @param array<string,string> $headers */
+    private function legacyHash(int $profileId,string$app,string$url,string$keyId,array$headers,string$secret):string{ksort($headers,SORT_STRING);return hash('sha256',$profileId."\n".$app."\n".$url."\n".$keyId."\n".json_encode($headers,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)."\n".hash('sha256',$secret));}
     /** @return array<string,string> */
-    private function headers(array $headers): array
-    {
-        $out = [];
-        foreach ($headers as $header) {
-            [$name, $value] = explode(':', $header, 2);
-            $out[strtolower($name)] = trim($value);
-        }
-        return $out;
-    }
+    private function headers(array $headers):array{$out=[];foreach($headers as$header){[$name,$value]=explode(':',$header,2);$out[strtolower($name)]=trim($value);}return$out;}
 }

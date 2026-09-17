@@ -303,6 +303,7 @@ final class SyncContractV2MySqlTest extends TestCase
         $this->reader->exec(
             'CREATE TABLE organizations (
                 id INT NOT NULL PRIMARY KEY,
+                public_id CHAR(32) NULL UNIQUE,
                 name VARCHAR(191) NOT NULL,
                 address_line1 VARCHAR(191) NULL,
                 address_line2 VARCHAR(191) NULL,
@@ -317,6 +318,7 @@ final class SyncContractV2MySqlTest extends TestCase
         $this->reader->exec(
             'CREATE TABLE clients (
                 id INT NOT NULL PRIMARY KEY,
+                public_id CHAR(32) NULL UNIQUE,
                 name VARCHAR(191) NOT NULL,
                 email VARCHAR(191) NULL,
                 phone VARCHAR(64) NULL,
@@ -337,6 +339,7 @@ final class SyncContractV2MySqlTest extends TestCase
         $this->reader->exec(
             'CREATE TABLE projects (
                 id INT NOT NULL PRIMARY KEY,
+                public_id CHAR(32) NULL UNIQUE,
                 client_id INT NULL,
                 parent_id INT NULL,
                 organization_id INT NULL,
@@ -394,32 +397,32 @@ final class SyncContractV2MySqlTest extends TestCase
         $timestamp = '2026-07-30 12:00:00.000000';
         $organization = $this->reader->prepare(
             'INSERT INTO organizations
-                (id, name, address_line1, city, state, postal_code, country, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (id, public_id, name, address_line1, city, state, postal_code, country, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $organization->execute([
-            1, 'Organization One Before', '1 First Street', 'Example', 'IL', '60001',
+            1, str_repeat('a', 32), 'Organization One Before', '1 First Street', 'Example', 'IL', '60001',
             'US', $timestamp, $timestamp,
         ]);
         $organization->execute([
-            2, 'Organization Two Before', '2 Second Street', 'Example', 'IL', '60002',
+            2, str_repeat('d', 32), 'Organization Two Before', '2 Second Street', 'Example', 'IL', '60002',
             'US', $timestamp, $timestamp,
         ]);
         $this->reader->prepare(
             'INSERT INTO clients
-                (id, name, email, phone, organization_id, client_type, archived, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (id, public_id, name, email, phone, organization_id, client_type, archived, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
-            10, 'Synthetic Client', 'client@example.invalid', '555-0100', 1, 'business',
+            10, str_repeat('b', 32), 'Synthetic Client', 'client@example.invalid', '555-0100', 1, 'business',
             0, $timestamp, $timestamp,
         ]);
         $this->reader->prepare(
             'INSERT INTO projects
-                (id, client_id, organization_id, name, description, status, start_date,
+                (id, public_id, client_id, organization_id, name, description, status, start_date,
                  estimated_start, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
-            20, 10, 1, 'Synthetic Project', 'Disposable integration fixture', 'active',
+            20, str_repeat('c', 32), 10, 1, 'Synthetic Project', 'Disposable integration fixture', 'active',
             '2026-07-30', '2026-07-30', $timestamp, $timestamp,
         ]);
         $this->reader->prepare(

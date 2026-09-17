@@ -63,7 +63,12 @@ function handleCheckoutSessionCompleted($pdo, $session) {
     try {
     // Serialize payment recording with manual payments and other Stripe events.
     $pdo->beginTransaction();
-    $invCheck = $pdo->prepare('SELECT id,total,client_id FROM invoices WHERE id=? FOR UPDATE');
+    $invCheck = $pdo->prepare(
+        'SELECT i.id,i.total,i.client_id,i.collection_mode,pii.project_invoice_id AS assigned_project_invoice_id
+         FROM invoices i
+         LEFT JOIN project_invoice_items pii ON pii.invoice_id=i.id
+         WHERE i.id=? FOR UPDATE'
+    );
     $invCheck->execute([$invoiceId]);
     $invoice = $invCheck->fetch(PDO::FETCH_ASSOC);
     
@@ -100,6 +105,25 @@ function handleCheckoutSessionCompleted($pdo, $session) {
             );
         }
         @error_log('[StripeWebhook] Session ' . $session['id'] . ' already processed - skipping');
+        return;
+    }
+
+    // A checkout can complete while staff is closing monthly billing. Once the
+    // child belongs to a statement, route the already-authorized charge through
+    // that statement so the same balance cannot be collected twice.
+    $assignedProjectInvoiceId = (int)($invoice['assigned_project_invoice_id'] ?? 0);
+    if ($assignedProjectInvoiceId > 0) {
+        require_once __DIR__ . '/../../utils/project_invoice_billing.php';
+        $projectSession = $session;
+        $projectSession['metadata'] = array_merge($metadata, [
+            'pa_project_invoice_id' => (string)$assignedProjectInvoiceId,
+            'project_invoice_id' => (string)$assignedProjectInvoiceId,
+            'original_amount' => (string)$paymentAmount,
+        ]);
+        if (!project_invoice_record_stripe_payment($pdo, $projectSession)) {
+            throw new RuntimeException('Assigned Project Invoice payment could not be allocated.');
+        }
+        $pdo->commit();
         return;
     }
     

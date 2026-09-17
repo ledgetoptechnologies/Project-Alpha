@@ -1,6 +1,7 @@
 <?php
 // src/views/pages/contract/on-demand-invoices-list.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/invoice_lifecycle.php';
@@ -28,7 +29,7 @@ if(!in_array($per,[50,100],true)) $per=50;
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' LEFT JOIN clients c ON c.id=i.client_id LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,c.organization_id)';
+$documentJoins = ' LEFT JOIN clients c ON c.id=i.client_id' . pa_document_effective_organization_joins('i', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM invoices i'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 
@@ -44,6 +45,10 @@ $st=$pdo->prepare($sql);$st->execute($p);$rows=$st->fetchAll();
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Email sent.</div>
   <?php elseif (!empty($_GET['email_err'])): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fff1f2;color:#881337;border:1px solid #fca5a5">Email failed: <?php echo htmlspecialchars($_GET['email_err']); ?></div>
+  <?php endif; ?>
+
+  <?php if (!empty($_GET['project_billing'])): ?>
+    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Invoice finalized for monthly project billing. It will be included in the next eligible Project Invoice and will not be emailed separately.</div>
   <?php endif; ?>
 
   <?php if ($contract_id > 0): ?>
@@ -137,6 +142,13 @@ $st=$pdo->prepare($sql);$st->execute($p);$rows=$st->fetchAll();
               <a href="/?page=invoice/invoice-details&id=<?php echo (int)$r['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">View</a>
               <?php if (strtolower((string)$r['status']) === 'draft'): ?>
                 <a href="/?page=invoice/invoices-edit&id=<?php echo (int)$r['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;text-decoration:none;color:inherit">Edit</a>
+                <?php if (($r['collection_mode'] ?? 'direct') === 'project_aggregate'): ?>
+                <form method="post" action="/?page=invoice/invoice-finalize" style="display:inline" onsubmit="return confirm('Finalize this invoice for the monthly project statement? It will not be emailed separately.');">
+                  <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
+                  <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
+                  <button type="submit" style="padding:6px 10px;border:0;border-radius:8px;background:#10b981;color:#fff;font-size:small">Finalize for Project Billing</button>
+                </form>
+                <?php endif; ?>
               <?php endif; ?>
               <?php if (in_array(strtolower((string)$r['status']), ['sent','unpaid','partial','overdue'], true) && ($r['collection_mode'] ?? 'direct') === 'direct'): ?>
               <form method="post" action="/?page=invoice/email-send" style="display:inline">

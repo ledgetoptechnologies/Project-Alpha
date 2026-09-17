@@ -13,6 +13,27 @@ final class ProjectWorkflowUiTest extends TestCase
         $this->root = dirname(__DIR__, 2);
     }
 
+    public function testProjectListCardsAreKeyboardAccessibleLinksWithoutHijackingActions(): void
+    {
+        $view = (string)file_get_contents($this->root . '/src/views/pages/project/projects-list.php');
+
+        self::assertStringContainsString('class="project-row-link"', $view);
+        self::assertStringContainsString('/?page=project/projects-details&amp;id=<?php echo (int)$project[\'id\']; ?>', $view);
+        self::assertStringContainsString('.project-row-link::after{content:"";position:absolute;inset:0;z-index:1}', $view);
+        self::assertStringContainsString('.project-row-link:focus-visible::after', $view);
+        self::assertStringContainsString('.project-row-actions>a,.project-row-actions>form{position:relative;z-index:2}', $view);
+        self::assertStringContainsString('<form method="post" action="/?page=project/projects-delete"', $view);
+        self::assertStringContainsString("'Archive'", $view);
+        self::assertStringContainsString('name="lifecycle_action"', $view);
+        $presentation = (string)file_get_contents($this->root . '/src/services/ProjectPresentationService.php');
+        $update = (string)file_get_contents($this->root . '/src/controllers/project/projects_update.php');
+        self::assertStringContainsString("['portal_publish_enabled','public_project_enabled']", $presentation);
+        self::assertStringContainsString('managed_delivery_intent_outbox', $presentation);
+        self::assertStringContainsString('portal_publish_enabled = CASE WHEN ?=1', $update);
+        self::assertStringContainsString('Restore the Project before explicitly publishing it.', $update);
+        self::assertStringContainsString('>View Project</a>', $view);
+    }
+
     public function testProjectCreateUsesDynamicClientTagPickers(): void
     {
         $view = file_get_contents($this->root . '/src/views/pages/project/projects-create.php');
@@ -956,17 +977,17 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringNotContainsString('catch (', $eligibility);
         self::assertStringContainsString("collection_mode='direct'", $receivables);
         self::assertStringContainsString("status IN ('sent','unpaid','partial','overdue')", $receivables);
-        self::assertStringContainsString("status IN ('sent','unpaid','partial')", $receivables);
+        self::assertStringContainsString("'pending_project_charges'", $receivables);
         self::assertStringContainsString('balance_due>0.005', $receivables);
         self::assertStringContainsString('summarizeProjects', $receivables);
 
-        self::assertStringContainsString('ProjectCloseGuardService($pdo))->transition(', $controller);
+        self::assertStringContainsString('ProjectLifecycleService($pdo))->apply(', $controller);
         self::assertStringContainsString('&closeout_blocked=1', $controller);
         self::assertStringContainsString('&closeout_target=', $controller);
         self::assertStringContainsString('#project-closeout-alert', $controller);
         self::assertStringNotContainsString("\$_POST['redirect']", $controller);
         self::assertStringNotContainsString('UPDATE projects', $controller);
-        $transitionAt = strpos($controller, 'ProjectCloseGuardService($pdo))->transition(');
+        $transitionAt = strpos($controller, 'ProjectLifecycleService($pdo))->apply(');
         $scheduleAt = strpos($controller, 'ScheduleService::syncProject');
         $projectionAt = strpos($controller, 'queueProject($pdo,$id)');
         $commitAt = strrpos($controller, '$pdo->commit()');

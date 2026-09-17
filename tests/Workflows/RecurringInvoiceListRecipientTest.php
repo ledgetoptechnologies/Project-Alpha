@@ -13,11 +13,11 @@ final class RecurringInvoiceListRecipientTest extends TestCase
         );
 
         self::assertStringContainsString(
-            'LEFT JOIN organizations o ON o.id=COALESCE(ltc.organization_id,c.organization_id)',
+            "pa_document_effective_organization_joins('ltc', 'c')",
             $view
         );
         self::assertStringContainsString(
-            'LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,ltc.organization_id,c.organization_id)',
+            'COALESCE(document_project.organization_id,i.organization_id,ltc.organization_id,c.organization_id)',
             $view
         );
         self::assertSame(2, substr_count($view, '(c.name LIKE ? OR o.name LIKE ?)'));

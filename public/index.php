@@ -1,4 +1,134 @@
 <?php
+// Generic API v2 endpoints are dispatched before interactive sessions and page routing.
+$apiV2Path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
+if ($apiV2Path === '/api/v2/capabilities') {
+    require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
+    exit;
+}
+if (in_array($apiV2Path, ['/api/v2/projects/commands','/api/v2/projects/profile/commands','/api/v2/projects/bindings/commands','/api/v2/projects/bindings/revisions/commands'], true)) {
+    $flag = match ($apiV2Path) {
+        '/api/v2/projects/commands' => 'APP_API_V2_PROJECTS_CREATE_ENABLED',
+        '/api/v2/projects/profile/commands' => 'APP_API_V2_PROJECTS_WRITE_ENABLED',
+        '/api/v2/projects/bindings/revisions/commands' => 'APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED',
+        default => 'APP_API_V2_PROJECTS_BINDING_ENABLED',
+    };
+    if (!filter_var(getenv($flag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_sync_command_v2.php'; exit;
+}
+if ($apiV2Path === '/api/v2/projects/inventory') {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_INVENTORY_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_inventory_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/projects/bindings/status(?:/|$)#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_binding_status_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/projects/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_PROJECTS_READ_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_read_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/projects/[0-9a-f]{32}/(complete|cancel|archive|restore)/commands$#D', $apiV2Path, $apiV2ProjectLifecycleMatch) === 1) {
+    $apiV2ProjectLifecycleFlag = 'APP_API_V2_PROJECTS_' . strtoupper($apiV2ProjectLifecycleMatch[1]) . '_ENABLED';
+    if (!filter_var(getenv($apiV2ProjectLifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_lifecycle_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_READ_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_read_v2.php';
+    exit;
+}
+if (preg_match('#^/api/v2/bindings/(?:client|organization)/status(?:/|$)#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_BINDING_STATUS_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/binding_status_v2.php';
+    exit;
+}
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_command_v2.php';
+    exit;
+}
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revisions/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_v2.php';
+    exit;
+}
+if (preg_match('#^/api/v2/directory/(clients|organizations)/commands$#D', $apiV2Path, $apiV2CreateMatch) === 1) {
+    $apiV2CreateFlag = $apiV2CreateMatch[1] === 'clients'
+        ? 'APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'
+        : 'APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED';
+    if (!filter_var(getenv($apiV2CreateFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_create_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/organizations/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_organization_profile_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store');
+        http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_client_profile_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/(clients|organizations)/[0-9a-f]{32}/(archive|restore)/commands$#D', $apiV2Path, $apiV2LifecycleMatch) === 1) {
+    $apiV2LifecycleFlag = 'APP_API_V2_DIRECTORY_' . strtoupper($apiV2LifecycleMatch[1]) . '_' . strtoupper($apiV2LifecycleMatch[2]) . '_ENABLED';
+    if (!filter_var(getenv($apiV2LifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_lifecycle_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/organization/(?:assign|remove|move)/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_relationship_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revoke/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_revoke_command_v2.php'; exit;
+}
+if ($apiV2Path === '/api/v2/directory/inventory') {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_INVENTORY_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_inventory_v2.php'; exit;
+}
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../src/config/db.php';
 require_once __DIR__ . '/../src/utils/request_security.php';
@@ -35,6 +165,13 @@ if ($requestPath === '/api/v1/ops/snapshot/') {
 if ($requestPath === '/api/v2/ops/snapshot/') {
     $requestPath = '/api/v2/ops/snapshot';
 }
+require_once __DIR__ . '/../src/utils/project_management_clean_route.php';
+$projectManagementAlias = project_management_clean_route($requestPath, $_SERVER['REQUEST_METHOD'] ?? 'GET', $_GET);
+if ($projectManagementAlias === 405) {
+    header('Allow: GET, HEAD');
+    http_response_code(405);
+    exit;
+}
 $moduleRoutes = [
     '/health/ready' => 'health/ready',
     '/time' => 'workforce/time',
@@ -69,6 +206,16 @@ if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints
 }
 if ($syncContractV2Enabled) {
     $moduleRoutes['/api/v2/ops/snapshot'] = 'api-ops-snapshot-v2';
+}
+
+// Every API v2 request must resolve to an explicit route. This keeps the
+// namespace fail-closed once Apache sends it through the front controller.
+if (preg_match('#^/api/v2(?:/|$)#D', $requestPath) === 1 && !isset($moduleRoutes[$requestPath])) {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store');
+    http_response_code(404);
+    echo json_encode(['error' => 'Not found']);
+    exit;
 }
 if (preg_match('#^/quotes/([a-f0-9]{32})/edit/?$#D', $requestPath, $quotePublicRoute) === 1) {
     $_GET['_quote_public_id'] = $quotePublicRoute[1];
@@ -671,6 +818,7 @@ $directControllers = [
     'api/catalog-v1' => 'api/catalog_v1.php',
     'settings/workforce-catalog-handler' => 'settings/workforce_catalog_handler.php',
     'settings/external-ops-handler' => 'settings/external_ops_handler.php',
+    'settings/directory-management-handler' => 'settings/directory_management_handler.php',
     'workforce/contractor-invoice' => 'workforce/contractor_invoice.php',
     'workforce/contractor-invoice-download' => 'workforce/contractor_invoice_download.php',
 ];
@@ -1055,9 +1203,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     //   settings/link-test-connection - controller validates CSRF (csrf_validate)
     //   settings/link-resolver-run    - controller validates CSRF (csrf_validate)
     //   legal/tos-accept             - controller validates CSRF (csrf_sf_verify_or_redirect 'auth')
-    $skipCsrfFor = ['auth', 'reset-request', 'reset-verify', 'reset-update', '2fa-setup-action', '2fa-verify-action', 'public-quote-action', 'public-contract-sign', 'public-contract-action', 'public-project-upload', 'organization/org-create', 'organization/organization-update-notes', 'stripe-webhook', 'stripe-webhook-legacy', 'settings/link-test-connection', 'settings/link-resolver-run', 'settings/managed-delivery-test', 'settings/managed-delivery-send', 'settings/managed-delivery-revoke', 'settings/managed-delivery-retry', 'legal/tos-accept'];
+    // This controller resolves an entity-specific return path before validating
+    // its own CSRF token and authorization contract.
+    $skipCsrfFor = ['auth', 'reset-request', 'reset-verify', 'reset-update', '2fa-setup-action', '2fa-verify-action', 'public-quote-action', 'public-contract-sign', 'public-contract-action', 'public-project-upload', 'organization/org-create', 'organization/organization-update-notes', 'stripe-webhook', 'stripe-webhook-legacy', 'settings/link-test-connection', 'settings/link-resolver-run', 'settings/managed-delivery-test', 'settings/managed-delivery-send', 'settings/managed-delivery-revoke', 'settings/managed-delivery-retry', 'legal/tos-accept', 'portal/service-assignments-handler'];
     if (!in_array($page, $skipCsrfFor, true)) {
         csrf_verify_post_or_redirect($page);
+    }
+
+    // Interactive directory writers share one server-side policy boundary.
+    // Stateless API v2 routes have already been dispatched above and remain
+    // available to the explicitly authorized application.
+    require_once __DIR__ . '/../src/utils/api_v2_directory_management.php';
+    $directoryWriters = api_v2_directory_management_browser_writers();
+    if (isset($directoryWriters[$page])) {
+        [$directoryTarget, $directoryAction] = $directoryWriters[$page];
+        if (api_v2_directory_management_guard($pdo, $directoryTarget, $directoryAction)) {
+            if ($page === 'organization/org-create') {
+                header('Content-Type: application/json; charset=UTF-8');
+                http_response_code(409);
+                echo json_encode(['success'=>false,'error'=>API_V2_DIRECTORY_MANAGEMENT_LABEL]);
+                exit;
+            }
+            header('Location: /?page=' . ($directoryTarget === 'organization' || $directoryTarget === 'relationship' ? 'organization/organizations-list' : 'client/clients-list') . '&directory_managed=1');
+            exit;
+        }
     }
 
     if ($page === 'settings') {
@@ -1198,6 +1367,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($page === 'client/clients-create' || $page === 'clients-create') {
         require_once __DIR__ . '/../src/controllers/client/clients_create.php';
+        exit;
+    }
+    if ($page === 'portal/service-assignments-handler') {
+        require_once __DIR__ . '/../src/controllers/portal/service_assignments_handler.php';
         exit;
     }
     if ($page === 'client/onboarding-invite') {

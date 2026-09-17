@@ -2,6 +2,9 @@
 // src/controllers/clients_restore.php
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'client','restore')) { header('Location: /?page=client/archived-clients&directory_managed=1'); exit; }
 
 $id = (int)($_POST['id'] ?? 0); // archived_clients.id
 if ($id <= 0) {
@@ -9,37 +12,19 @@ if ($id <= 0) {
   exit;
 }
 
-$ac = $pdo->prepare('SELECT * FROM archived_clients WHERE id=?');
-$ac->execute([$id]);
-$row = $ac->fetch(PDO::FETCH_ASSOC);
-if (!$row) {
-  header('Location: /?page=client/archived-clients&error=Not%20found');
-  exit;
-}
-
 $pdo->beginTransaction();
 try {
-  // Attempt to restore the client row. If original client_id is free, use it; otherwise create new.
-  $origId = (int)$row['client_id'];
-  $exists = $pdo->prepare('SELECT COUNT(*) FROM clients WHERE id=?');
-  $exists->execute([$origId]);
-  $useOrig = $origId > 0 && (int)$exists->fetchColumn() === 0;
-
-  if ($useOrig) {
-    $ins = $pdo->prepare('INSERT INTO clients (id,name,email,phone,organization_id,notes,address_line1,address_line2,city,state,postal_code,country,source_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
-    $ins->execute([$origId, $row['name'], $row['email'], $row['phone'], $row['organization_id'], $row['notes'], $row['address_line1'], $row['address_line2'], $row['city'], $row['state'], $row['postal_code'], $row['country'], portal_projection_source_version(), $row['created_at']]);
-    $clientId=$origId;
-  } else {
-    $ins = $pdo->prepare('INSERT INTO clients (name,email,phone,organization_id,notes,address_line1,address_line2,city,state,postal_code,country,source_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
-    $ins->execute([$row['name'], $row['email'], $row['phone'], $row['organization_id'], $row['notes'], $row['address_line1'], $row['address_line2'], $row['city'], $row['state'], $row['postal_code'], $row['country'], portal_projection_source_version(), $row['created_at']]);
-    $clientId=(int)$pdo->lastInsertId();
-  }
-
-  // Remove archive record (keep archived_entities for historical record)
-  $pdo->prepare('DELETE FROM archived_clients WHERE id=?')->execute([$id]);
+  $restored=(new App\Services\ClientArchivePortalStateService())->consumeAndRestore(
+    $pdo,
+    $id,
+    (int)($_SESSION['user']['id'] ?? 0)
+  );
+  $clientId=(int)$restored['client_id'];
+  api_v2_directory_record($pdo, 'client', $clientId);
 
   $projection=new App\Services\PortalProjectionMutationService();
   $projection->afterMutation($pdo,$projection->clientScopes($pdo,$clientId));
+  $projection->queueWorkspaceIds($pdo,$restored['affected_workspace_ids']);
 
   $pdo->commit();
   header('Location: /?page=client/clients-list&restored=1');

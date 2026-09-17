@@ -2,6 +2,7 @@
 // src/views/pages/invoice/on-demand-invoices-list.php
 // Dedicated view for ALL on-demand invoices (ODI prefix)
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/twig.php';
@@ -36,7 +37,7 @@ if(!in_array($per,[50,100],true)) $per=50;
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' LEFT JOIN clients c ON c.id=i.client_id LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,c.organization_id)';
+$documentJoins = ' LEFT JOIN clients c ON c.id=i.client_id' . pa_document_effective_organization_joins('i', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM invoices i'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 

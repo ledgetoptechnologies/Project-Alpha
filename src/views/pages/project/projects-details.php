@@ -89,7 +89,28 @@ $stmt->execute([$projectId]);
 $contracts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Fetch associated invoices
-$stmt = $pdo->prepare('SELECT id, doc_number, invoice_type, status, collection_mode, total, amount_paid, balance_due, created_at FROM invoices WHERE project_id = ? ORDER BY created_at DESC');
+$stmt = $pdo->prepare('
+    SELECT i.id, i.doc_number, i.invoice_type, i.status, i.collection_mode, i.total,
+           i.amount_paid, i.balance_due, i.finalized_at, i.created_at,
+           COALESCE((
+               SELECT SUM(
+                   CASE
+                       WHEN pay.amount - COALESCE(pay.refunded_amount, 0) - COALESCE(pay.disputed_amount, 0) > 0
+                       THEN pay.amount - COALESCE(pay.refunded_amount, 0) - COALESCE(pay.disputed_amount, 0)
+                       ELSE 0
+                   END
+               )
+               FROM payments pay
+               WHERE pay.invoice_id = i.id AND pay.status = "succeeded"
+           ), 0) AS effective_amount_paid,
+           pii.project_invoice_id AS assigned_project_invoice_id,
+           assigned_pi.doc_number AS assigned_project_invoice_number
+    FROM invoices i
+    LEFT JOIN project_invoice_items pii ON pii.invoice_id = i.id
+    LEFT JOIN project_invoices assigned_pi ON assigned_pi.id = pii.project_invoice_id
+    WHERE i.project_id = ?
+    ORDER BY i.created_at DESC
+');
 $stmt->execute([$projectId]);
 $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -99,17 +120,32 @@ $invoiceStats = [
     'paid_total' => 0.0,
     'unpaid_total' => 0.0,
 ];
+$unresolvedMonthlyInvoices = ['count' => 0, 'balance' => 0.0];
+$pendingMonthlyReady = ['count' => 0, 'balance' => 0.0];
+$pendingMonthlyDrafts = ['count' => 0, 'balance' => 0.0];
 foreach ($invoices as $invoice) {
     $total = (float)($invoice['total'] ?? 0);
-    $balanceDue = array_key_exists('balance_due', $invoice) && $invoice['balance_due'] !== null
-        ? (float)$invoice['balance_due']
-        : max(0.0, $total - (float)($invoice['amount_paid'] ?? 0));
+    $balanceDue = max(0.0, $total - (float)($invoice['effective_amount_paid'] ?? 0));
     if (($invoice['status'] ?? '') === 'paid') {
         $invoiceStats['paid_count']++;
         $invoiceStats['paid_total'] += $total;
     } elseif (!in_array(($invoice['status'] ?? ''), ['void', 'cancelled'], true)) {
         $invoiceStats['unpaid_count']++;
         $invoiceStats['unpaid_total'] += $balanceDue;
+    }
+    if (($invoice['collection_mode'] ?? 'direct') === 'project_aggregate'
+        && empty($invoice['assigned_project_invoice_id'])
+        && !in_array(strtolower((string)($invoice['status'] ?? '')), ['paid', 'void', 'cancelled'], true)
+        && $balanceDue > 0.005) {
+        $unresolvedMonthlyInvoices['count']++;
+        $unresolvedMonthlyInvoices['balance'] += $balanceDue;
+        if (!empty($invoice['finalized_at']) && in_array(strtolower((string)($invoice['status'] ?? '')), ['sent', 'unpaid', 'partial', 'overdue'], true)) {
+            $pendingMonthlyReady['count']++;
+            $pendingMonthlyReady['balance'] += $balanceDue;
+        } elseif (strtolower((string)($invoice['status'] ?? '')) === 'draft') {
+            $pendingMonthlyDrafts['count']++;
+            $pendingMonthlyDrafts['balance'] += $balanceDue;
+        }
     }
 }
 
@@ -336,7 +372,10 @@ $statusColors = [
     'cancelled' => ['bg' => '#f3f4f6', 'color' => '#6b7280', 'text' => 'Cancelled']
 ];
 
-$currentStatus = $statusColors[$project['status']] ?? $statusColors['not_started'];
+$projectDisplayStatus = in_array((string)$project['status'], ['not_started','active'], true)
+    && !empty($project['estimated_end']) && (string)$project['estimated_end'] < date('Y-m-d')
+    ? 'overdue' : (string)$project['status'];
+$currentStatus = $statusColors[$projectDisplayStatus] ?? $statusColors['not_started'];
 $contractSettlementEnabled = (string)($appConfig['contract_settlement_enabled'] ?? '0') === '1';
 $projectIsTerminal = in_array((string)$project['status'], ['completed', 'cancelled'], true);
 $closeoutTarget = in_array((string)($_GET['closeout_target'] ?? ''), ['completed', 'cancelled'], true)
@@ -562,6 +601,25 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                         </div>
                     </div>
 
+                    <?php if (($project['invoice_billing_period'] ?? 'per_invoice') === 'per_invoice' && (int)$unresolvedMonthlyInvoices['count'] > 0): ?>
+                    <div style="grid-column:1/-1;padding:12px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;color:#92400e">
+                        <div style="font-weight:700">Previous monthly invoices still need a collection path</div>
+                        <div style="font-size:13px;margin-top:3px"><?php echo (int)$unresolvedMonthlyInvoices['count']; ?> unassigned invoice(s) totaling $<?php echo number_format((float)$unresolvedMonthlyInvoices['balance'], 2); ?> are waiting for billing-transition review.</div>
+                        <a class="btn btn-sm" href="/?page=project/projects-edit&amp;id=<?php echo $projectId; ?>#project-billing" style="margin-top:8px">Resolve prior monthly invoices</a>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (($project['invoice_billing_period'] ?? 'per_invoice') === 'monthly' && ((int)$pendingMonthlyReady['count'] > 0 || (int)$pendingMonthlyDrafts['count'] > 0)): ?>
+                    <div style="grid-column:1/-1;padding:12px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#1e3a8a">
+                        <?php if ((int)$pendingMonthlyReady['count'] > 0): ?>
+                        <div style="font-weight:700"><?php echo (int)$pendingMonthlyReady['count']; ?> finalized charge(s) totaling $<?php echo number_format((float)$pendingMonthlyReady['balance'], 2); ?> are ready for the next Project Invoice.</div>
+                        <?php endif; ?>
+                        <?php if ((int)$pendingMonthlyDrafts['count'] > 0): ?>
+                        <div style="font-size:13px;margin-top:3px"><?php echo (int)$pendingMonthlyDrafts['count']; ?> draft charge(s) totaling $<?php echo number_format((float)$pendingMonthlyDrafts['balance'], 2); ?> are excluded until you finalize them for project billing.</div>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+
                     <?php if ($project['notes']): ?>
                     <div>
                         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Notes</div>
@@ -594,6 +652,15 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                     <div class="project-metric-label">Project Invoices</div>
                     <div class="project-metric-value"><?php echo count($projectInvoices); ?></div>
                 </div>
+            </div>
+
+            <div class="project-panel" id="assigned-services">
+                <?php
+                $portalServiceAssignmentSubjectType = 'project';
+                $portalServiceAssignmentSubjectId = $projectId;
+                $portalServiceAssignmentEntityPermission = 'projects.edit';
+                include __DIR__ . '/../../components/portal_service_assignments.php';
+                ?>
             </div>
 
             <?php if ($closeoutBlocked): ?>
@@ -636,6 +703,17 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
 
             <?php if (!empty($_GET['status_updated'])): ?>
                 <div class="alert alert-success" role="status" style="margin-bottom:16px">Project status updated.</div>
+            <?php endif; ?>
+            <?php if (!empty($_GET['billing_transition']) && (string)$_GET['billing_transition'] === 'success'): ?>
+                <div class="alert alert-success" role="status" style="margin-bottom:16px">
+                    <?php echo htmlspecialchars((string)($_GET['transition_message'] ?? 'Project billing was updated. Existing invoice and Project Invoice links remain unchanged.')); ?>
+                </div>
+            <?php endif; ?>
+            <?php if (!empty($_GET['transition_error'])): ?>
+                <div class="alert alert-danger" role="alert" style="margin-bottom:16px">
+                    <?php echo htmlspecialchars((string)$_GET['transition_error']); ?>
+                    <a href="/?page=project/projects-edit&amp;id=<?php echo $projectId; ?>#project-billing" style="margin-left:8px;font-weight:700">Review billing transition</a>
+                </div>
             <?php endif; ?>
             <?php if (!empty($_GET['billing_msg'])): ?>
                 <div class="alert alert-info" style="margin-bottom:16px">
@@ -790,8 +868,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                             <div>
                                 <div class="font-600">PI-<?php echo htmlspecialchars((string)($projectInvoice['doc_number'] ?: $projectInvoice['id'])); ?></div>
                                 <div style="font-size:13px;color:var(--muted)">
-                                    <?php echo htmlspecialchars(date('M j', strtotime($projectInvoice['billing_period_start']))); ?> -
-                                    <?php echo htmlspecialchars(date('M j, Y', strtotime($projectInvoice['billing_period_end']))); ?>
+                                    <?php echo htmlspecialchars(project_invoice_period_label($projectInvoice)); ?>
                                     · <?php echo (int)$projectInvoice['child_count']; ?> invoice(s)
                                     · <?php echo htmlspecialchars(ucfirst((string)$projectInvoice['status'])); ?>
                                 </div>
@@ -884,6 +961,13 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                                     </form>
                                     <?php else: ?>
                                         <span style="color:var(--muted);font-size:12px">Project statement billing</span>
+                                        <?php if (!empty($invoice['assigned_project_invoice_id'])): ?>
+                                            <a class="btn btn-sm" href="/?page=project/project-invoice-details&amp;id=<?php echo (int)$invoice['assigned_project_invoice_id']; ?>">Included in PI-<?php echo htmlspecialchars((string)($invoice['assigned_project_invoice_number'] ?: $invoice['assigned_project_invoice_id'])); ?></a>
+                                        <?php elseif (($project['invoice_billing_period'] ?? 'per_invoice') === 'per_invoice'): ?>
+                                            <a class="btn btn-sm" href="/?page=project/projects-edit&amp;id=<?php echo $projectId; ?>#project-billing" style="border-color:#f59e0b;color:#92400e;background:#fffbeb">Pending billing-transition review</a>
+                                        <?php else: ?>
+                                            <span style="color:var(--muted);font-size:12px">Pending next Project Invoice</span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -940,7 +1024,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                 <?php endif; ?>
                 <div class="grid">
                     <?php foreach ($statusColors as $statusKey => $statusInfo): ?>
-                        <?php if ($statusKey !== $project['status']): ?>
+                        <?php if ($statusKey !== 'overdue' && $statusKey !== $project['status']): ?>
                         <?php
                         $statusConfirmation = $statusKey === 'completed'
                             ? 'Complete this Project? Collectible receivables remain due and continue after completion.'
@@ -970,6 +1054,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                     <?php if ($monthlyBilling): ?>Next automatic cycle: <?php echo htmlspecialchars($nextBillingLabel); ?><?php else: ?>Monthly billing is currently disabled.<?php endif; ?>
                 </div>
                 <div class="project-actions">
+                    <?php if ($monthlyBilling): ?>
                     <form method="post" action="/?page=project/project-invoice-generate" onsubmit="return confirm('Generate a project invoice for the current month through today without emailing it?');" style="margin:0">
                         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                         <input type="hidden" name="project_id" value="<?php echo $projectId; ?>">
@@ -983,6 +1068,14 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                         <input type="hidden" name="send_email" value="1">
                         <button type="submit" class="btn btn-sm btn-success" style="width:100%">Generate &amp; Email</button>
                     </form>
+                    <?php elseif ((int)$unresolvedMonthlyInvoices['count'] > 0): ?>
+                    <div class="project-action-wide" style="padding:10px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;color:#92400e;font-size:13px">
+                        <?php echo (int)$unresolvedMonthlyInvoices['count']; ?> prior monthly invoice(s) totaling $<?php echo number_format((float)$unresolvedMonthlyInvoices['balance'], 2); ?> need review before they can be collected.
+                        <a href="/?page=project/projects-edit&amp;id=<?php echo $projectId; ?>#project-billing" style="display:block;font-weight:700;margin-top:6px">Resolve billing transition</a>
+                    </div>
+                    <?php else: ?>
+                    <div class="project-action-wide project-muted">New invoices are billed and sent individually. Existing Project Invoices remain available and payable through their original links.</div>
+                    <?php endif; ?>
                     <a href="/?page=project/project-invoices-list&project_id=<?php echo $projectId; ?>" class="btn btn-sm project-action-wide">View Project Invoices</a>
                     <div class="project-sidebar-title project-action-wide" style="margin:10px 0 0">Create Document</div>
                     <a href="/?page=quote/quotes-create&project_id=<?php echo $projectId; ?>" 
@@ -1192,10 +1285,13 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                         <p>Generated project invoices use the primary invoice receiver as the billed client. Emails only go to attached project contacts selected above as invoice recipients.</p>
                         <label class="project-field">
                             <span>Billing Period</span>
-                            <select name="invoice_billing_period">
-                                <option value="monthly" <?php echo ($project['invoice_billing_period'] ?? 'monthly') === 'monthly' ? 'selected' : ''; ?>>Monthly project billing</option>
-                                <option value="per_invoice" <?php echo ($project['invoice_billing_period'] ?? '') === 'per_invoice' ? 'selected' : ''; ?>>Each invoice on its own</option>
-                            </select>
+                            <?php $detailsBillingPeriod = ($project['invoice_billing_period'] ?? 'per_invoice') === 'monthly' ? 'monthly' : 'per_invoice'; ?>
+                            <input type="hidden" name="invoice_billing_period" value="<?php echo htmlspecialchars($detailsBillingPeriod, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>">
+                            <input type="hidden" name="invoice_billing_period_original" value="<?php echo htmlspecialchars($detailsBillingPeriod, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>">
+                            <div class="project-info-box">
+                                <?php echo $detailsBillingPeriod === 'monthly' ? 'Monthly project billing' : 'Each invoice on its own'; ?>
+                                · <a href="/?page=project/projects-edit&amp;id=<?php echo $projectId; ?>#project-billing">Review or change billing</a>
+                            </div>
                         </label>
                         <label class="project-check" style="padding:10px;border:1px solid #dfe3e8;border-radius:8px;background:#fff">
                             <input type="checkbox" name="project_invoice_auto_email" value="1" <?php echo $autoEmailEnabled ? 'checked' : ''; ?>>

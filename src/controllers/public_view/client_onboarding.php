@@ -71,7 +71,7 @@ if ($defaultState === '') {
       <h1 style="margin-top:0">Client information</h1>
       <?php if ($error): ?><div style="padding:10px;border:1px solid #fecaca;background:#fff1f2;color:#991b1b;margin-bottom:12px"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
       <style>
-        .onboarding-type-switch{grid-column:1/-1;border:0;padding:0;margin:0 0 4px}.onboarding-type-switch legend{font-weight:700;margin-bottom:8px}.onboarding-type-options{display:inline-grid;grid-template-columns:1fr 1fr;gap:4px;padding:5px;border-radius:999px;background:#edf4fb}.onboarding-type-options label{position:relative;cursor:pointer}.onboarding-type-options input{position:absolute;opacity:0;pointer-events:none}.onboarding-type-options span{display:block;padding:10px 22px;border-radius:999px;font-weight:700;color:#5b6776}.onboarding-type-options input:checked+span{background:#fff;color:var(--nav-accent);box-shadow:0 2px 8px rgba(15,23,42,.12)}.onboarding-type-options input:focus-visible+span{outline:3px solid #93c5fd;outline-offset:2px}.onboarding-section{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px}.onboarding-section[hidden]{display:none}@media(max-width:620px){.onboarding-section{grid-template-columns:1fr}.onboarding-type-options{width:100%}}
+        .onboarding-type-switch{grid-column:1/-1;border:0;padding:0;margin:0 0 4px}.onboarding-type-switch legend{font-weight:700;margin-bottom:8px}.onboarding-type-options{display:inline-grid;grid-template-columns:1fr 1fr;gap:4px;padding:5px;border-radius:999px;background:#edf4fb}.onboarding-type-options label{position:relative;cursor:pointer}.onboarding-type-options input{position:absolute;opacity:0;pointer-events:none}.onboarding-type-options span{display:block;padding:10px 22px;border-radius:999px;font-weight:700;color:#5b6776}.onboarding-type-options input:checked+span{background:#fff;color:var(--nav-accent);box-shadow:0 2px 8px rgba(15,23,42,.12)}.onboarding-type-options input:focus-visible+span{outline:3px solid #93c5fd;outline-offset:2px}.onboarding-section{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px}.onboarding-section[hidden]{display:none}.onboarding-section-heading{grid-column:1/-1}.onboarding-section-heading strong{display:block;font-size:16px}.onboarding-section-heading span{display:block;margin-top:3px;color:var(--muted);font-size:13px;line-height:1.4}.onboarding-company-contact{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#f8fafc}.onboarding-optional-label{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.onboarding-optional-badge{font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap}@media(max-width:620px){.onboarding-section,.onboarding-company-contact{grid-template-columns:1fr}.onboarding-type-options{width:100%}}
       </style>
       <form method="post" action="/?page=client-onboarding-submit" data-public-onboarding-form style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
@@ -83,13 +83,27 @@ if ($defaultState === '') {
             <label><input type="radio" name="client_type" value="business" data-onboarding-type <?php echo $selectedClientType === 'business' ? 'checked' : ''; ?>><span>Organization</span></label>
           </div>
         </fieldset>
-        <label style="grid-column:1/-1"><span data-contact-name-label><?php echo $selectedClientType === 'business' ? 'Contact name' : 'Full name'; ?></span><input class="input" name="name" maxlength="150" required autocomplete="name" value="<?php echo htmlspecialchars((string)($existingClient['name'] ?? '')); ?>"></label>
-        <label><span>Contact email</span><input class="input" type="email" name="email" maxlength="255" autocomplete="email" value="<?php echo htmlspecialchars((string)($existingClient['email'] ?? $invite['invited_email'] ?? '')); ?>"></label>
-        <label><span>Contact phone</span><input class="input" name="phone" maxlength="50" autocomplete="tel" value="<?php echo htmlspecialchars((string)($existingClient['phone'] ?? '')); ?>"></label>
+        <div class="onboarding-section-heading" data-contact-details-heading>
+          <strong>Your contact details</strong>
+          <span>Enter the information for the person the business should contact.</span>
+        </div>
+        <label style="grid-column:1/-1"><span data-contact-name-label><?php echo $selectedClientType === 'business' ? 'Contact name' : 'Full name'; ?></span><input class="input" name="name" maxlength="150" required autocomplete="section-contact name" value="<?php echo htmlspecialchars((string)($existingClient['name'] ?? '')); ?>"></label>
+        <label><span>Your email</span><input class="input" type="email" name="email" maxlength="255" required autocomplete="section-contact email" value="<?php echo htmlspecialchars((string)($existingClient['email'] ?? $invite['invited_email'] ?? '')); ?>"></label>
+        <label><span>Your phone</span><input class="input" name="phone" maxlength="50" autocomplete="section-contact tel" value="<?php echo htmlspecialchars((string)($existingClient['phone'] ?? '')); ?>"></label>
         <div class="onboarding-section" data-organization-fields <?php echo $selectedClientType === 'business' ? '' : 'hidden'; ?>>
+          <div class="onboarding-section-heading">
+            <strong>Organization details</strong>
+            <span>Tell us which organization this contact represents.</span>
+          </div>
           <label style="grid-column:1/-1"><span>Organization name</span><input class="input" name="organization_name" maxlength="150" autocomplete="organization" value="<?php echo htmlspecialchars((string)($existingOrganization['name'] ?? '')); ?>"></label>
-          <label><span>General company email</span><input class="input" type="email" name="organization_email" maxlength="255" autocomplete="email" value="<?php echo htmlspecialchars((string)($existingOrganization['general_email'] ?? '')); ?>"></label>
-          <label><span>General company phone</span><input class="input" name="organization_phone" maxlength="50" autocomplete="tel" value="<?php echo htmlspecialchars((string)($existingOrganization['general_phone'] ?? '')); ?>"></label>
+          <div class="onboarding-company-contact" data-company-contact-fields>
+            <div class="onboarding-section-heading">
+              <strong>General company contact <span class="onboarding-optional-badge">Optional</span></strong>
+              <span>Use these only if the organization has a shared inbox or main phone number. They do not replace your contact details above.</span>
+            </div>
+            <label><span class="onboarding-optional-label"><span>General company email</span><span class="onboarding-optional-badge">Not required</span></span><input class="input" type="email" name="organization_email" maxlength="255" autocomplete="section-company email" value="<?php echo htmlspecialchars((string)($existingOrganization['general_email'] ?? '')); ?>"></label>
+            <label><span class="onboarding-optional-label"><span>General company phone</span><span class="onboarding-optional-badge">Not required</span></span><input class="input" name="organization_phone" maxlength="50" autocomplete="section-company tel" value="<?php echo htmlspecialchars((string)($existingOrganization['general_phone'] ?? '')); ?>"></label>
+          </div>
         </div>
         <div style="grid-column:1/-1;font-weight:700;margin-top:4px">Billing address</div>
         <label style="grid-column:1/-1"><span>Address</span><input class="input" name="address_line1" maxlength="255" autocomplete="address-line1" value="<?php echo htmlspecialchars((string)($sharedAddress['address_line1'] ?? '')); ?>"></label>

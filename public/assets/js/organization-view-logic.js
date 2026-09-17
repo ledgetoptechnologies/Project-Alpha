@@ -1,3 +1,7 @@
+function isDepartmentModalOpen(modal) {
+    return Boolean(modal && modal.style.display === 'flex');
+}
+
 // Notes editing
 function toggleNotesEdit() {
     const display = document.getElementById('notesDisplay');
@@ -15,6 +19,9 @@ function toggleNotesEdit() {
 function openDepartmentModal(trigger) {
     const modal = document.getElementById('departmentModal');
     if (!modal) return;
+    window.__projectAlphaOrganizationViewDepartmentModalReturnFocus = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const title = document.getElementById('departmentModalTitle');
     const idInput = document.getElementById('departmentIdInput');
     const nameInput = document.getElementById('departmentNameInput');
@@ -41,6 +48,7 @@ function openDepartmentModal(trigger) {
     if (notesInput) notesInput.value = data ? String(data.notes || '') : '';
 
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
     const firstInput = nameInput || modal.querySelector('input[name="name"]');
     if (firstInput) firstInput.focus();
 }
@@ -48,13 +56,23 @@ function openDepartmentModal(trigger) {
 function closeDepartmentModal() {
     const modal = document.getElementById('departmentModal');
     if (!modal) return;
+    if (!isDepartmentModalOpen(modal)) return;
     modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+
+    const returnFocus = window.__projectAlphaOrganizationViewDepartmentModalReturnFocus;
+    window.__projectAlphaOrganizationViewDepartmentModalReturnFocus = null;
+    if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') {
+        returnFocus.focus();
+    }
 }
 
 if (!window.__projectAlphaOrganizationViewKeydownReady) {
     window.__projectAlphaOrganizationViewKeydownReady = true;
     document.addEventListener('keydown', function (event) {
         if (event.key !== 'Escape') return;
+        const modal = document.getElementById('departmentModal');
+        if (!isDepartmentModalOpen(modal)) return;
         closeDepartmentModal();
     });
 }
@@ -63,7 +81,7 @@ if (!window.__projectAlphaOrganizationViewClickReady) {
     window.__projectAlphaOrganizationViewClickReady = true;
     document.addEventListener('click', function (event) {
         const modal = document.getElementById('departmentModal');
-        if (!modal || modal.style.display !== 'flex') return;
+        if (!isDepartmentModalOpen(modal)) return;
         if (event.target === modal) closeDepartmentModal();
     });
 }

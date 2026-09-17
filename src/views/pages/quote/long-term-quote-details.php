@@ -2,6 +2,7 @@
 // src/views/pages/quote/long-term-quote-print.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/document_recipient.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 $id = (int)($_GET['id'] ?? 0);
@@ -12,7 +13,7 @@ require_once __DIR__ . '/../../../utils/document_pricing_adjustments.php';
 if (!defined('PDF_MODE') && !defined('PUBLIC_VIEW')) {
     require_record_ownership($pdo, 'quotes', $id);
 }
-$q = $pdo->prepare('SELECT q.*, cl.name client_name, cl.email client_email, cl.phone client_phone, cl.address_line1 client_address_line1, cl.address_line2 client_address_line2, cl.city client_city, cl.state client_state, cl.postal_code client_postal_code, cl.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM quotes q JOIN clients cl ON cl.id=q.client_id LEFT JOIN organizations o ON o.id=COALESCE(q.organization_id,cl.organization_id) WHERE q.id=? AND q.quote_type="long_term"');
+$q = $pdo->prepare('SELECT q.*, cl.name client_name, cl.email client_email, cl.phone client_phone, cl.address_line1 client_address_line1, cl.address_line2 client_address_line2, cl.city client_city, cl.state client_state, cl.postal_code client_postal_code, cl.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM quotes q JOIN clients cl ON cl.id=q.client_id' . pa_document_effective_organization_joins('q', 'cl') . ' WHERE q.id=? AND q.quote_type="long_term"');
 $q->execute([$id]);
 $quote = $q->fetch(PDO::FETCH_ASSOC);
 if(!$quote){ echo '<p>Long-term quote not found</p>'; return; }

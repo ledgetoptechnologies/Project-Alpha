@@ -1,6 +1,7 @@
 <?php
 // src/views/pages/contract/on-demand-contracts-list.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 
@@ -39,11 +40,11 @@ if(!in_array($per,[50,100],true)) $per=50;
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' LEFT JOIN clients c ON c.id=odc.client_id LEFT JOIN organizations o ON o.id=COALESCE(odc.organization_id,c.organization_id)';
+$documentJoins = ' LEFT JOIN clients c ON c.id=odc.client_id' . pa_document_effective_organization_joins('odc', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM contracts odc'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 
-$sql="SELECT odc.id, odc.doc_number, odc.project_code, odc.status, odc.start_date, odc.end_date, odc.billing_interval_count, odc.billing_interval_unit, odc.price_per_invoice, odc.subtotal, odc.total_invoiced, odc.invoice_count, odc.last_invoice_date, odc.signed_at, odc.signed_pdf_path, c.name client, c.id AS client_id, o.name organization_name FROM contracts odc{$documentJoins}";
+$sql="SELECT odc.id, odc.doc_number, odc.project_id, odc.project_code, odc.status, odc.start_date, odc.end_date, odc.billing_interval_count, odc.billing_interval_unit, odc.price_per_invoice, odc.subtotal, odc.total_invoiced, odc.invoice_count, odc.last_invoice_date, odc.signed_at, odc.signed_pdf_path, c.name client, c.id AS client_id, o.name organization_name, p.invoice_billing_period AS project_invoice_billing_period FROM contracts odc{$documentJoins} LEFT JOIN projects p ON p.id=odc.project_id";
 if($where){$sql.=' WHERE '.implode(' AND ',$where);} 
 $sql.=" ORDER BY odc.created_at DESC LIMIT $per OFFSET $offset";
 $st=$pdo->prepare($sql);$st->execute($p);$rows=$st->fetchAll();
@@ -216,7 +217,8 @@ $clients=$pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archive
                   }
                 ?>
                 <?php if ($canGenerate): ?>
-                <form method="post" action="/?page=on-demand-invoice-generate" class="od-generate-form" style="display:inline">
+                <?php $usesMonthlyProjectBilling = !empty($r['project_id']) && ($r['project_invoice_billing_period'] ?? '') === 'monthly'; ?>
+                <form method="post" action="/?page=on-demand-invoice-generate" class="od-generate-form" data-monthly-project-billing="<?php echo $usesMonthlyProjectBilling ? '1' : '0'; ?>" style="display:inline">
                   <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                   <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
                   <input type="hidden" name="generation_key" value="<?php echo bin2hex(random_bytes(16)); ?>">
@@ -254,11 +256,11 @@ $clients=$pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archive
     <div style="background:#fff;border-radius:8px;max-width:440px;width:100%;box-shadow:0 24px 70px rgba(15,23,42,0.25);border:1px solid #e5e7eb">
       <div style="padding:18px 20px;border-bottom:1px solid #e5e7eb">
         <h3 style="margin:0;font-size:18px">Generate On-Demand Invoice</h3>
-        <p style="margin:6px 0 0;color:#6b7280;font-size:14px">Choose whether to send the invoice now or generate it for review and edits first.</p>
+        <p id="odGenerateDescription" style="margin:6px 0 0;color:#6b7280;font-size:14px">Choose whether to send the invoice now or generate it for review and edits first.</p>
       </div>
       <div style="padding:18px 20px;display:grid;gap:10px">
-        <button type="button" onclick="submitOdGenerate(true)" style="width:100%;padding:11px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">Generate and Send Email</button>
-        <button type="button" onclick="submitOdGenerate(false)" style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-weight:600;cursor:pointer">Generate Only</button>
+        <button id="odGeneratePrimary" type="button" onclick="submitOdGenerate(true)" style="width:100%;padding:11px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">Generate and Send Email</button>
+        <button id="odGenerateDraft" type="button" onclick="submitOdGenerate(false)" style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-weight:600;cursor:pointer">Generate Only</button>
         <button type="button" onclick="closeOdGenerateModal()" style="width:100%;padding:11px 14px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;color:#6b7280;font-weight:600;cursor:pointer">Cancel</button>
       </div>
     </div>
@@ -268,6 +270,15 @@ $clients=$pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archive
     var odGenerateForm = null;
     function openOdGenerateModal(form) {
       odGenerateForm = form;
+      var monthly = form.dataset.monthlyProjectBilling === '1';
+      var description = document.getElementById('odGenerateDescription');
+      var primary = document.getElementById('odGeneratePrimary');
+      var draft = document.getElementById('odGenerateDraft');
+      if (description) description.textContent = monthly
+        ? 'Finalize this charge for the monthly project statement, or save a draft for review. Monthly charges are not emailed separately.'
+        : 'Choose whether to send the invoice now or generate it for review and edits first.';
+      if (primary) primary.textContent = monthly ? 'Finalize for Project Billing' : 'Generate and Send Email';
+      if (draft) draft.textContent = monthly ? 'Save Draft for Review' : 'Generate Only';
       var modal = document.getElementById('odGenerateModal');
       if (modal) modal.style.display = 'flex';
     }

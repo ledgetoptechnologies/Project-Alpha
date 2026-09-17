@@ -58,8 +58,7 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
           <div>
             <div style="font-weight:700">PI-<?php echo htmlspecialchars((string)($r['doc_number'] ?: $r['id'])); ?> - <?php echo htmlspecialchars($r['project_name']); ?></div>
             <div style="font-size:13px;color:var(--muted)">
-              <?php echo htmlspecialchars(date('M j, Y', strtotime($r['billing_period_start']))); ?> -
-              <?php echo htmlspecialchars(date('M j, Y', strtotime($r['billing_period_end']))); ?>
+              <?php echo htmlspecialchars(project_invoice_period_label($r)); ?>
               · <?php echo (int)$r['child_count']; ?> invoice(s)
               · <?php echo htmlspecialchars(ucfirst($r['status'])); ?>
             </div>

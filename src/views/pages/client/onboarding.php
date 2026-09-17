@@ -5,6 +5,8 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/client_onboarding.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 client_onboarding_revoke_stale($pdo);
 
@@ -133,6 +135,41 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
       gap: 8px;
       font-size: 13px;
     }
+    .onboarding-review-section {
+      grid-column: 1 / -1;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .onboarding-review-section:first-child {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+    .onboarding-review-section strong,
+    .onboarding-review-section span {
+      display: block;
+    }
+    .onboarding-review-section span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .onboarding-review-optional {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .onboarding-review-optional-title {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 12px;
+    }
     .onboarding-review-actions {
       display: flex;
       gap: 8px;
@@ -172,7 +209,7 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
       .onboarding-invite-actions { justify-content: stretch; }
       .onboarding-invite-actions .btn { flex: 1; }
       .onboarding-link-row { grid-template-columns: 1fr; }
-      .onboarding-review-fields, .onboarding-merge-list { grid-template-columns: 1fr; }
+      .onboarding-review-fields, .onboarding-review-optional, .onboarding-merge-list { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -278,13 +315,19 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
                     <div class="onboarding-review-box">
                       <strong>Review and edit submitted values</strong>
                       <div class="onboarding-review-fields" style="margin-top:10px">
+                        <div class="onboarding-review-section"><strong>Contact details</strong><span>Information for the person the business should contact.</span></div>
                         <label><span class="label-muted">Client type</span><select class="input" name="review_data[client_type]"><option value="consumer" <?php echo $proposalClientType === 'consumer' ? 'selected' : ''; ?>>Individual</option><option value="business" <?php echo $proposalClientType === 'business' ? 'selected' : ''; ?>>Organization</option></select></label>
                         <label><span class="label-muted">Contact name</span><input required class="input" name="review_data[name]" maxlength="150" value="<?php echo htmlspecialchars((string)($proposal['name'] ?? '')); ?>"></label>
-                        <label><span class="label-muted">Contact email</span><input type="email" class="input" name="review_data[email]" maxlength="255" value="<?php echo htmlspecialchars((string)($proposal['email'] ?? '')); ?>"></label>
+                        <label><span class="label-muted">Contact email</span><input type="email" required class="input" name="review_data[email]" maxlength="255" value="<?php echo htmlspecialchars((string)($proposal['email'] ?? '')); ?>"></label>
                         <label><span class="label-muted">Contact phone</span><input class="input" name="review_data[phone]" maxlength="50" value="<?php echo htmlspecialchars((string)($proposal['phone'] ?? '')); ?>"></label>
+                        <div class="onboarding-review-section"><strong>Organization details</strong><span>Company information remains separate from the contact above.</span></div>
                         <label><span class="label-muted">Organization name</span><input class="input" name="review_data[organization_name]" maxlength="150" value="<?php echo htmlspecialchars((string)($proposal['organization_name'] ?? '')); ?>"></label>
-                        <label><span class="label-muted">General company email</span><input type="email" class="input" name="review_data[organization_email]" maxlength="255" value="<?php echo htmlspecialchars((string)($proposal['organization_email'] ?? '')); ?>"></label>
-                        <label><span class="label-muted">General company phone</span><input class="input" name="review_data[organization_phone]" maxlength="50" value="<?php echo htmlspecialchars((string)($proposal['organization_phone'] ?? '')); ?>"></label>
+                        <div class="onboarding-review-optional">
+                          <div class="onboarding-review-optional-title"><strong>General company contact (optional)</strong> Shared company channels only; these do not replace the contact's email or phone.</div>
+                          <label><span class="label-muted">General company email (not required)</span><input type="email" class="input" name="review_data[organization_email]" maxlength="255" value="<?php echo htmlspecialchars((string)($proposal['organization_email'] ?? '')); ?>"></label>
+                          <label><span class="label-muted">General company phone (not required)</span><input class="input" name="review_data[organization_phone]" maxlength="50" value="<?php echo htmlspecialchars((string)($proposal['organization_phone'] ?? '')); ?>"></label>
+                        </div>
+                        <div class="onboarding-review-section"><strong>Billing address</strong><span>For an organization, this address is saved to both the organization and its contact.</span></div>
                         <?php foreach (['address_line1' => 'Address', 'address_line2' => 'Apartment / Suite / PO box', 'city' => 'City', 'state' => 'State', 'postal_code' => 'Postal code', 'country' => 'Country'] as $field => $label): ?>
                           <label><span class="label-muted"><?php echo htmlspecialchars($label); ?></span><input class="input" name="review_data[<?php echo htmlspecialchars($field); ?>]" maxlength="<?php echo in_array($field, ['address_line1','address_line2'], true) ? '255' : '100'; ?>" value="<?php echo htmlspecialchars((string)($proposal[$field] ?? '')); ?>"></label>
                         <?php endforeach; ?>
@@ -332,10 +375,12 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
                       <label style="display:block;margin-top:10px"><span class="label-muted">Review notes</span><textarea class="input" name="review_notes" rows="2"></textarea></label>
                       <div class="onboarding-review-actions">
                         <button class="btn btn-danger" name="decision" value="reject" formnovalidate>Reject</button>
+                        <?php if(!$directoryManagementStatus['effective']):?>
                         <button class="btn btn-primary" name="decision" value="approve" onclick="this.form.resolution.value='create'">Approve as New Client</button>
                         <?php if ($clientMatches): ?>
                           <button class="btn" name="decision" value="approve" onclick="this.form.resolution.value='keep_existing'">Keep Existing Client</button>
                           <button class="btn btn-primary" name="decision" value="approve" onclick="this.form.resolution.value='merge_existing'">Merge Selected Fields</button>
+                        <?php endif; ?>
                         <?php endif; ?>
                       </div>
                       <input type="hidden" name="resolution" value="">

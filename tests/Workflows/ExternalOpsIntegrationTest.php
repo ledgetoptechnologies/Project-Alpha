@@ -41,6 +41,9 @@ final class ExternalOpsIntegrationTest extends TestCase
         self::assertStringContainsString("'title' => 'Custom integrations'", $registry);
         self::assertStringContainsString("'permission' => 'settings.manage'", $registry);
         self::assertStringContainsString("\$action === 'save-config'", $handler);
+        self::assertStringContainsString('The integration database schema does not match this Project Alpha release.', $handler);
+        self::assertStringContainsString("error_code='.(string)\$error->getCode()", $handler);
+        self::assertStringNotContainsString('rawurlencode($error->getMessage())', $handler);
         self::assertStringContainsString('csrf_validate()', $handler);
         self::assertStringContainsString('name="access_client_secret"', $page);
         self::assertStringContainsString('name="hmac_secret"', $page);

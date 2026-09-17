@@ -6,6 +6,9 @@ require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'client','create')) { header('Location: /?page=client/clients-list&directory_managed=1'); exit; }
 
 $__orgId = request_client_org_id() ?: null;
 $__creator = (int)($_SESSION['user']['id'] ?? 0) ?: null;
@@ -58,6 +61,7 @@ try {
   audit_log($pdo, 'client.create', 'client', $client_id, ['organization_id' => $organization_id > 0 ? $organization_id : null, 'created_by' => $__creator]);
   $projection=new App\Services\PortalProjectionMutationService();
   $projection->afterMutation($pdo,$projection->clientScopes($pdo,$client_id));
+  api_v2_directory_record($pdo, 'client', $client_id);
   $pdo->commit();
 } catch (Throwable $error) {
   if ($pdo->inTransaction()) $pdo->rollBack();

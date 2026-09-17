@@ -37,7 +37,7 @@ $projectInvoiceStmt = $pdo->prepare("
   SELECT pi.id,pi.project_id,pi.doc_number,pi.total,pi.balance_due,pi.status,p.name AS project_name
   FROM project_invoices pi
   JOIN projects p ON p.id=pi.project_id
-  WHERE pi.status IN ('sent','unpaid','partial') AND pi.finalized_at IS NOT NULL AND pi.balance_due>0.005
+  WHERE pi.status IN ('sent','unpaid','partial','overdue') AND pi.finalized_at IS NOT NULL AND pi.balance_due>0.005
   {$projectScopeSql}
   ORDER BY pi.created_at DESC
   LIMIT 200

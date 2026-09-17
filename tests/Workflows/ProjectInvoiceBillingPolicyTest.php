@@ -43,7 +43,7 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         self::assertStringContainsString('$validRecipientCount === 0', $billing);
         self::assertStringContainsString('COALESCE(i.collection_mode, "direct") = "project_aggregate"', $billing);
         self::assertStringNotContainsString('ALTER TABLE public_links', $billing);
-        self::assertStringContainsString('No project invoice emails were sent.', $generator);
+        self::assertStringContainsString('project_invoice_send_email_result', $generator);
         self::assertStringNotContainsString('saved as a draft because', $generator);
         self::assertStringContainsString('project_invoice_has_saved_deliverable_recipient', $generator);
         self::assertStringContainsString('null, false, null, true', $generator);
@@ -63,6 +63,10 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         self::assertStringContainsString("'organization:' . \$organizationId", $billing);
         self::assertStringContainsString("\$row['notification_type'] === 'manual'", $notifications);
         self::assertStringContainsString("\$queuedEmail = trim", $notifications);
+        self::assertStringContainsString("'document_revision'", $notifications);
+        self::assertStringContainsString('function project_invoice_send_email_result', $billing);
+        self::assertStringContainsString("'already_sent' => 0", $billing);
+        self::assertStringContainsString('queued for retry', $billing);
         self::assertStringContainsString('name="recipient_keys[]"', $details);
         self::assertStringContainsString('saved project invoice recipients', $details);
     }
@@ -117,11 +121,23 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
             self::assertStringNotContainsString("\$_POST['project_invoice_manual_emails']", $controller);
         }
         self::assertStringContainsString('function project_invoice_generate_due_monthly_result', $billing);
+        self::assertStringContainsString('?DateTimeInterface $runAt = null', $billing);
+        self::assertStringContainsString('i.finalized_at IS NOT NULL', $billing);
+        self::assertStringContainsString('"sent", "unpaid", "partial", "overdue"', $billing);
+        self::assertStringNotContainsString('status IN ("active","not_started") AND invoice_billing_period', $billing);
+        self::assertGreaterThanOrEqual(3, substr_count($billing, 'COALESCE(disputed_amount,0)'));
+        self::assertStringContainsString('status IN ("unpaid","partial","sent","overdue","paid")', $billing);
+        $receivables = (string)file_get_contents($this->root . '/src/services/ProjectReceivablesSummaryService.php');
+        self::assertStringContainsString("status IN ('sent','unpaid','partial','overdue')", $receivables);
+        $paymentView = (string)file_get_contents($this->root . '/src/views/pages/payments/payments-create.php');
+        self::assertStringContainsString("pi.status IN ('sent','unpaid','partial','overdue')", $paymentView);
         self::assertStringContainsString("'delivery_failed' => 0", $billing);
         self::assertStringContainsString('has no valid saved recipient', $billing);
         self::assertStringContainsString('project_invoice_generate_due_monthly_result($pdo, $appConfig)', $cron);
         self::assertStringContainsString("\$errors += \$projectBillingResult['delivery_pending'] + \$projectBillingResult['delivery_failed']", $cron);
         self::assertStringContainsString('project delivery {$projectBillingResult[\'delivered\']} sent/', $cron);
+        self::assertStringContainsString('if ($errors > 0)', $cron);
+        self::assertStringContainsString('throw new RuntimeException($runResult)', $cron);
     }
 
     public function testMonthlyChildInvoiceActionsDescribeProjectBillingInsteadOfDirectEmail(): void
@@ -133,6 +149,8 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         $finalize = (string)file_get_contents($this->root . '/src/controllers/invoice/invoice_finalize.php');
         $createController = (string)file_get_contents($this->root . '/src/controllers/invoice/invoices_create.php');
         $projectDetails = (string)file_get_contents($this->root . '/src/views/pages/project/projects-details.php');
+        $onDemandList = (string)file_get_contents($this->root . '/src/views/pages/contract/on-demand-contracts-list.php');
+        $onDemandInvoices = (string)file_get_contents($this->root . '/src/views/pages/contract/on-demand-invoices-list.php');
 
         self::assertStringContainsString('data-invoice-billing-period=', $createView);
         self::assertStringContainsString('invoice_billing_period', $projectSearch);
@@ -150,6 +168,11 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         self::assertStringContainsString("&& \$invoiceCollectionMode === 'direct'", $details);
         self::assertStringContainsString("(\$invoice['collection_mode'] ?? 'direct') === 'direct'", $projectDetails);
         self::assertStringContainsString('Project statement billing', $projectDetails);
+        self::assertStringContainsString('data-monthly-project-billing=', $onDemandList);
+        self::assertStringContainsString("monthly ? 'Finalize for Project Billing'", $onDemandList);
+        self::assertStringContainsString('Finalize for Project Billing', $onDemandInvoices);
+        $notifications = (string)file_get_contents($this->root . '/src/utils/invoice_notifications.php');
+        self::assertStringContainsString("(\$invoice['collection_mode'] ?? 'direct') !== 'direct'", $notifications);
     }
 
     public function testAggregatePaymentMethodsPreserveConfiguredKeysAndAllocationIsAtomic(): void
@@ -162,10 +185,36 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         $controller = (string)file_get_contents($this->root . '/src/controllers/payments_create.php');
         $paymentView = (string)file_get_contents($this->root . '/src/views/pages/payments/payments-create.php');
         self::assertStringContainsString('$ownsTransaction = !$pdo->inTransaction();', $billing);
-        self::assertStringContainsString('status IN ("unpaid","partial","sent","paid") FOR UPDATE', $billing);
+        self::assertStringContainsString('status IN ("unpaid","partial","sent","overdue","paid") FOR UPDATE', $billing);
         self::assertStringContainsString('UPDATE project_invoice_payments SET status="succeeded"', $billing);
         self::assertStringContainsString('receipt failed after commit', $controller);
         self::assertStringContainsString('[$projectScopeWhere, $projectScopeParams] = scope_clause', $paymentView);
         self::assertStringContainsString('id="noStaffPaymentMethodNotice"', $paymentView);
+    }
+
+    public function testProjectStatementGenerationUsesLockedExplicitLifecycleResults(): void
+    {
+        $billing = (string)file_get_contents($this->root . '/src/utils/project_invoice_billing.php');
+        $baseline = (string)file_get_contents($this->root . '/database/baseline.sql');
+        $generator = (string)file_get_contents($this->root . '/src/controllers/project/project_invoice_generate.php');
+        $notifications = (string)file_get_contents($this->root . '/src/utils/project_invoice_notifications.php');
+
+        self::assertStringContainsString('function project_invoice_create_for_period_result', $billing);
+        self::assertStringContainsString("'status' => 'empty'", $billing);
+        self::assertStringContainsString("'status' => 'existing'", $billing);
+        self::assertStringContainsString("'status' => 'created'", $billing);
+        self::assertStringContainsString('SELECT * FROM projects WHERE id = ? FOR UPDATE', $billing);
+        self::assertStringContainsString('billing_period_end=?', $billing);
+        self::assertStringContainsString('MAX(billing_period_end)', $billing);
+        self::assertStringContainsString('pii.id IS NULL', $billing);
+        self::assertStringContainsString('invoice_date ASC', $billing);
+        self::assertStringNotContainsString('BETWEEN ? AND ?', $billing);
+        self::assertStringContainsString('uq_project_invoice_period', $baseline);
+        self::assertStringContainsString('uq_project_invoice_child_invoice', $baseline);
+        self::assertStringContainsString('project_invoice_create_for_period_result', $generator);
+        self::assertStringContainsString("'existing=1'", $generator);
+        self::assertStringContainsString('no outstanding balance', strtolower($billing));
+        self::assertStringContainsString('no longer eligible for email delivery', strtolower($notifications));
+        self::assertStringContainsString('no longer eligible for reminders', strtolower($notifications));
     }
 }

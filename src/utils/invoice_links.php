@@ -63,7 +63,7 @@ function pa_invoice_links_for_project_invoice(PDO $pdo, int $projectInvoiceId, ?
     return pa_invoice_links_for_context(
         $pdo,
         (int)$invoice['project_id'],
-        (int)($invoice['organization_id'] ?: $invoice['project_organization_id'] ?: 0) ?: null,
+        (int)($invoice['project_organization_id'] ?: $invoice['organization_id'] ?: 0) ?: null,
         (int)($invoice['department_id'] ?? 0) ?: null,
         (int)($invoice['primary_client_id'] ?? 0) ?: null,
         $recipientClientIds
@@ -96,7 +96,7 @@ function pa_invoice_links_for_invoice(PDO $pdo, int $invoiceId): array
     return pa_invoice_links_for_context(
         $pdo,
         (int)($invoice['project_id'] ?? 0) ?: null,
-        (int)($invoice['organization_id'] ?: $invoice['project_organization_id'] ?: $invoice['client_organization_id'] ?: 0) ?: null,
+        (int)($invoice['project_organization_id'] ?: $invoice['organization_id'] ?: $invoice['client_organization_id'] ?: 0) ?: null,
         (int)($invoice['department_id'] ?? 0) ?: null,
         (int)($invoice['client_id'] ?? 0) ?: null,
         null

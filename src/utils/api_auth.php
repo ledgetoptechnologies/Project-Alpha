@@ -1,7 +1,9 @@
 <?php
 // src/utils/api_auth.php
 if (!defined('PA_STATELESS_API_NO_SESSION') && session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
-require_once __DIR__ . '/../config/db.php';
+if (!isset($pdo) || !($pdo instanceof PDO)) {
+    require_once __DIR__ . '/../config/db.php';
+}
 require_once __DIR__ . '/api_keys_schema.php';
 require_once __DIR__ . '/api_scopes.php';
 require_once __DIR__ . '/api_ip_allowlist.php';
@@ -93,6 +95,9 @@ function api_require_key(
         return $row;
     }catch(Throwable$e){
         if($integrationAudit!==[])$auditDeny(503,'AUTHENTICATION_UNAVAILABLE','API auth error');
+        if (defined('PA_STATELESS_API_NO_SESSION') && PA_STATELESS_API_NO_SESSION) {
+            api_json_error(503, 'API auth unavailable');
+        }
         api_json_error(500,'API auth error');
     }
 }

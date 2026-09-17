@@ -4,6 +4,7 @@
 # These fixtures are byte-pinned to the LTDS compatibility corpus.
 tests/fixtures/project-alpha-portal-v2.json text eol=lf
 tests/fixtures/project-alpha-portal-relations-v3.json text eol=lf
+tests/fixtures/project-alpha-portal-contact-assignments-v4.json text eol=lf
 tests/fixtures/project-alpha-catalog-v2.json text eol=lf
 tests/fixtures/project-alpha-pricing-hint-v1.json text eol=lf
 tests/fixtures/project-alpha-draft-quote-v1.json text eol=lf

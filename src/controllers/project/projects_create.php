@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/ScheduleService.php';
 require_once __DIR__ . '/../../utils/external_ops.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../services/ProjectRevisionService.php';
 
 $__orgId = request_client_org_id() ?: null;
 $__creator = (int)($_SESSION['user']['id'] ?? 0) ?: null;
@@ -241,6 +242,7 @@ project_invoice_sync_recipients(
 	$useOrganizationInvoiceEmail ? [$organization_id] : []
 );
 audit_log($pdo, 'project.create', 'project', $project_id, ['client_id' => $client_id > 0 ? $client_id : null, 'organization_id' => $organization_id > 0 ? $organization_id : null, 'department_id' => $department_id > 0 ? $department_id : null, 'business_unit_id' => $businessUnitId > 0 ? $businessUnitId : null, 'manager_user_id' => $managerUserId > 0 ? $managerUserId : null, 'created_by' => $__creator]);
+(new \App\Services\ProjectRevisionService($pdo))->initialize($project_id, 'create', null, null, $__creator);
 ScheduleService::syncProject($pdo, $project_id, (string)($appConfig['timezone'] ?? 'UTC'), $__creator);
 $opsConfig=pa_external_ops_delivery_config($pdo);
 if(!empty($opsConfig['enabled'])){

@@ -207,13 +207,71 @@ foreach ($savedProjectInvoiceRecipients as $recipient) {
     ];
 }
 
-$autoEmailEnabled = !array_key_exists('project_invoice_auto_email', $project) || !empty($project['project_invoice_auto_email']);
+$currentBillingPeriod = (string)($project['invoice_billing_period'] ?? 'per_invoice');
+$autoEmailEnabled = $currentBillingPeriod === 'monthly'
+    && (!array_key_exists('project_invoice_auto_email', $project) || !empty($project['project_invoice_auto_email']));
+$billingTransitionImpact = [
+    'count' => 0,
+    'draft_count' => 0,
+    'finalized_count' => 0,
+    'balance' => 0.0,
+    'statement_count' => 0,
+    'statement_balance' => 0.0,
+];
+try {
+    $impactStmt = $pdo->prepare('
+        SELECT i.status, i.total,
+               COALESCE((
+                   SELECT SUM(
+                       CASE
+                           WHEN pay.amount - COALESCE(pay.refunded_amount, 0) - COALESCE(pay.disputed_amount, 0) > 0
+                           THEN pay.amount - COALESCE(pay.refunded_amount, 0) - COALESCE(pay.disputed_amount, 0)
+                           ELSE 0
+                       END
+                   )
+                   FROM payments pay
+                   WHERE pay.invoice_id = i.id AND pay.status = "succeeded"
+               ), 0) AS effective_amount_paid
+        FROM invoices i
+        LEFT JOIN project_invoice_items pii ON pii.invoice_id = i.id
+        WHERE i.project_id = ?
+          AND COALESCE(i.collection_mode, "direct") = "project_aggregate"
+          AND pii.invoice_id IS NULL
+          AND i.status NOT IN ("paid", "void", "cancelled")
+    ');
+    $impactStmt->execute([$projectId]);
+    foreach ($impactStmt->fetchAll(PDO::FETCH_ASSOC) as $impactInvoice) {
+        $balance = max(0.0, (float)($impactInvoice['total'] ?? 0) - (float)($impactInvoice['effective_amount_paid'] ?? 0));
+        if ($balance <= 0.005) {
+            continue;
+        }
+        $billingTransitionImpact['count']++;
+        $billingTransitionImpact['balance'] += $balance;
+        if (strtolower((string)($impactInvoice['status'] ?? '')) === 'draft') {
+            $billingTransitionImpact['draft_count']++;
+        } else {
+            $billingTransitionImpact['finalized_count']++;
+        }
+    }
+    $statementImpactStmt = $pdo->prepare('
+        SELECT COUNT(*) AS statement_count, COALESCE(SUM(balance_due), 0) AS statement_balance
+        FROM project_invoices
+        WHERE project_id = ? AND status NOT IN ("paid", "void", "cancelled")
+    ');
+    $statementImpactStmt->execute([$projectId]);
+    $statementImpact = $statementImpactStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $billingTransitionImpact['statement_count'] = (int)($statementImpact['statement_count'] ?? 0);
+    $billingTransitionImpact['statement_balance'] = (float)($statementImpact['statement_balance'] ?? 0);
+} catch (Throwable $billingTransitionLoadError) {
+    error_log('[projects-edit] billing transition preview unavailable: ' . $billingTransitionLoadError->getMessage());
+}
 $publicProjectUrl = pa_project_public_url($appConfig ?? [], (string)($project['public_project_token'] ?? ''));
 $publicProjectHasCode = trim((string)($project['public_project_password_hash'] ?? '')) !== '';
 ?>
 
 <style>
 .project-edit-page{max-width:1120px;margin:0 auto;padding:24px}.project-edit-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.project-edit-header h1{margin:0;font-size:26px}.project-edit-subtitle{margin-top:4px;color:var(--muted);font-size:13px}.project-edit-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start}.project-edit-nav{position:sticky;top:16px;display:grid;gap:8px;border:1px solid #dfe3e8;border-radius:8px;background:#fff;padding:10px}.project-edit-nav a{padding:9px 10px;border-radius:6px;text-decoration:none;color:#111827;font-weight:650;font-size:13px}.project-edit-nav a:hover{background:#f3f4f6}.project-edit-form{display:grid;gap:16px}.project-edit-section{border:1px solid #dfe3e8;border-radius:8px;background:#fff;padding:16px;display:grid;gap:12px}.project-edit-section h2{margin:0;font-size:17px}.project-edit-section p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.project-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.project-field{display:grid;gap:5px}.project-field>span,.project-field>div:first-child{font-size:13px;font-weight:700}.project-field input,.project-field select,.project-field textarea{width:100%;padding:9px 10px;border:1px solid #cfd5dc;border-radius:6px;background:#fff}.project-field small{color:var(--muted);font-size:12px;line-height:1.4}.project-check{display:flex;align-items:flex-start;gap:8px;font-size:13px}.project-check input{width:auto;margin-top:2px}.project-info-box{padding:10px 12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;color:#1e3a8a;font-size:12px;line-height:1.45}.project-pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700;background:#dbeafe;color:#1d4ed8;white-space:nowrap}.project-pill--primary{background:#dcfce7;color:#166534}.project-settings-picker{display:grid;gap:8px}.project-settings-picker__selected{display:grid;gap:8px;min-height:42px}.project-settings-picker__empty{padding:10px;border:1px dashed #d1d5db;border-radius:8px;color:var(--muted);background:#fff;font-size:13px}.project-settings-picker__item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid #dfe3e8;border-radius:8px;background:#fff}.project-settings-picker__name{font-weight:700}.project-settings-picker__meta{display:block;color:var(--muted);font-size:12px;margin-top:2px}.project-settings-picker__remove{border:0;background:#f3f4f6;color:#111827;border-radius:999px;width:28px;height:28px;cursor:pointer;font-weight:800}.project-settings-picker__search{position:relative}.project-settings-picker__suggestions{position:absolute;left:0;right:0;top:100%;z-index:40;display:none;max-height:210px;overflow:auto;border:1px solid #dfe3e8;border-radius:8px;background:#fff;box-shadow:0 12px 24px rgba(15,23,42,.12)}.project-settings-picker__suggestion{padding:9px 10px;border-bottom:1px solid #eef2f7;cursor:pointer}.project-settings-picker__suggestion:hover{background:#f8fafc}.project-edit-actions{position:sticky;bottom:12px;z-index:5;display:flex;justify-content:flex-end;gap:8px;padding:12px;border:1px solid #dfe3e8;border-radius:8px;background:rgba(255,255,255,.96);box-shadow:0 10px 24px rgba(15,23,42,.12)}@media(max-width:900px){.project-edit-layout{grid-template-columns:1fr}.project-edit-nav{position:static;display:flex;flex-wrap:wrap}.project-edit-grid{grid-template-columns:1fr}}@media(max-width:640px){.project-edit-page{padding:16px}.project-edit-header{display:grid}.project-edit-actions{position:static;display:grid}}
+.project-billing-transition{display:grid;gap:12px;padding:14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb}.project-billing-transition[hidden]{display:none}.project-billing-transition__summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.project-billing-transition__metric{padding:10px;border:1px solid #fde68a;border-radius:7px;background:#fff}.project-billing-transition__metric strong{display:block;font-size:18px}.project-billing-choice{display:flex;align-items:flex-start;gap:9px;padding:11px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}.project-billing-choice input{margin-top:3px}.project-billing-choice small{display:block;margin-top:3px;color:var(--muted);line-height:1.4}.project-billing-link-note{padding:10px 12px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4;color:#166534;font-size:12px;line-height:1.45}@media(max-width:640px){.project-billing-transition__summary{grid-template-columns:1fr}}
 </style>
 
 <div class="project-edit-page">
@@ -240,7 +298,7 @@ $publicProjectHasCode = trim((string)($project['public_project_password_hash'] ?
       <a href="#project-public-link">Public Link</a>
     </nav>
 
-    <form method="post" action="/?page=project/projects-update" class="project-edit-form">
+    <form method="post" action="/?page=project/projects-update" class="project-edit-form" data-project-billing-transition>
       <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
       <input type="hidden" name="id" value="<?php echo $projectId; ?>">
       <input type="hidden" name="organization_id" value="<?php echo (int)($project['organization_id'] ?? 0); ?>">
@@ -354,17 +412,55 @@ $publicProjectHasCode = trim((string)($project['public_project_password_hash'] ?
         <div class="project-edit-grid">
           <label class="project-field">
             <span>Billing Period</span>
-            <select name="invoice_billing_period">
+            <select name="invoice_billing_period" data-project-billing-period data-original-billing-period="<?php echo htmlspecialchars($currentBillingPeriod, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>">
               <option value="monthly" <?php echo ($project['invoice_billing_period'] ?? 'monthly') === 'monthly' ? 'selected' : ''; ?>>Monthly project billing</option>
               <option value="per_invoice" <?php echo ($project['invoice_billing_period'] ?? '') === 'per_invoice' ? 'selected' : ''; ?>>Each invoice on its own</option>
             </select>
+            <input type="hidden" name="invoice_billing_period_original" value="<?php echo htmlspecialchars($currentBillingPeriod, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>">
+            <input type="hidden" name="monthly_auto_email_confirmed" value="0" data-monthly-auto-email-confirmed>
           </label>
           <label class="project-field">
             <span>Project NET Days</span>
             <input type="number" min="0" step="1" name="invoice_net_terms_days" value="<?php echo htmlspecialchars((string)($project['invoice_net_terms_days'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>" placeholder="System default">
           </label>
         </div>
-        <label class="project-check">
+        <?php if ($currentBillingPeriod === 'monthly' || (int)$billingTransitionImpact['count'] > 0): ?>
+        <fieldset class="project-billing-transition" data-billing-transition-panel data-has-unresolved="<?php echo (int)$billingTransitionImpact['count'] > 0 ? '1' : '0'; ?>">
+          <legend style="font-weight:800;padding:0 5px"><?php echo $currentBillingPeriod === 'monthly' ? 'Review monthly invoices before switching' : 'Resolve invoices from previous monthly billing'; ?></legend>
+          <p><?php echo $currentBillingPeriod === 'monthly' ? 'Changing to per-invoice billing affects future invoices.' : 'This Project already uses per-invoice billing, but invoices from its previous monthly setting still need a collection path.'; ?> Existing Project Invoices remain available and payable, and their public links are not revoked, rotated, or replaced.</p>
+          <div class="project-billing-transition__summary" aria-label="Billing transition impact">
+            <div class="project-billing-transition__metric"><strong><?php echo (int)$billingTransitionImpact['count']; ?></strong><span>unassigned monthly invoice(s)</span></div>
+            <div class="project-billing-transition__metric"><strong>$<?php echo number_format((float)$billingTransitionImpact['balance'], 2); ?></strong><span>outstanding to resolve</span></div>
+            <div class="project-billing-transition__metric"><strong><?php echo (int)$billingTransitionImpact['draft_count']; ?> / <?php echo (int)$billingTransitionImpact['finalized_count']; ?></strong><span>draft / finalized</span></div>
+          </div>
+          <?php if ((int)$billingTransitionImpact['statement_count'] > 0): ?>
+            <div class="project-info-box"><?php echo (int)$billingTransitionImpact['statement_count']; ?> existing open Project Invoice(s), with $<?php echo number_format((float)$billingTransitionImpact['statement_balance'], 2); ?> due, remain unchanged and continue using their current links.</div>
+          <?php endif; ?>
+          <div style="font-weight:700">Resolve all unassigned monthly invoices together</div>
+          <label class="project-billing-choice">
+            <input type="radio" name="billing_transition_strategy" value="final_project_statement" checked>
+            <span><strong>Create one final Project Invoice</strong><small>Collect every eligible unassigned monthly invoice into one closing statement before applying per-invoice billing.</small></span>
+          </label>
+          <label class="project-billing-choice">
+            <input type="radio" name="billing_transition_strategy" value="convert_to_direct">
+            <span><strong>Convert them to individual invoices</strong><small>Keep their existing numbers, balances, content, payments, and links, but make each invoice independently collectible.</small></span>
+          </label>
+          <div style="font-weight:700">Delivery</div>
+          <label class="project-billing-choice">
+            <input type="radio" name="delivery_action" value="review" checked>
+            <span><strong>Review before sending</strong><small>Complete the transition without emailing clients automatically.</small></span>
+          </label>
+          <label class="project-billing-choice">
+            <input type="radio" name="delivery_action" value="send_all">
+            <span><strong>Send after the transition</strong><small>Email the resulting statement or converted invoices to valid saved recipients. Invalid recipients are reported before delivery.</small></span>
+          </label>
+          <div class="project-billing-link-note"><strong>Existing links stay valid.</strong> This billing preference change does not revoke, expire, regenerate, or replace existing invoice, Project Invoice, content, or payment links.</div>
+        </fieldset>
+        <?php else: ?>
+          <input type="hidden" name="billing_transition_strategy" value="final_project_statement">
+          <input type="hidden" name="delivery_action" value="review">
+        <?php endif; ?>
+        <label class="project-check" data-monthly-auto-email>
           <input type="checkbox" name="project_invoice_auto_email" value="1" <?php echo $autoEmailEnabled ? 'checked' : ''; ?>>
           <span>
             <strong>Automatically email monthly project invoices</strong>

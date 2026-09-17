@@ -7,6 +7,7 @@ require_once __DIR__ . '/invoice_lifecycle.php';
 require_once __DIR__ . '/project_billing.php';
 require_once __DIR__ . '/invoice_notifications.php';
 require_once __DIR__ . '/document_pricing_adjustments.php';
+require_once __DIR__ . '/document_organization.php';
 require_once __DIR__ . '/../services/DocumentRevisionService.php';
 
 function pa_recurring_money_to_minor(string $amount): int
@@ -77,7 +78,7 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
         $clientId = $contract['client_id'];
         $projectCode = $contract['project_code'];
         $projectId = !empty($contract['project_id']) ? (int)$contract['project_id'] : null;
-        $organizationId = !empty($contract['organization_id']) ? (int)$contract['organization_id'] : null;
+        $organizationId = pa_document_effective_organization_id($pdo, 'contract', (int)$contractId);
         $createdBy = !empty($contract['created_by']) ? (int)$contract['created_by'] : null;
 
         // Calculate invoice amount
@@ -158,15 +159,16 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
 
         // Create invoice
         $documentDate = $today;
-        $paymentTermsDays = project_invoice_terms_days($pdo, $projectId, $appConfig);
-        $dueDate = project_invoice_due_date($pdo, $projectId, $appConfig, $documentDate);
+        $projectBillingContext = project_invoice_billing_context($pdo, $projectId, $appConfig, $documentDate, true);
+        $paymentTermsDays = (int)$projectBillingContext['net_terms_days'];
+        $dueDate = (string)$projectBillingContext['due_date'];
 
         $insertInvoice = $pdo->prepare('
             INSERT INTO invoices (
                 contract_id, quote_id, client_id, project_id, job_id, service_location_id, project_code, organization_id, show_contact_on_document, created_by, invoice_type, document_date,
                 discount_type, discount_value, tax_percent,
-                subtotal, total, amount_paid, balance_due, status, due_date, payment_terms_days, due_date_source, finalized_at, finalization_source, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, "terms", NOW(), "recurring_schedule", NOW())
+                subtotal, total, amount_paid, balance_due, status, due_date, payment_terms_days, due_date_source, finalized_at, finalization_source, created_at, collection_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, "terms", NOW(), "recurring_schedule", NOW(), ?)
         ');
 
         $insertInvoice->execute([
@@ -190,16 +192,11 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
             $total,
             'unpaid',
             $dueDate,
-            $paymentTermsDays
+            $paymentTermsDays,
+            $projectBillingContext['collection_mode']
         ]);
 
         $invoiceId = (int)$pdo->lastInsertId();
-        if ($projectId) {
-            require_once __DIR__ . '/project_billing.php';
-            if (project_uses_monthly_invoice_billing($pdo, $projectId)) {
-                $pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$invoiceId]);
-            }
-        }
 
         // Assign doc number
         $docNumber = pa_next_invoice_doc_number($pdo, 'long_term');
@@ -353,6 +350,7 @@ function generate_recurring_proration_invoice(
         if (!$contract) {
             throw new RuntimeException('Recurring service not found for proration.');
         }
+        $organizationId = pa_document_effective_organization_id($pdo, 'contract', $contractId);
         if($generationKey!==null){$existing=$pdo->prepare('SELECT id FROM invoices WHERE contract_id=? AND generation_key=? LIMIT 1');$existing->execute([$contractId,$generationKey]);$existingId=(int)$existing->fetchColumn();if($existingId>0){if($ownsTransaction)$pdo->commit();return$existingId;}}
 
         $discount = 0.0;
@@ -364,14 +362,16 @@ function generate_recurring_proration_invoice(
         $taxable = max(0, $subtotal - $discount);
         $tax = max(0, (float)$contract['tax_percent']) * $taxable / 100;
         $total = max(0, $taxable + $tax);
-        $dueDate = date('Y-m-d', strtotime('+' . max(0, (int)($appConfig['net_terms_days'] ?? 30)) . ' days'));
+        $projectId = !empty($contract['project_id']) ? (int)$contract['project_id'] : null;
+        $projectBillingContext = project_invoice_billing_context($pdo, $projectId, $appConfig, date('Y-m-d'), true);
+        $dueDate = (string)$projectBillingContext['due_date'];
 
         $insert = $pdo->prepare('
             INSERT INTO invoices
                 (contract_id,quote_id,client_id,project_id,job_id,service_location_id,project_code,organization_id,show_contact_on_document,created_by,invoice_type,
-                 discount_type,discount_value,tax_percent,subtotal,total,balance_due,status,due_date,
-                 finalized_at,finalization_source,generated_at,created_at,generation_key)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),"amendment_proration",NOW(),NOW(),?)
+                 discount_type,discount_value,tax_percent,subtotal,total,balance_due,status,due_date,payment_terms_days,due_date_source,
+                 finalized_at,finalization_source,generated_at,created_at,generation_key,collection_mode)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"terms",NOW(),"amendment_proration",NOW(),NOW(),?,?)
         ');
         $insert->execute([
             $contractId,
@@ -381,7 +381,7 @@ function generate_recurring_proration_invoice(
             !empty($contract['job_id']) ? (int)$contract['job_id'] : null,
             !empty($contract['service_location_id']) ? (int)$contract['service_location_id'] : null,
             $contract['project_code'] ?? null,
-            !empty($contract['organization_id']) ? (int)$contract['organization_id'] : null,
+            $organizationId,
             (int)($contract['show_contact_on_document'] ?? 0),
             !empty($contract['created_by']) ? (int)$contract['created_by'] : null,
             'long_term',
@@ -393,7 +393,9 @@ function generate_recurring_proration_invoice(
             $total,
             'unpaid',
             $dueDate,
+            $projectBillingContext['net_terms_days'],
             $generationKey,
+            $projectBillingContext['collection_mode'],
         ]);
         $invoiceId = (int)$pdo->lastInsertId();
         $docNumber = pa_next_invoice_doc_number($pdo, 'long_term');
@@ -403,15 +405,8 @@ function generate_recurring_proration_invoice(
         $pdo->prepare('INSERT INTO invoice_items (invoice_id,item,description,quantity,unit_price,line_total) VALUES (?,?,?,?,?,?)')
             ->execute([$invoiceId, (string)$contract['service_name'], $lineDescription, 1, $subtotal, $subtotal]);
 
-        if (!empty($contract['project_id'])) {
-            require_once __DIR__ . '/project_billing.php';
-            if (project_uses_monthly_invoice_billing($pdo, (int)$contract['project_id'])) {
-                $pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$invoiceId]);
-            }
-        }
-
         pricing_finalize_derived_document_revision(
-            $pdo,!empty($contract['organization_id'])?(int)$contract['organization_id']:null,'invoice',$invoiceId,
+            $pdo,$organizationId,'invoice',$invoiceId,
             !empty($contract['created_by'])?(int)$contract['created_by']:null,(string)($appConfig['workforce_currency']??'USD'),
             'contract',$contractId,pricing_contract_source_revision($contract)
         );

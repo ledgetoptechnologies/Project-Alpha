@@ -13,6 +13,7 @@ function permission_catalog(): array
         'Jobs'          => ['jobs.view','jobs.edit','jobs.search'],
         'Organizations' => ['organizations.view','organizations.manage','organizations.delete'],
         'Public Links'  => ['public_links.view','public_links.create','public_links.revoke','public_links.manage'],
+        'Client Portal' => ['portal_service_assignments.manage'],
         'Timekeeping'   => ['timekeeping.self','timekeeping.manage'],
         'Workforce'     => [
             'workforce.manage',

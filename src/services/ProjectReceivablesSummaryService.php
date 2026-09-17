@@ -15,25 +15,25 @@ final class ProjectReceivablesSummaryService
     }
 
     /**
-     * @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}
+     * @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},pending_project_charges:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}
      */
     public function summarize(int $projectId): array
     {
         return $this->summarizeFor($projectId);
     }
 
-    /** @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}} */
+    /** @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},pending_project_charges:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}} */
     public function summarizeAll(): array
     {
         return $this->summarizeFor(null);
     }
 
     /**
-     * Batch summary for list views. It always performs at most two balance
+     * Batch summary for list views. It always performs at most three balance
      * queries and returns a zero summary for every requested Project id.
      *
      * @param list<int> $projectIds
-     * @return array<int,array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}>
+     * @return array<int,array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},pending_project_charges:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}>
      */
     public function summarizeProjects(array $projectIds): array
     {
@@ -51,9 +51,14 @@ final class ProjectReceivablesSummaryService
             'direct_invoices' => "SELECT project_id,balance_due FROM invoices
                 WHERE project_id IN ({$placeholders}) AND collection_mode='direct' AND finalized_at IS NOT NULL
                   AND status IN ('sent','unpaid','partial','overdue') AND balance_due>0.005",
+            'pending_project_charges' => "SELECT i.project_id,i.balance_due FROM invoices i
+                WHERE i.project_id IN ({$placeholders}) AND i.collection_mode='project_aggregate'
+                  AND i.finalized_at IS NOT NULL AND i.status IN ('sent','unpaid','partial','overdue')
+                  AND i.balance_due>0.005
+                  AND NOT EXISTS (SELECT 1 FROM project_invoice_items pii WHERE pii.invoice_id=i.id)",
             'project_invoices' => "SELECT project_id,balance_due FROM project_invoices
                 WHERE project_id IN ({$placeholders}) AND finalized_at IS NOT NULL
-                  AND status IN ('sent','unpaid','partial') AND balance_due>0.005",
+                  AND status IN ('sent','unpaid','partial','overdue') AND balance_due>0.005",
         ];
         foreach ($sources as $source => $sql) {
             $statement = $this->pdo->prepare($sql);
@@ -77,7 +82,7 @@ final class ProjectReceivablesSummaryService
     }
 
     /**
-     * @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}
+     * @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},pending_project_charges:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}}
      */
     private function summarizeFor(?int $projectId): array
     {
@@ -88,17 +93,25 @@ final class ProjectReceivablesSummaryService
              WHERE {$projectPredicate} AND collection_mode='direct' AND finalized_at IS NOT NULL
                AND status IN ('sent','unpaid','partial','overdue') AND balance_due>0.005"
         , $parameters);
+        $pendingAggregate = $this->collect(
+            "SELECT i.balance_due FROM invoices i
+             WHERE " . ($projectId === null ? '1=1' : 'i.project_id=?') . "
+               AND i.collection_mode='project_aggregate' AND i.finalized_at IS NOT NULL
+               AND i.status IN ('sent','unpaid','partial','overdue') AND i.balance_due>0.005
+               AND NOT EXISTS (SELECT 1 FROM project_invoice_items pii WHERE pii.invoice_id=i.id)"
+        , $parameters);
         $aggregate = $this->collect(
             "SELECT balance_due FROM project_invoices
              WHERE {$projectPredicate} AND finalized_at IS NOT NULL
-               AND status IN ('sent','unpaid','partial') AND balance_due>0.005"
+               AND status IN ('sent','unpaid','partial','overdue') AND balance_due>0.005"
         , $parameters);
-        $totalMinor = $direct['amount_minor'] + $aggregate['amount_minor'];
+        $totalMinor = $direct['amount_minor'] + $pendingAggregate['amount_minor'] + $aggregate['amount_minor'];
         return [
             'has_outstanding' => $totalMinor > 0,
             'total_minor' => $totalMinor,
             'sources' => [
                 'direct_invoices' => $direct,
+                'pending_project_charges' => $pendingAggregate,
                 'project_invoices' => $aggregate,
             ],
         ];
@@ -132,7 +145,7 @@ final class ProjectReceivablesSummaryService
         return ((int)$matches[1] * 100) + (int)$fraction;
     }
 
-    /** @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}} */
+    /** @return array{has_outstanding:bool,total_minor:int,sources:array{direct_invoices:array{count:int,amount_minor:int},pending_project_charges:array{count:int,amount_minor:int},project_invoices:array{count:int,amount_minor:int}}} */
     private static function emptySummary(): array
     {
         return [
@@ -140,6 +153,7 @@ final class ProjectReceivablesSummaryService
             'total_minor' => 0,
             'sources' => [
                 'direct_invoices' => ['count' => 0, 'amount_minor' => 0],
+                'pending_project_charges' => ['count' => 0, 'amount_minor' => 0],
                 'project_invoices' => ['count' => 0, 'amount_minor' => 0],
             ],
         ];

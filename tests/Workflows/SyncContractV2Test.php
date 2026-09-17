@@ -70,8 +70,17 @@ final class SyncContractV2Test extends TestCase
 
         $client = $this->itemByType($items, 'client');
         self::assertSame('10', $client['resource']['id']);
+        self::assertSame(str_repeat('b', 32), $client['data']['public_id']);
         self::assertSame('1', $client['data']['organization_id']);
         self::assertFalse($client['data']['archived']);
+
+        $organization = $this->itemByType($items, 'organization');
+        self::assertSame(str_repeat('a', 32), $organization['data']['public_id']);
+
+        $project = $this->itemByType($items, 'project');
+        self::assertSame(str_repeat('c', 32), $project['data']['public_id']);
+        self::assertSame('10', $project['data']['client_id']);
+        self::assertSame('1', $project['data']['organization_id']);
 
         $job = $this->itemByType($items, 'job');
         self::assertSame('40', $job['resource']['id']);
@@ -93,6 +102,29 @@ final class SyncContractV2Test extends TestCase
             self::assertStringNotContainsString($forbiddenField, $serialized);
         }
         self::assertSame(5, (int)$this->pdo->query('SELECT COUNT(*) FROM sync_resource_state')->fetchColumn());
+    }
+
+    public function testSourcePublicIdsFailClosedWithoutBeingSynthesizedOrRepaired(): void
+    {
+        foreach ([
+            ['organization', 'organizations', 1, str_repeat('a', 32)],
+            ['client', 'clients', 10, str_repeat('b', 32)],
+            ['project', 'projects', 20, str_repeat('c', 32)],
+        ] as [$type, $table, $id, $valid]) {
+            foreach ([null, strtoupper($valid), 'not-a-source-public-id'] as $invalid) {
+                $statement = $this->pdo->prepare("UPDATE {$table} SET public_id=? WHERE id=?");
+                $statement->execute([$invalid, $id]);
+                try {
+                    (new OpsSnapshotV2Service())->projectResource($this->pdo, $type, $id);
+                    self::fail("{$type} accepted a missing or malformed source public ID.");
+                } catch (UnexpectedValueException $error) {
+                    self::assertStringContainsString('public ID', $error->getMessage());
+                }
+                $stored = $this->pdo->query("SELECT public_id FROM {$table} WHERE id={$id}")->fetchColumn();
+                self::assertSame($invalid, $stored);
+                $statement->execute([$valid, $id]);
+            }
+        }
     }
 
     public function testSnapshotSessionIsBoundToApiKeyAndCursorIsBoundToSnapshot(): void
@@ -287,6 +319,7 @@ final class SyncContractV2Test extends TestCase
         self::assertSame('https://json-schema.org/draft/2020-12/schema', $schema['$schema']);
         self::assertArrayHasKey('snapshot', $schema['$defs']);
         self::assertArrayHasKey('event', $schema['$defs']);
+        self::assertSame('^[0-9a-f]{32}$', $schema['$defs']['sourcePublicId']['pattern']);
 
         $fixtureDirectory = $this->root . '/tests/fixtures/sync-contract-v2';
         foreach (['snapshot-page.json', 'event-upsert.json', 'event-delete.json'] as $filename) {
@@ -303,6 +336,14 @@ final class SyncContractV2Test extends TestCase
             self::assertStringNotContainsString('stripe', strtolower($json));
             self::assertStringNotContainsString('storage_path', strtolower($json));
         }
+
+        $snapshotFixture = json_decode(
+            (string)file_get_contents($fixtureDirectory . '/snapshot-page.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+        self::assertSame(str_repeat('b', 32), $snapshotFixture['items'][0]['data']['public_id']);
 
         $upsert = json_decode(
             (string)file_get_contents($fixtureDirectory . '/event-upsert.json'),
@@ -379,17 +420,17 @@ final class SyncContractV2Test extends TestCase
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )',
             'CREATE TABLE organizations (
-                id INTEGER PRIMARY KEY, name TEXT, address_line1 TEXT, address_line2 TEXT,
+                id INTEGER PRIMARY KEY, public_id TEXT UNIQUE, name TEXT, address_line1 TEXT, address_line2 TEXT,
                 city TEXT, state TEXT, postal_code TEXT, country TEXT, created_at TEXT, updated_at TEXT
             )',
             'CREATE TABLE clients (
-                id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, address_line1 TEXT,
+                id INTEGER PRIMARY KEY, public_id TEXT UNIQUE, name TEXT, email TEXT, phone TEXT, address_line1 TEXT,
                 address_line2 TEXT, city TEXT, state TEXT, postal_code TEXT, country TEXT,
                 organization_id INTEGER, client_type TEXT, archived INTEGER, deleted_at TEXT,
                 created_at TEXT, updated_at TEXT
             )',
             'CREATE TABLE projects (
-                id INTEGER PRIMARY KEY, client_id INTEGER, parent_id INTEGER, organization_id INTEGER,
+                id INTEGER PRIMARY KEY, public_id TEXT UNIQUE, client_id INTEGER, parent_id INTEGER, organization_id INTEGER,
                 business_unit_id INTEGER, manager_user_id INTEGER, name TEXT, description TEXT, status TEXT,
                 start_date TEXT, end_date TEXT, estimated_start TEXT, estimated_end TEXT,
                 created_at TEXT, updated_at TEXT
@@ -418,16 +459,16 @@ final class SyncContractV2Test extends TestCase
         );
         $this->pdo->exec(
             "INSERT INTO organizations VALUES
-                (1,'Organization One','1 Main',NULL,'Eau Claire','WI','54701','US','2026-01-01','2026-07-01')"
+                (1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Organization One','1 Main',NULL,'Eau Claire','WI','54701','US','2026-01-01','2026-07-01')"
         );
         $this->pdo->exec(
             "INSERT INTO clients VALUES
-                (10,'Client One','client@example.invalid','555-0100','1 Main',NULL,'Eau Claire','WI',
+                (10,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','Client One','client@example.invalid','555-0100','1 Main',NULL,'Eau Claire','WI',
                  '54701','US',1,'business',0,NULL,'2026-01-01','2026-07-01')"
         );
         $this->pdo->exec(
             "INSERT INTO projects VALUES
-                (20,10,NULL,1,30,50,'Project One','Provider-neutral field work','active',
+                (20,'cccccccccccccccccccccccccccccccc',10,NULL,1,30,50,'Project One','Provider-neutral field work','active',
                  '2026-07-01',NULL,NULL,NULL,'2026-01-01','2026-07-01')"
         );
         $this->pdo->exec(

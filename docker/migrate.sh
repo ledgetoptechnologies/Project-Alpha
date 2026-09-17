@@ -29,6 +29,26 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 
+mysql_root() {
+  MYSQL_PWD="$ROOT_PASSWORD" mysql --skip-ssl \
+    -h "$DB_HOST" -P "$DB_PORT" -u "$ROOT_USER" "$@"
+}
+
+original_function_creator_trust=""
+function_creator_trust_changed=0
+restore_function_creator_trust() {
+  if [ "$function_creator_trust_changed" -ne 1 ]; then
+    return 0
+  fi
+  if ! mysql_root -e "SET GLOBAL log_bin_trust_function_creators = $original_function_creator_trust"; then
+    echo "Migration cleanup failed: could not restore log_bin_trust_function_creators." >&2
+    return 1
+  fi
+  function_creator_trust_changed=0
+  echo "Restored the original MySQL routine-creator trust setting."
+}
+trap restore_function_creator_trust EXIT
+
 table_count=$(mysql --skip-ssl -h "$DB_HOST" -P "$DB_PORT" -u"$ROOT_USER" --password="$ROOT_PASSWORD" -N -s -e \
   "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB_NAME'")
 ledger_count=$(mysql --skip-ssl -h "$DB_HOST" -P "$DB_PORT" -u"$ROOT_USER" --password="$ROOT_PASSWORD" -N -s -e \
@@ -48,6 +68,18 @@ if [ "$ledger_count" -eq 0 ]; then
   mysql --skip-ssl -h "$DB_HOST" -P "$DB_PORT" -u"$ROOT_USER" --password="$ROOT_PASSWORD" --database="$DB_NAME" < "$BASELINE"
 fi
 
+original_function_creator_trust="$(mysql_root -N -s -e "SELECT @@GLOBAL.log_bin_trust_function_creators")"
+if [ "$original_function_creator_trust" != "0" ] && [ "$original_function_creator_trust" != "1" ]; then
+  echo "Migration failed: could not determine log_bin_trust_function_creators." >&2
+  exit 1
+fi
+if [ "$original_function_creator_trust" = "0" ]; then
+  mysql_root -e "SET GLOBAL log_bin_trust_function_creators = 1"
+  function_creator_trust_changed=1
+  echo "Temporarily enabled MySQL routine-creator trust for forward migrations."
+fi
+
 php /var/www/src/migrations/run_migrations.php --verbose
+restore_function_creator_trust
 /usr/local/bin/enable-mysql-encryption.sh
 echo "Database initialization and validation completed successfully. Create the first administrator in the web setup if this is a clean installation."
