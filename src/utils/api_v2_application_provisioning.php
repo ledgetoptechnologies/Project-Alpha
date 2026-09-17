@@ -207,13 +207,15 @@ function api_v2_application_bind_existing(PDO $pdo, int $apiKeyId, string $appli
 
         $alreadyBound = $currentPk === (int)$targetPk;
         $rebound = $currentPk !== null && !$alreadyBound;
+        $authorizationChanged = !$alreadyBound;
         if ($rebound && ($rebindFromApplicationId === null || (!$dryRun && !$rebindAcknowledged)
             || !hash_equals($publicIds[$currentPk] ?? '', $rebindFromApplicationId))) {
             throw new RuntimeException('The API key is bound to a different application; select that application and explicitly acknowledge the rebind.');
         }
         // Validate every authorization state even for a no-op. Rebinding also
         // proves all affected generations can advance before any row changes.
-        $states = api_v2_application_existing_binding_authorization_states($pdo, $applicationPks, $rebound);
+        // A first bind changes the target application's effective key set too.
+        $states = api_v2_application_existing_binding_authorization_states($pdo, $applicationPks, $authorizationChanged);
         if ($alreadyBound) {
             $pdo->rollBack();
             return ['dryRun' => $dryRun, 'apiKeyId' => $apiKeyId, 'applicationId' => $applicationId, 'alreadyBound' => true, 'rebound' => false];
@@ -222,7 +224,7 @@ function api_v2_application_bind_existing(PDO $pdo, int $apiKeyId, string $appli
             $pdo->rollBack();
             return ['dryRun' => true, 'apiKeyId' => $apiKeyId, 'applicationId' => $applicationId, 'alreadyBound' => false, 'rebound' => $rebound];
         }
-        if ($rebound) api_v2_application_existing_binding_advance_authorization_states($pdo, $states);
+        if ($authorizationChanged) api_v2_application_existing_binding_advance_authorization_states($pdo, $states);
         $bind = $pdo->prepare('UPDATE api_keys SET api_v2_application_id=? WHERE id=? AND revoked_at IS NULL' . ($currentPk === null ? ' AND api_v2_application_id IS NULL' : ' AND api_v2_application_id=?'));
         $parameters = [(int)$targetPk, $apiKeyId];
         if ($currentPk !== null) $parameters[] = $currentPk;

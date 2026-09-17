@@ -34,8 +34,10 @@ php bin/bind-api-v2-key-to-application.php \
   --confirm-bind-existing-api-v2-application
 ```
 
-An unbound eligible key is attached atomically. A same-key/same-application
-rerun is a read-only no-op after it revalidates both authorization states.
+An unbound eligible key is attached atomically and advances that application's
+Directory and Project authorization generations, so clients must refresh their
+authorization handshake. A same-key/same-application rerun is a read-only
+no-op after it revalidates both authorization states.
 
 ## Rebinding requires an explicit old application selection
 

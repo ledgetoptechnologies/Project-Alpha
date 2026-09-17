@@ -134,12 +134,13 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
         self::assertFalse($bound['rebound']);
         self::assertSame(4,(int)$this->first->query('SELECT api_v2_application_id FROM api_keys WHERE id=8')->fetchColumn());
         self::assertSame(2,(int)$this->first->query('SELECT COUNT(*) FROM api_v2_applications')->fetchColumn());
+        foreach(['api_v2_directory_authorization_state','api_v2_project_authorization_state']as$table)self::assertSame(1,(int)$this->first->query("SELECT authorization_generation FROM `$table` WHERE application_pk=4")->fetchColumn(),$table.' first bind');
         $rebound=\api_v2_application_bind_existing($this->first,8,'223e4567-e89b-42d3-a456-426614174000',false,'423e4567-e89b-42d3-a456-426614174000',true);
         self::assertTrue($rebound['rebound']);
         self::assertSame(3,(int)$this->first->query('SELECT api_v2_application_id FROM api_keys WHERE id=8')->fetchColumn());
         foreach(['api_v2_directory_authorization_state','api_v2_project_authorization_state']as$table){
             self::assertSame(1,(int)$this->first->query("SELECT authorization_generation FROM `$table` WHERE application_pk=3")->fetchColumn(),$table.' old');
-            self::assertSame(1,(int)$this->first->query("SELECT authorization_generation FROM `$table` WHERE application_pk=4")->fetchColumn(),$table.' new');
+            self::assertSame(2,(int)$this->first->query("SELECT authorization_generation FROM `$table` WHERE application_pk=4")->fetchColumn(),$table.' new');
         }
     }
 

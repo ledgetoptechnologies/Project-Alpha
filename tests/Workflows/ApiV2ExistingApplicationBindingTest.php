@@ -43,8 +43,8 @@ final class ApiV2ExistingApplicationBindingTest extends TestCase
         $applied = \api_v2_application_bind_existing($pdo, 7, self::FIRST_APPLICATION, false);
         self::assertFalse($applied['dryRun']);
         self::assertSame(3, (int)$pdo->query('SELECT api_v2_application_id FROM api_keys WHERE id=7')->fetchColumn());
-        self::assertSame(4, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
-        self::assertSame(5, (int)$pdo->query('SELECT authorization_generation FROM api_v2_project_authorization_state WHERE application_pk=3')->fetchColumn());
+        self::assertSame(5, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+        self::assertSame(6, (int)$pdo->query('SELECT authorization_generation FROM api_v2_project_authorization_state WHERE application_pk=3')->fetchColumn());
     }
 
     public function testSameApplicationIsAnIdempotentNoOpButStillRequiresBothAuthorizationStates(): void
@@ -132,6 +132,18 @@ final class ApiV2ExistingApplicationBindingTest extends TestCase
             self::assertSame(3, (int)$pdo->query('SELECT api_v2_application_id FROM api_keys WHERE id=7')->fetchColumn());
             self::assertSame(4, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
             self::assertSame(8, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
+        }
+    }
+
+    public function testFirstBindRefusesAnExhaustedTargetAuthorizationGenerationWithoutBindingTheKey(): void
+    {
+        $pdo = $this->database();
+        $pdo->exec("UPDATE api_v2_directory_authorization_state SET authorization_generation=9223372036854775807 WHERE application_pk=3");
+        try { \api_v2_application_bind_existing($pdo, 7, self::FIRST_APPLICATION, false); self::fail('expected refusal'); }
+        catch (\RuntimeException) {
+            self::assertNull($pdo->query('SELECT api_v2_application_id FROM api_keys WHERE id=7')->fetchColumn());
+            self::assertSame(9223372036854775807, (int)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+            self::assertSame(5, (int)$pdo->query('SELECT authorization_generation FROM api_v2_project_authorization_state WHERE application_pk=3')->fetchColumn());
         }
     }
 
