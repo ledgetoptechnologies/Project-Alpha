@@ -20,7 +20,10 @@ if ($org !== '') { $where[] = 'o.name LIKE ?'; $params[] = '%'.$org.'%'; }
 
 // Guard for older DBs without 'archived' column
 $hasArchived = (bool)$pdo->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='clients' AND COLUMN_NAME='archived'")->fetchColumn();
-$activeFilter = $hasArchived ? 'archived=0' : '1=1';
+// The organization join may also expose an `archived` column. Qualify this
+// predicate so the normal client list remains valid after either table gains
+// lifecycle support.
+$activeFilter = $hasArchived ? 'c.archived=0' : '1=1';
 
 // Build WHERE clause
 $whereClause = 'WHERE '.$activeFilter;

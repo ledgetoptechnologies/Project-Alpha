@@ -41,6 +41,11 @@ test('organization name filtering uses the same partial live-filter contract', (
   assert.match(organizationList, /client-list-live-filter\.js/);
 });
 
+test('active client lifecycle filtering is qualified against the joined organization table', () => {
+  assert.match(clientList, /\$activeFilter\s*=\s*\$hasArchived\s*\?\s*'c\.archived=0'\s*:\s*'1=1'/);
+  assert.match(clientList, /FROM clients c[\s\S]*LEFT JOIN organizations o ON c\.organization_id = o\.id[\s\S]*\$whereClause/);
+});
+
 test('live filtering serializes partial name and organization values together', () => {
   class FormDataMock {
     constructor() {
