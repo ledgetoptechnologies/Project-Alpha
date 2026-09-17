@@ -97,9 +97,19 @@ final class ApiV2DirectoryBackfillTest extends TestCase
     {
         $source = (string)file_get_contents(dirname(__DIR__, 2) . '/bin/backfill-api-v2-directory.php');
         self::assertStringContainsString('$apply = false', $source);
+        self::assertStringContainsString('$attest = false', $source);
+        self::assertStringContainsString("\$argument === '--attest'", $source);
+        self::assertStringContainsString('api_v2_directory_backfill_attestation_persist', $source);
+        self::assertStringContainsString("'Attestation: ' . \$digest", $source);
+        self::assertStringContainsString("require_once __DIR__ . '/../src/utils/api_v2_directory_release_safety.php'", $source);
+        self::assertStringContainsString('Directory attestation refused due to an internal database error.', $source);
+        self::assertStringContainsString('Directory attestation refused due to an internal error.', $source);
         self::assertStringContainsString('--confirm-api-v2-directory-backfill', $source);
         self::assertStringContainsString('--maintenance-window-confirmed', $source);
         self::assertStringContainsString('$apply && ($dryRunRequested || !$confirmed || !$maintenanceConfirmed)', $source);
+        self::assertStringContainsString('[--dry-run] [--attest]', $source);
+        self::assertStringNotContainsString('attestation_json', $source);
+        self::assertStringNotContainsString("json_encode(\$attestation", $source);
         self::assertStringNotContainsString('curl_', $source);
     }
 }
