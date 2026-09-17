@@ -20,6 +20,20 @@ The tool validates migrations `0088_api_v2_application_identity.sql` and `0089_a
 
 After all resume cursors are exhausted, perform a coverage audit: compare the count of valid existing clients and organizations with present directory-state rows and matching `upsert` change rows, and resolve every refusal before enabling any directory route or capability.
 
+In staging, after the final apply batch and coverage audit, run the explicit
+attestation command below. The backfill remains a dry run; the command persists one immutable receipt only if
+the complete directory state is valid and emits only the safe SHA-256 digest;
+retain that digest with the cutover evidence. A missing receipt migration,
+incomplete coverage, or any drift fails closed:
+
+```sh
+php bin/backfill-api-v2-directory.php --type=all --limit=100 --dry-run --attest
+```
+
+The command is safe to repeat for the same state. A changed source or schema
+state produces a different digest and requires fresh review; do not enable a
+directory route from a partial or refused attestation.
+
 ## Generic external-binding lifecycle release gate
 
 Migration `0095_api_v2_directory_binding_lifecycle.sql` repairs any binding
