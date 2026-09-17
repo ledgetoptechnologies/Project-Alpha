@@ -35,6 +35,7 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_capabilities.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_revision.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_binding_status.php';
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_binding_command.php';
         $this->resetSchema();
     }
 
@@ -62,6 +63,42 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         // Existing external IDs remain reserved by their tombstones until a
         // new explicit command rebinds this same external ID after restore.
         self::assertSame(1, (int)$this->first->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE external_id='old/external' AND status='tombstoned'")->fetchColumn());
+    }
+
+    public function testRestoredResourceCanBeExplicitlyReboundAndReplayedOnMySql(): void
+    {
+        $this->first->beginTransaction();
+        \api_v2_directory_record_delete($this->first, 'client', str_repeat('a', 32));
+        $this->first->exec('DELETE FROM clients WHERE id=9');
+        $this->first->commit();
+
+        $this->first->exec("INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Restored',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)");
+        $this->first->beginTransaction();
+        \api_v2_directory_record($this->first, 'client', 9);
+        $this->first->commit();
+
+        $command = [
+            'commandId' => '423e4567-e89b-42d3-a456-426614174000',
+            'externalId' => 'old/external',
+            'expectedPublicId' => str_repeat('a', 32),
+            'expectedRevision' => '3',
+        ];
+        $first = \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), '523e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200, $first['status']);
+        self::assertFalse($first['payload']['replayed']);
+        self::assertSame('active', $this->first->query("SELECT status FROM api_v2_directory_external_bindings WHERE external_id='old/external'")->fetchColumn());
+        self::assertSame('2', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+
+        $replay = \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), '623e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200, $replay['status']);
+        self::assertTrue($replay['payload']['replayed']);
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame('2', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+
+        $changed = array_replace($command, ['externalId' => 'old/external-changed']);
+        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', $changed, 7, $this->headers(), '723e4567-e89b-42d3-a456-426614174000')['status']);
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame('2', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
     }
 
     public function testConcurrentDeleteAndFailedGenerationAdvanceDoNotPartiallyMutate(): void
@@ -207,7 +244,7 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['api_v2_directory_binding_lifecycle_repairs','api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        foreach (['api_v2_directory_binding_lifecycle_repairs','api_v2_directory_binding_command_receipts','api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED PRIMARY KEY,application_id CHAR(36) NOT NULL,name VARCHAR(191) NOT NULL) ENGINE=InnoDB;
             CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL,FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
@@ -216,6 +253,7 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
             CREATE TABLE api_v2_directory_resource_state(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,revision BIGINT UNSIGNED NOT NULL,projection_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,present TINYINT(1) NOT NULL,PRIMARY KEY(resource_type,public_id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_resource_changes(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,revision BIGINT UNSIGNED NOT NULL,action ENUM('upsert','delete') NOT NULL,PRIMARY KEY(resource_type,public_id,revision),FOREIGN KEY(resource_type,public_id) REFERENCES api_v2_directory_resource_state(resource_type,public_id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_external_bindings(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,resource_revision BIGINT UNSIGNED NOT NULL,resource_projection_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,status ENUM('active','tombstoned') NOT NULL,tombstoned_at DATETIME(6) NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE KEY uq_binding_public(application_pk,resource_type,public_id),FOREIGN KEY(resource_type,public_id) REFERENCES api_v2_directory_resource_state(resource_type,public_id)) ENGINE=InnoDB;
+            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,command_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,request_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,resource_revision BIGINT UNSIGNED NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),PRIMARY KEY(application_pk,resource_type,command_id),FOREIGN KEY(application_pk) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
             CREATE TABLE clients(id INT PRIMARY KEY,public_id CHAR(32) NOT NULL UNIQUE,name VARCHAR(150),email VARCHAR(255),phone VARCHAR(50),client_type VARCHAR(50),organization_id INT,address_line1 VARCHAR(255),address_line2 VARCHAR(255),city VARCHAR(100),state VARCHAR(100),postal_code VARCHAR(32),country VARCHAR(100)) ENGINE=InnoDB;
             INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','Disposable'); INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_directory_authorization_state VALUES(3,0); INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Example',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)");
         $this->first->beginTransaction();
