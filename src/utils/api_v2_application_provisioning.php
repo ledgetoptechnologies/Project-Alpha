@@ -73,6 +73,169 @@ function api_v2_application_project_authorization_available(PDO $pdo): bool
         && api_v2_application_provision_column_exists($pdo,'api_v2_project_authorization_state','authorization_generation');
 }
 
+function api_v2_application_provision_uuid_v4_valid(string $value): bool
+{
+    return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $value) === 1;
+}
+
+function api_v2_application_provision_generation_valid($generation, bool $advanceable = false): bool
+{
+    if (!is_scalar($generation)) return false;
+    $value = (string)$generation;
+    if (preg_match('/^(0|[1-9][0-9]{0,18})$/D', $value) !== 1
+        || (strlen($value) === 19 && strcmp($value, '9223372036854775807') > 0)) return false;
+    return !$advanceable || $value !== '9223372036854775807';
+}
+
+/**
+ * Binding an additional least-privilege key must not depend on a deployment
+ * having merely some of the Project schema.  Unlike new-application
+ * provisioning, this operation is only available after migration 0102.
+ */
+function api_v2_application_existing_binding_schema_ready(PDO $pdo): bool
+{
+    if (!api_v2_application_provision_schema_ready($pdo)
+        || !api_v2_application_project_authorization_available($pdo)) return false;
+    $migration = $pdo->prepare('SELECT filename FROM schema_migrations WHERE version=102');
+    $migration->execute();
+    return $migration->fetchColumn() === '0102_api_v2_project_synchronization.sql';
+}
+
+/** @return array<int,array{directory:string,project:string}> */
+function api_v2_application_existing_binding_authorization_states(PDO $pdo, array $applicationPks, bool $advanceable): array
+{
+    $ids = array_values(array_unique(array_map('intval', $applicationPks)));
+    sort($ids, SORT_NUMERIC);
+    if ($ids === [] || $ids[0] < 1) throw new RuntimeException('The selected API v2 application is invalid.');
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $states = [];
+    foreach ([
+        'directory' => 'api_v2_directory_authorization_state',
+        'project' => 'api_v2_project_authorization_state',
+    ] as $kind => $table) {
+        $statement = $pdo->prepare("SELECT application_pk,authorization_generation FROM {$table} WHERE application_pk IN ({$placeholders}) ORDER BY application_pk" . $lock);
+        $statement->execute($ids);
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $applicationPk = (int)($row['application_pk'] ?? 0);
+            $generation = $row['authorization_generation'] ?? null;
+            if (!isset($states[$applicationPk])) $states[$applicationPk] = [];
+            $states[$applicationPk][$kind] = is_scalar($generation) ? (string)$generation : '';
+        }
+    }
+    foreach ($ids as $applicationPk) {
+        if (!isset($states[$applicationPk]['directory'], $states[$applicationPk]['project'])
+            || !api_v2_application_provision_generation_valid($states[$applicationPk]['directory'], $advanceable)
+            || !api_v2_application_provision_generation_valid($states[$applicationPk]['project'], $advanceable)) {
+            throw new RuntimeException('The selected API v2 application has incomplete or non-advanceable authorization state.');
+        }
+    }
+    /** @var array<int,array{directory:string,project:string}> $states */
+    return $states;
+}
+
+function api_v2_application_existing_binding_advance_authorization_states(PDO $pdo, array $states): void
+{
+    foreach (array_keys($states) as $applicationPk) {
+        foreach ([
+            'api_v2_directory_authorization_state' => $states[$applicationPk]['directory'],
+            'api_v2_project_authorization_state' => $states[$applicationPk]['project'],
+        ] as $table => $generation) {
+            $advance = $pdo->prepare("UPDATE {$table} SET authorization_generation=authorization_generation+1 WHERE application_pk=? AND authorization_generation=?");
+            $advance->execute([$applicationPk, $generation]);
+            if ($advance->rowCount() !== 1) throw new RuntimeException('The API v2 authorization state changed during binding.');
+        }
+    }
+}
+
+/**
+ * Bind a non-secret, numeric API-key selector to a pre-existing application.
+ * A rebind requires both the currently bound public UUID and an independent
+ * acknowledgement.  No key material is read, returned, or logged.
+ *
+ * @return array{dryRun:bool,apiKeyId:int,applicationId:string,alreadyBound:bool,rebound:bool}
+ */
+function api_v2_application_bind_existing(PDO $pdo, int $apiKeyId, string $applicationId, bool $dryRun, ?string $rebindFromApplicationId = null, bool $rebindAcknowledged = false): array
+{
+    if ($apiKeyId < 1 || !api_v2_application_provision_uuid_v4_valid($applicationId) || $pdo->inTransaction()
+        || ($rebindFromApplicationId !== null && !api_v2_application_provision_uuid_v4_valid($rebindFromApplicationId))) {
+        throw new InvalidArgumentException('Invalid existing-application binding request.');
+    }
+    if (!api_v2_application_existing_binding_schema_ready($pdo)) {
+        throw new RuntimeException('Required API v2 Directory and Project migrations are missing or incomplete.');
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $key = $pdo->prepare('SELECT id,scopes,revoked_at,api_v2_application_id FROM api_keys WHERE id=?' . $lock);
+        $key->execute([$apiKeyId]);
+        $keyRow = $key->fetch(PDO::FETCH_ASSOC);
+        if (!$keyRow || $keyRow['revoked_at'] !== null) {
+            throw new RuntimeException('The selected API key is not active.');
+        }
+        $scopes = api_normalize_scopes($keyRow['scopes'] ?? '');
+        if (in_array('full', $scopes, true) || !in_array('api.capabilities.read', $scopes, true)) {
+            throw new RuntimeException('The selected API key does not have an acceptable explicit API v2 scope set.');
+        }
+
+        // Resolve first, then acquire application locks in primary-key order to
+        // make concurrent opposite-direction rebinds deterministic on MySQL.
+        $targetLookup = $pdo->prepare('SELECT id FROM api_v2_applications WHERE application_id=?');
+        $targetLookup->execute([$applicationId]);
+        $targetPk = $targetLookup->fetchColumn();
+        if ($targetPk === false || (int)$targetPk < 1) throw new RuntimeException('The selected API v2 application does not exist.');
+        $currentPk = $keyRow['api_v2_application_id'] === null ? null : (int)$keyRow['api_v2_application_id'];
+        $applicationPks = [(int)$targetPk];
+        if ($currentPk !== null) $applicationPks[] = $currentPk;
+        $applicationPks = array_values(array_unique($applicationPks));
+        sort($applicationPks, SORT_NUMERIC);
+        $placeholders = implode(',', array_fill(0, count($applicationPks), '?'));
+        $applications = $pdo->prepare("SELECT id,application_id FROM api_v2_applications WHERE id IN ({$placeholders}) ORDER BY id" . $lock);
+        $applications->execute($applicationPks);
+        $applicationRows = $applications->fetchAll(PDO::FETCH_ASSOC);
+        if (count($applicationRows) !== count($applicationPks)) throw new RuntimeException('The selected API v2 application changed during binding.');
+        $publicIds = [];
+        foreach ($applicationRows as $row) {
+            if (!is_scalar($row['id'] ?? null) || !is_string($row['application_id'] ?? null)
+                || !api_v2_application_provision_uuid_v4_valid($row['application_id'])) {
+                throw new RuntimeException('The selected API v2 application is invalid.');
+            }
+            $publicIds[(int)$row['id']] = $row['application_id'];
+        }
+        if (($publicIds[(int)$targetPk] ?? null) !== $applicationId) throw new RuntimeException('The selected API v2 application changed during binding.');
+
+        $alreadyBound = $currentPk === (int)$targetPk;
+        $rebound = $currentPk !== null && !$alreadyBound;
+        if ($rebound && ($rebindFromApplicationId === null || (!$dryRun && !$rebindAcknowledged)
+            || !hash_equals($publicIds[$currentPk] ?? '', $rebindFromApplicationId))) {
+            throw new RuntimeException('The API key is bound to a different application; select that application and explicitly acknowledge the rebind.');
+        }
+        // Validate every authorization state even for a no-op. Rebinding also
+        // proves all affected generations can advance before any row changes.
+        $states = api_v2_application_existing_binding_authorization_states($pdo, $applicationPks, $rebound);
+        if ($alreadyBound) {
+            $pdo->rollBack();
+            return ['dryRun' => $dryRun, 'apiKeyId' => $apiKeyId, 'applicationId' => $applicationId, 'alreadyBound' => true, 'rebound' => false];
+        }
+        if ($dryRun) {
+            $pdo->rollBack();
+            return ['dryRun' => true, 'apiKeyId' => $apiKeyId, 'applicationId' => $applicationId, 'alreadyBound' => false, 'rebound' => $rebound];
+        }
+        if ($rebound) api_v2_application_existing_binding_advance_authorization_states($pdo, $states);
+        $bind = $pdo->prepare('UPDATE api_keys SET api_v2_application_id=? WHERE id=? AND revoked_at IS NULL' . ($currentPk === null ? ' AND api_v2_application_id IS NULL' : ' AND api_v2_application_id=?'));
+        $parameters = [(int)$targetPk, $apiKeyId];
+        if ($currentPk !== null) $parameters[] = $currentPk;
+        $bind->execute($parameters);
+        if ($bind->rowCount() !== 1) throw new RuntimeException('The selected API key changed during binding.');
+        $pdo->commit();
+        return ['dryRun' => false, 'apiKeyId' => $apiKeyId, 'applicationId' => $applicationId, 'alreadyBound' => false, 'rebound' => $rebound];
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
 function api_v2_application_provision_name_valid(string $name): bool
 {
     return $name !== '' && preg_match('/^\s*$/u', $name) !== 1 && strlen($name) <= 764 && preg_match('//u', $name) === 1

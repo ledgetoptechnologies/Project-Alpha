@@ -150,6 +150,12 @@ directory revisions, authorize portal access, or enable any endpoint. Use it
 separately for each installation; never copy an application's identity or
 secret between installations.
 
+When a second least-privilege key must act for that same external application,
+do not provision another application. Bind the active explicit-scope key to
+the existing application's public UUID with the separate dry-run-first command.
+The binding and deliberately acknowledged rebind safeguards are documented in
+[`docs/admin/api-v2-application-key-binding.md`](../../docs/admin/api-v2-application-key-binding.md).
+
 Existing directory resources require a separate, maintenance-window backfill
 before any directory route can be enabled. The local-only bounded tool and its
 conflict/coverage requirements are documented in
