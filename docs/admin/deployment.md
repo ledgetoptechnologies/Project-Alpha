@@ -72,8 +72,19 @@ production image tags, port, service settings, and named volumes directly.
 Environment-specific copies belong to the deployment host, not the repository.
 
 The optional External Operations module is disabled by default. Deployments
-that use it configure it from the administrator-only **Custom integrations**
-settings page; no integration-specific Compose variables are required. See
+that use it configure the one connection from the administrator-only **Custom
+integrations** settings page. Ordinary Operations updates, portal workspace
+and membership records, service assignments, contact roles, and revocations
+all use the same signed event URL, Access service identity, application key,
+and HMAC secret. Project Alpha does not require a second portal URL, signing
+secret, Compose override, or connection profile.
+
+The saved credentials are encrypted with the persisted application encryption
+key and are loaded by both event senders. Portal records are wrapped in the
+normal signed-event envelope with event type `portal.projection`; Operations
+routes the validated inner projection to its client portal. Keep the visible
+connection disabled until its Operations receiver contract is deployed. Do not
+paste its credentials or expanded Compose configuration into diagnostics. See
 [External Operations](external-operations.html).
 
 ## Administrator Recovery

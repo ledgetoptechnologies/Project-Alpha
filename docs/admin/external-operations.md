@@ -5,7 +5,18 @@ description: Assignment-driven synchronization from Project Alpha to a deploymen
 
 # External Operations Integration
 
-This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Projects, Operations, Tasks, teams, and assignments.
+This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Operations, Tasks, teams, and assignments. Separately scoped, default-off API v2 Project commands may create or update an explicitly bound Project after migration, backfill attestation, credential provisioning, and deployment review; this repository does not claim that any deployment has enabled them.
+
+## Reviewed project-management link
+
+Project Alpha exposes `https://<project-alpha-host>/projects` (and the
+equivalent trailing-slash form) as its query-free project-management entry
+point for reviewed external links. It dispatches only to the existing Projects
+list controller, so the normal Project Alpha session and `projects.view`
+authorization still apply. `GET` and `HEAD` are the only accepted methods;
+`page` query input cannot select another controller. Existing list filters may
+remain in the query string, but external integrations should register the
+static `/projects` URL without a query or contextual identifier.
 
 ## Company structure and work planning
 
@@ -52,28 +63,73 @@ enable the outbound outbox sender. The pull snapshot remains available when
 outbound delivery is disabled or paused, provided its normal API key and stable
 application key requirements are met.
 
-Open **Settings > System & Integrations > Custom integrations**. This single surface contains the deployment-specific display label, signed-event URL, service authentication credentials, HMAC secret, explicit Project Alpha account access, and synchronization health. Set a stable application key such as `external_application`; use the same key in the provisioning receiver and snapshot importer. No application key or display label is fixed by Project Alpha. The open-source display-name fallback is **External operations**; a deployment may replace it with its own product name.
+Open **Settings > System & Integrations > Custom integrations**. This single surface contains the deployment-specific display label, signed-event URL, service authentication credentials, HMAC secret, outbound signing controls, explicit Project Alpha account access, and synchronization health. Set a stable application key such as `external_application`; use the same key in the provisioning receiver and snapshot importer. No application key or display label is fixed by Project Alpha. The open-source display-name fallback is **External operations**; a deployment may replace it with its own product name.
 
-Portal projection profiles, workspace/principal records, scoped allowlists, runtime gates, recovery, and viewer-sharing authority remain backend compatibility contracts and are not presented in normal Settings navigation. Do not infer those authorities from the visible account directory: it controls only the configured application's Project Alpha account entitlement. Connected deployments must keep using their approved automation and receiver contract for the hidden portal-specific state.
+Portal projection profiles, workspace/principal records, scoped allowlists,
+runtime gates, recovery, and signing remain backend compatibility contracts and
+are not editable in normal Settings navigation. The External Operations card
+shows only client-portal health and one idempotent reconcile/repair action. The
+ordinary organization and client pages contain the relevant portal-login
+revoke/restore action.
 
-Client portal administration is explicit and default-off. A principal has a
-stable Project Alpha public ID, display name, email notification hint, and
-optional relationships to existing client records. Those relationships publish
-eligibility/invitation intent through the same signed, versioned projection but
-never grant access. Add exact scoped entitlements separately; an applicable deny
-takes precedence over an allow. Revoking a principal disables its authority and
-queues projection tombstones in the same transaction as the audit record.
+Historical clients do not require that repair button. Once the complete signed
+producer preflight is ready, `reconcile_client_portal.php` automatically discovers
+unprocessed organization and standalone roots every minute, at most 25 roots per
+run. Each root, its eligibility, relationships, projection outbox records, and
+completion marker commit atomically. Restarts resume unfinished roots; repeated
+runs do not duplicate workspaces, principals, or published snapshots. Producer
+application-key/receiver changes invalidate the old completion fingerprint.
+This job uses the portal producer gates, like the outbox sender, rather than the
+unrelated automatic-invoice `cron_enabled` preference. It sends no email.
+
+An existing deployment also does not require a one-time settings save after an
+upgrade. When the stored External Operations connection is enabled, complete,
+and decryptable, the reconciliation job idempotently binds that same connection
+as the portal producer before processing historical roots. It does not invent a
+second endpoint, activate an unconfigured instance, or bypass the established
+retire-and-drain rules for a changed receiver. Scheduled system activation is
+recorded without falsely attributing it to an administrator.
+
+Progress is recorded in `portal_client_provisioning_backfill`,
+`portal_integration_audit`, and the `portal_client_provisioning_backfill` entry in
+`cron_job_runs`. A failed root rolls back without blocking the rest. It retries
+after 1, 2, 4, and 8 minutes, stopping after five attempts. Logs include counts;
+root records include only the stable `storage_failure`/`projection_failure`
+category and a diagnostic hash, not raw customer data or credentials. Terminal
+failures keep cron health failed until repaired. After correcting the cause,
+use **Retry failed historical roots** to return a bounded batch to the normal
+reconciliation schedule. The action is audited and resets only terminal rows
+for the current producer contract. Never remove access-control or eligibility
+rows to retry: those preserve manual revocations.
+
+Project Alpha automatically publishes login eligibility for an active human
+contact only when it has one valid canonical email that is unique among active
+client records. Missing, invalid, or duplicate email, an unclassified standalone
+record, and a conflict with a principal outside this managed workflow all fail
+closed as **review required**. Organization client rows are contact records;
+standalone records must explicitly be consumer records. An administrator revoke
+is durable and is not undone by reconciliation. Archiving or deleting a client,
+or revoking its organization root, publishes the corresponding disabled state
+and tombstones.
+
+Eligibility is not identity proof and is not content access. Project Alpha never
+writes an identity-provider issuer/subject binding. The consuming portal must
+bind the principal only after an exact verified sign-in assertion, and Operations
+must still grant a folder or delivery explicitly. The automatic capabilities are
+limited to opening the workspace, reading its directory, and viewing deliveries;
+they cannot create shares or infer access to any stored file.
 
 Project Alpha does not accept or infer an identity-provider subject from email.
 The consuming portal verifies a live assertion and owns the issuer/subject
 binding. Matching names, addresses, CRM contacts, primary contacts, and public
 links are never identity bindings or grants.
 
-Outbound delivery is ready only when the administrator has requested it and all
-five delivery values are available: application key, signed event URL, Access
-service-token ID, Access service-token secret, and HMAC secret. The encrypted
-credential payload must also be readable with the deployment's persisted
-application encryption key. Timeout and maximum-attempt settings are bounded
+Outbound delivery is ready only when the administrator has requested it and the
+application key, signed event URL, Access service-token ID, Access service-token
+secret, and a ready signing method are available. The compatible default signing
+method is HMAC-SHA256 with its secret; an activated Ed25519 key may replace it on
+the same connection. The encrypted credential payload must also be readable with
+the deployment's persisted application encryption key. Timeout and maximum-attempt settings are bounded
 but are not readiness predicates. Keep outbound delivery disabled until the
 receiver contract is deployed. If an older or partial configuration has the
 enable flag set but is incomplete, Project Alpha pauses outbound delivery while
@@ -86,13 +142,26 @@ Use a dedicated Project Alpha API key with only the stable `ops.sync.read` scope
 
 Secrets are encrypted with Project Alpha's persisted application encryption key. Passwords, pay rates, financial details, API secrets, private tokens, and integration secrets are never included in the operational projection.
 
+### Ed25519 signing upgrade
+
+HMAC-SHA256 remains the compatible default. Migration `0086_external_operations_ed25519_signing.sql` adds only a non-secret envelope marker; it does not enable a connection or change an existing HMAC sender. An installation may instead use Ed25519 on the same External Operations connection when its PHP runtime provides `ext-sodium`.
+
+1. Generate a **staged Ed25519 key** in Custom integrations.
+2. Register the displayed key ID and public key with the existing receiver. Project Alpha never displays or exports the private key.
+3. Confirm that registration in the UI and activate the staged key. Activation is refused while ordinary, portal, or managed-delivery rows remain unresolved, so an accepted retry cannot be re-signed with a replacement key.
+4. Keep HMAC available only as a deliberate fallback. Returning to it requires explicit confirmation and the same empty-outbox safety check.
+5. Retire an unused staged key when it is no longer needed; retirement permanently removes its encrypted private material while retaining the public audit record.
+
+Ed25519 uses the unchanged canonical input `timestamp + "." + raw_request_body`. It sends `X-PA-Signature-Ed25519: ed25519=<base64url-without-padding signature>`; the receiver selects its active or overlap public key from its registry. HMAC retains the existing byte-for-byte `X-PA-Signature: sha256=<hex>` header. A receiver must register the public key before activation; no second URL or portal signer is created.
+
 ## Delivery contract
 
-Project Alpha writes signed, idempotent change events for Business Units, Projects, Team membership, Operations, Operation assignments, Tasks, Task assignments, and entitlements. Events include an event ID, source timestamp, schema version, configured application key, and HMAC signature. The receiver ignores duplicates and out-of-order changes.
+Project Alpha writes signed, idempotent change events for Business Units, Projects, Team membership, Operations, Operation assignments, Tasks, Task assignments, and entitlements. Events include an event ID, source timestamp, schema version, configured application key, and the selected HMAC or Ed25519 signature. The receiver ignores duplicates and out-of-order changes.
 
 The minute-scheduled outbox sender delivers queued events with the configured
-Cloudflare Access service-token headers and Project Alpha event headers. The HMAC
-signature is SHA-256 over `timestamp + "." + raw_request_body`. Failed deliveries
+Cloudflare Access service-token headers and Project Alpha event headers. HMAC is
+SHA-256 over `timestamp + "." + raw_request_body`; Ed25519 signs the same input.
+Failed deliveries
 remain in the outbox for the existing retry schedule; a successful retry keeps the
 same event identity so receiver-side idempotency remains effective.
 
@@ -104,11 +173,158 @@ GET /api/v1/ops/snapshot?page=1&limit=500
 
 Follow `next_page` while `has_more` is true. The snapshot includes Project Managers, Business Unit-aware Projects, and the multi-worker `task_assignments` collection. It is the recovery authority if an incremental event is delayed or missed.
 
-The integration status card reports queued deliveries, retry errors, and the last successful delivery. After deployment or a configuration change, run a full snapshot reconciliation and reconcile the Cloudflare Access group.
+The integration status card reports queued ordinary and portal deliveries,
+retry errors, client roots, eligible contacts, records requiring review, and
+the honest count of historical roots that remain. After deployment or a
+configuration change, use **Sync now** or **Reconcile next client portal
+batch**. Both actions use the same External Operations connection, reconcile a
+bounded and restart-safe batch (25 and 100 roots respectively), and then send
+due ordinary and portal events within the request deadline. Repeat either
+action while historical roots remain; scheduled jobs continue the same work.
+
+Terminal normal workspace deliveries are not replayed by **Sync now**. Inspect
+the allowlisted aggregate failure code and HTTP status, repair and verify the
+unchanged receiver, then use **Queue replacement snapshots**. The action queues
+fresh complete generations for at most 25 currently active linked workspaces.
+The failed payloads remain immutable evidence. Their failure is considered
+resolved only after the receiver acknowledges the corresponding replacement
+activation. Failed revocations use their separate audited retry action and are
+never consumed by snapshot recovery.
+
+The status card reports the one **External Operations connection** and whether
+client portal events are ready on that connection. API-key pull reconciliation
+is a receiver-driven recovery path, not another outbound destination.
+
+Before reconciliation, the portal preflight checks the enabled External
+Operations connection, its exact signed event URL, service authentication,
+ready signing method, saved producer state, delivery switch, outbound runtime, and
+authoritative hooks. The page reports only fixed prerequisite names and boolean
+state; it never displays a URL, token, or secret value. There is no separate
+Project Alpha-to-portal connection or signing capability.
+
+Each portal outbox record retains its ordering, retry, revocation, and
+dead-letter state. At delivery time it is wrapped as an External Operations
+event with event type `portal.projection`, a strict `projection_kind`, and the
+unchanged inner projection. The complete outer body is signed using the same
+`timestamp + "." + raw_request_body` contract as other events and posted to the
+exact saved signed event URL. Operations authenticates it once and routes the
+inner record to the client portal internally.
+
+To rotate the receiver contract, first disable the visible connection without
+changing its URL, application key, or credentials. That retires the bound portal
+state and queues its workspace tombstones. Re-enable the unchanged connection
+long enough to drain those records to the original receiver. Project Alpha
+blocks changes to the signed-event URL, application key, Access service token,
+or active signing contract while any deliverable portal outbox row remains unresolved,
+including a dead-lettered revocation. Dead-lettered normal events are resolved
+through the existing retirement audit step and are never replayed against the
+replacement contract. Only after the queue reaches zero may an administrator
+save the replacement contract and reconcile its complete snapshot. This staged
+rotation prevents old client data or revocations from being signed for, or sent
+to, a replacement receiver.
+After every revocation is acknowledged, any older dead-lettered non-revocation
+events are administratively resolved before the replacement is activated. The
+original dead-letter timestamp and error remain available for audit; revocation
+events are never resolved this way.
+Any catalog, pricing-preview, draft-quote, and relation-projection settings on
+the bound profile are retained through this disabled drain state and restored
+when the replacement portal contract becomes active.
+The authority service also rejects any legacy or direct settings action that
+would activate a second portal producer, so the single-producer rule is not
+limited to the simplified External Operations page.
+
+The optional service-assignment producer uses this same External Operations
+profile, receiver origin, Access headers, active signing method, workspace allowlist, and
+durable outbox. It is disabled by default and requires the receiver to grant
+`portal.service-assignments.publish` before activation. Catalog visibility,
+billing records, portal eligibility, workspace membership, and portal
+entitlements never create an assignment. See
+[Service-assignment projection v1](../architecture/service-assignment-projection-v1.md).
+Administrators opt in with **Publish assigned services to the client portal**
+on this connection form; there is no second endpoint or credential form. The
+first enable queues a complete snapshot. Clearing the option queues an
+authoritative empty snapshot as revocation work before the capability is
+disabled, so the receiver cannot retain stale assignments. Re-enabling after a
+connection rotation queues a new complete snapshot against the replacement
+contract. Leave the option clear until migrations 0080 and 0081 are applied and
+the receiver capability is verified.
+
+The optional contact-assignment producer also uses this same profile, route,
+workspace allowlist, credentials, and portal outbox. **Publish scoped contact
+roles to the client portal** is disabled by default and requires portal and
+relation projection. It publishes only explicit department and project contact
+assignments; it never creates login or content access. Enabling or disabling it
+queues a complete replacement portal generation. Primary billing ownership and
+invoice-email delivery remain independent. Leave it clear until migration 0082
+and the receiver's schema-v4 capability are deployed. See
+[Portal contact-assignment projection v4](../architecture/portal-contact-assignment-projection-v4.md).
+
+If a revocation exhausts its delivery attempts, the simplified synchronization
+status exposes an audited retry action. It resets only failed revocations and
+keeps their original receiver/key contract; it never suppresses a tombstone or
+allows the replacement connection to activate early.
+Re-enabling the same connection waits for those revocations; ordinary
+saves of an already-active unchanged connection never administratively resolve
+historical dead-lettered events.
 
 The daily snapshot is reconciliation and recovery, not a replacement for the
 event path. Account email, display name, PA role, active state, and explicit-access
 changes refresh or revoke the entitlement projection through the same outbox.
+
+## Diagnosing queued workspace deliveries
+
+Connection readiness on this settings page describes the **web process**. It
+does not prove that the scheduled worker has the same configuration or that the
+receiver accepted the workspace snapshot. A workspace created in Project Alpha
+is not proof of an active workspace in the connected application.
+
+If the web process is ready but scheduled deliveries remain queued:
+
+1. Inspect **Settings → Logs & diagnostics → cron.log**. Distinguish a retry
+   from a terminal failure; zero terminal failures does not mean no attempts
+   have failed. Do not repeatedly save or recreate the connection to clear a
+   retry. Preserve the original endpoint, keys, delivery IDs and pending records.
+2. Verify that both web and cron were recreated from the intended release. The
+   web footer proves only the served web revision. Confirm the cron service is
+   running its scheduled workspace reconciliation and delivery jobs.
+3. If cron reports `prerequisites_missing` or
+   `external-operations-delivery-unavailable` while the web process is ready,
+   check the shared configuration volume and encryption configuration. Both
+   services must use the same `/var/www/config` volume and the same effective
+   `APP_ENCRYPTION_KEY`. These codes indicate unavailable delivery configuration;
+   they do not by themselves prove a particular missing setting or key mismatch.
+   Current releases also show any fixed **Cron-reported prerequisite blockers**
+   on the Connected workspace synchronization card. These are only known
+   prerequisite categories, not exception text or credential values. If web is
+   ready but cron reports a blocker, recreate the cron service from the current
+   release while preserving the shared configuration volume, then verify its
+   non-secret startup marker before investigating the receiver.
+   When the cron preflight includes `encryption_runtime_key` and
+   `encrypted_external_credentials`, use only those categories: `missing` /
+   `present` for the runtime key and `absent`, `readable`, or `unreadable` for
+   the encrypted credential record. Do not collect or share key values,
+   ciphertext, hashes, or credential fields.
+   While those delivery prerequisites are unavailable, Project Alpha leaves
+   queued workspace projections unclaimed: a temporary cron configuration
+   mismatch must not consume retries or dead-letter a valid snapshot activation.
+4. An explicitly supplied encryption key must match the persisted key file;
+   either service stops rather than using a conflicting key. Cron must not
+   invent an independent temporary key when the shared file is delayed. Check
+   for a missing mount, an empty/unreadable key file, or a different explicitly
+   configured key. Preserve the working web key and its secure backup. Never
+   print key values, environment dumps or credentials in logs, screenshots,
+   support tickets or chat.
+5. After correcting the deployment configuration, recreate only the affected
+   scheduled worker. Verify successful deliveries, declining pending counts,
+   receiver snapshot activation, and preserved administrator revocations.
+   Existing retryable records should keep their identities and original route;
+   terminal failures require a separately reviewed recovery, not deletion or
+   blanket replay.
+
+Do not use credential rotation as a diagnostic step: changing a key can make
+existing encrypted settings unreadable or strand pending deliveries. A
+transport error, receiver HTTP rejection, and local configuration failure are
+different conditions and should be investigated separately.
 
 ## Sync Contract v2 foundation
 

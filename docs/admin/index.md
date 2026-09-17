@@ -22,6 +22,7 @@ PA administration is mostly handled from Settings plus the deployment environmen
 | Workforce | Employee PA accounts, employment state, pay rates, and project assignments |
 | Timekeeping and Approvals | Timers, breaks, review, correction revisions, and immutable approval snapshots |
 | Custom integrations | Optional, deployment-specific entitlements, operations, tasks, and read-only synchronization |
+| Project lifecycle API | Default-off exact Project reads and revision-checked complete, cancel, archive, and restore commands |
 
 ## Recommended Order
 
@@ -33,4 +34,5 @@ PA administration is mostly handled from Settings plus the deployment environmen
 6. Verify deployment and cron behavior.
 7. Configure [Workforce modules](workforce-modules.html), employees, assignments, and rates.
 8. If this deployment has a separate operations dashboard, configure [External Operations](external-operations.html).
+9. Before enabling Project API v2 lifecycle routes, complete the [Project lifecycle API](api-v2-project-lifecycle.html) backfill and release gate.
 

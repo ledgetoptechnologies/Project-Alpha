@@ -4,6 +4,10 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/organization_schema.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../services/OrganizationProfileMutationService.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'organization','profile')) { header('Location: /?page=organization/organizations-list&directory_managed=1'); exit; }
 
 $id = (int)($_POST['id'] ?? 0);
 $name = trim($_POST['name'] ?? '');
@@ -124,6 +128,7 @@ if (!empty($_FILES['tax_exempt_file']) && is_uploaded_file($_FILES['tax_exempt_f
     portal_projection_mutate($pdo, $beforeScopes, static function () use ($pdo, $name, $generalEmail, $generalPhone, $notes, $addressSql, $addressParams, $filename, $id): void {
         $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', tax_exempt_file = ?, tax_exempt_uploaded_at = NOW(), source_version = ? WHERE id = ?');
         $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [$filename, portal_projection_source_version(), $id]));
+        api_v2_directory_record($pdo, 'organization', $id);
     }, static fn(): array => $projection->organizationScopes($pdo, $id));
     $saveReusableAddress();
     
@@ -154,6 +159,7 @@ if ($remove_tax) {
     portal_projection_mutate($pdo, $beforeScopes, static function () use ($pdo, $name, $generalEmail, $generalPhone, $notes, $addressSql, $addressParams, $id): void {
         $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', tax_exempt_file = NULL, tax_exempt_uploaded_at = NULL, source_version = ? WHERE id = ?');
         $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [portal_projection_source_version(), $id]));
+        api_v2_directory_record($pdo, 'organization', $id);
     }, static fn(): array => $projection->organizationScopes($pdo, $id));
     $saveReusableAddress();
     header('Location: /?page=organization/organizations-edit&id=' . $id . '&updated=1');
@@ -161,13 +167,15 @@ if ($remove_tax) {
 }
 
 // Default update (no file change)
-$projection = new \App\Services\PortalProjectionMutationService();
-$beforeScopes = $projection->organizationScopes($pdo, $id);
-portal_projection_mutate($pdo, $beforeScopes, static function () use ($pdo, $name, $generalEmail, $generalPhone, $notes, $addressSql, $addressParams, $id): void {
-    $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', source_version = ? WHERE id = ?');
-    $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [portal_projection_source_version(), $id]));
-}, static fn(): array => $projection->organizationScopes($pdo, $id));
-$saveReusableAddress();
+(new \App\Services\OrganizationProfileMutationService())->mutate($pdo, $id, [
+    'name' => $name,
+    'general_email' => $generalEmail,
+    'general_phone' => $generalPhone,
+    'notes' => $notes,
+    'address' => $addressValues,
+    'google_place_id' => trim((string)($_POST['google_place_id'] ?? '')),
+    'actor_id' => (int)($_SESSION['user']['id'] ?? 0),
+]);
 
 header('Location: /?page=organization/organizations-list&updated=1');
 exit;

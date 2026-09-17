@@ -117,7 +117,7 @@ function project_invoice_notification_process(
         }
         $stats['claimed']++;
         $stmt = $pdo->prepare(
-            'SELECT n.*,pi.doc_number,pi.status AS invoice_status,pi.finalized_at,pi.balance_due,pi.due_date,
+            'SELECT n.*,pi.doc_number,pi.revision_number,pi.status AS invoice_status,pi.finalized_at,pi.balance_due,pi.due_date,
                     pi.project_id,p.name AS project_name,p.invoice_net_terms_days,p.project_invoice_auto_email
              FROM project_invoice_notifications n
              JOIN project_invoices pi ON pi.id=n.project_invoice_id
@@ -148,7 +148,9 @@ function project_invoice_notification_process(
         $reason = null;
         if (!in_array((string)$row['invoice_status'], ['sent', 'unpaid', 'partial'], true)
             || empty($row['finalized_at']) || (float)$row['balance_due'] <= 0.005) {
-            $reason = 'Project invoice is no longer eligible for reminders.';
+            $reason = in_array((string)$row['notification_type'], ['due_7', 'overdue_weekly'], true)
+                ? 'Project invoice is no longer eligible for reminders.'
+                : 'Project invoice is no longer eligible for email delivery.';
         } elseif (!$currentRecipient) {
             $reason = 'Project invoice recipient is missing, changed, or opted out.';
         } elseif ($row['notification_type'] === 'due_7' && empty($appConfig['invoice_auto_send_due_7days'])) {
@@ -189,10 +191,9 @@ function project_invoice_notification_process(
         try {
             $url = '';
             if (!empty($appConfig['public_links_in_email'])) {
-                $token = project_invoice_create_public_link($pdo, (int)$row['project_invoice_id'], $appConfig);
-                $linkStmt = $pdo->prepare('SELECT id FROM public_links WHERE token=? LIMIT 1');
-                $linkStmt->execute([$token]);
-                $linkId = (int)$linkStmt->fetchColumn();
+                $publicLink = project_invoice_ensure_public_link($pdo, (int)$row['project_invoice_id'], $appConfig);
+                $token = (string)$publicLink['token'];
+                $linkId = !empty($publicLink['created']) ? (int)$publicLink['id'] : 0;
                 $url = project_invoice_base_url($appConfig) . '/?page=public-doc&token=' . rawurlencode($token);
             }
             $doc = (string)($row['doc_number'] ?: $row['project_invoice_id']);
@@ -224,6 +225,7 @@ function project_invoice_notification_process(
                 'attachments' => [$attachment],
                 'document_type' => 'project_invoice',
                 'document_id' => (int)$row['project_invoice_id'],
+                'document_revision' => (int)($row['revision_number'] ?? 1),
                 'message_key' => 'project-invoice-notification:' . $id,
             ]);
             if (!$ok) {
@@ -239,9 +241,6 @@ function project_invoice_notification_process(
             )->execute([$now->format('Y-m-d H:i:s'), (int)$row['project_invoice_id']]);
             $stats['sent']++;
         } catch (Throwable $error) {
-            if ($linkId > 0) {
-                try { $pdo->prepare('UPDATE public_links SET revoked=1 WHERE id=?')->execute([$linkId]); } catch (Throwable $ignored) {}
-            }
             $attempt = max(1, (int)$row['attempt_count']);
             $delay = min(1440, 5 * (2 ** min(8, $attempt - 1)));
             $pdo->prepare(

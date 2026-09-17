@@ -242,7 +242,7 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:db-latest"', $compose);
         self::assertStringNotContainsString('x-pa-settings:', $compose);
         self::assertStringNotContainsString('&pa-', $compose);
-        self::assertLessThanOrEqual(140, count(file($this->root . '/docker-compose.yml') ?: []));
+        self::assertLessThanOrEqual(160, count(file($this->root . '/docker-compose.yml') ?: []));
         self::assertStringContainsString('APP_ENV: production', $compose);
         self::assertStringContainsString('- "1627:80"', $compose);
     }
@@ -285,6 +285,10 @@ final class SecurityHardeningTest extends TestCase
         $migrator = $this->read('docker/migrate.sh');
         $encryption = $this->read('docker/enable-mysql-encryption.sh');
         self::assertStringContainsString('/usr/local/bin/enable-mysql-encryption.sh', $migrator);
+        self::assertStringContainsString('SELECT @@GLOBAL.log_bin_trust_function_creators', $migrator);
+        self::assertStringContainsString('SET GLOBAL log_bin_trust_function_creators = 1', $migrator);
+        self::assertStringContainsString('restore_function_creator_trust', $migrator);
+        self::assertStringNotContainsString('log_bin_trust_function_creators=ON', $mysqlConfig);
         self::assertStringContainsString('component_keyring_file is not active', $encryption);
         self::assertStringContainsString('ALTER DATABASE', $encryption);
         self::assertStringContainsString("ALTER TABLESPACE mysql ENCRYPTION = 'Y'", $encryption);
@@ -294,6 +298,7 @@ final class SecurityHardeningTest extends TestCase
 
         if (PHP_OS_FAMILY !== 'Windows') {
             foreach ([
+                'docker/migrate.sh' => 'bash',
                 'docker/enable-mysql-encryption.sh' => 'bash',
                 'docker/mysql/entrypoint.sh' => 'sh',
                 'docker/mysql/healthcheck.sh' => 'sh',

@@ -2,6 +2,54 @@
   'use strict';
 
   function initProjectSettingsContactManager() {
+    document.querySelectorAll('[data-project-billing-transition]').forEach(function (form) {
+      if (form.dataset.billingTransitionReady === '1') return;
+      form.dataset.billingTransitionReady = '1';
+      var period = form.querySelector('[data-project-billing-period]');
+      var transitionPanel = form.querySelector('[data-billing-transition-panel]');
+      var autoEmail = form.querySelector('[data-monthly-auto-email]');
+      var autoEmailInput = autoEmail ? autoEmail.querySelector('input[name="project_invoice_auto_email"]') : null;
+      var monthlyConfirmation = form.querySelector('[data-monthly-auto-email-confirmed]');
+      if (!period) return;
+
+      function syncBillingTransition() {
+        var original = String(period.dataset.originalBillingPeriod || 'per_invoice');
+        var selected = String(period.value || 'per_invoice');
+        var hasUnresolved = transitionPanel && transitionPanel.dataset.hasUnresolved === '1';
+        var needsTransition = selected === 'per_invoice' && (original === 'monthly' || hasUnresolved);
+        if (transitionPanel) transitionPanel.hidden = !needsTransition;
+        if (autoEmail) autoEmail.hidden = selected !== 'monthly';
+        if (autoEmailInput) autoEmailInput.disabled = selected !== 'monthly';
+      }
+
+      period.addEventListener('change', syncBillingTransition);
+      form.addEventListener('submit', function (event) {
+        var original = String(period.dataset.originalBillingPeriod || 'per_invoice');
+        if (original === 'per_invoice' && period.value === 'monthly') {
+          var autoEmailChoice = autoEmailInput && autoEmailInput.checked ? 'enabled' : 'disabled';
+          if (!window.confirm('Switch this Project to monthly billing with automatic Project Invoice email ' + autoEmailChoice + '? Existing direct invoices and links remain unchanged.')) {
+            event.preventDefault();
+            return;
+          }
+          if (monthlyConfirmation) monthlyConfirmation.value = '1';
+        }
+        var unresolved = transitionPanel && transitionPanel.dataset.hasUnresolved === '1';
+        if (period.value !== 'per_invoice' || (String(period.dataset.originalBillingPeriod || '') !== 'monthly' && !unresolved)) return;
+        var strategy = form.querySelector('input[name="billing_transition_strategy"]:checked');
+        var delivery = form.querySelector('input[name="delivery_action"]:checked');
+        var strategyLabel = strategy && strategy.value === 'convert_to_direct'
+          ? 'convert all unassigned monthly invoices to individual billing'
+          : 'create one final Project Invoice';
+        var deliveryLabel = delivery && delivery.value === 'send_all'
+          ? (strategy && strategy.value === 'convert_to_direct' ? ' and send them after the transition' : ' and send it after the transition')
+          : ' without sending email';
+        if (!window.confirm('Switch this Project to per-invoice billing, ' + strategyLabel + deliveryLabel + '? Existing public links will remain unchanged.')) {
+          event.preventDefault();
+        }
+      });
+      syncBillingTransition();
+    });
+
     var manager = document.getElementById('projectManagerSelect');
     var businessUnit = document.getElementById('projectBusinessUnitSelect');
     var touched = document.getElementById('projectBusinessUnitTouched');

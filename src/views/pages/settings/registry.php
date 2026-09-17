@@ -254,6 +254,15 @@ function pa_settings_registry(): array
                     'permission' => 'api_keys.view',
                     'keywords' => 'api keys integrations credentials',
                 ],
+                'directory-management' => [
+                    'title' => 'Directory management',
+                    'description' => 'Optionally make client and organization topology read-only when a fully authorized external application is healthy.',
+                    'tab' => 'directory-management',
+                    'permission' => 'settings.manage',
+                    'roles' => ['admin', 'owner'],
+                    'keywords' => 'directory external application clients organizations read only policy',
+                    'form_mode' => 'self',
+                ],
             ],
         ],
     ];

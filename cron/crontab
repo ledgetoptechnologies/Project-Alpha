@@ -37,6 +37,9 @@ CRON_LOG=/var/www/config/logs/cron/cron.log
 # Deliver default-off, operator-configured portal projections in bounded batches.
 * * * * * root . /etc/environment && php /var/www/src/cron/send_portal_projection_outbox.php >> $CRON_LOG 2>&1
 
+# Provision historical portal roots after the unified producer is fully ready.
+* * * * * root . /etc/environment && php /var/www/src/cron/reconcile_client_portal.php >> $CRON_LOG 2>&1
+
 # Retry default-off, manually-created managed delivery and revocation intents.
 * * * * * root . /etc/environment && php /var/www/src/cron/send_managed_delivery_intents.php >> $CRON_LOG 2>&1
 

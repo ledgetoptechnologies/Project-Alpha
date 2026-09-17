@@ -40,7 +40,7 @@ $stmt = $pdo->prepare('
            c.country AS client_country
     FROM project_invoices pi
     JOIN projects p ON p.id = pi.project_id
-    LEFT JOIN organizations o ON o.id = COALESCE(pi.organization_id, p.organization_id)
+    LEFT JOIN organizations o ON o.id = COALESCE(p.organization_id, pi.organization_id)
     LEFT JOIN clients c ON c.id = pi.primary_client_id
     WHERE pi.id = ?
 ');
@@ -102,7 +102,7 @@ $documentSender = document_sender_for_creator($pdo, $appConfig, !empty($pi['crea
       <?php endif; ?>
       <button type="button" class="btn btn-sm btn-success" onclick="openEmailPanel()"><?php echo $status === 'draft' ? 'Finalize & Email' : 'Email'; ?></button>
     </div>
-    <?php foreach (['generated' => 'Project invoice generated.', 'emailed' => 'Project invoice emailed.', 'paid' => 'Payment recorded.'] as $key => $msg): ?>
+    <?php foreach (['generated' => 'Project invoice generated.', 'existing' => 'Existing project invoice opened; no duplicate was created.', 'emailed' => 'Project invoice emailed.', 'paid' => 'Payment recorded.'] as $key => $msg): ?>
       <?php if (!empty($_GET[$key])): ?><div class="alert alert-success no-print"><?php echo htmlspecialchars($msg); ?></div><?php endif; ?>
     <?php endforeach; ?>
     <?php foreach (['email_err', 'payment_err'] as $key): ?>
@@ -158,8 +158,7 @@ $documentSender = document_sender_for_creator($pdo, $appConfig, !empty($pi['crea
   <?php endif; ?>
 
   <?php
-    $statementPeriod = date('M j, Y', strtotime((string)$pi['billing_period_start']))
-      . ' - ' . date('M j, Y', strtotime((string)$pi['billing_period_end']));
+    $statementPeriod = project_invoice_period_label($pi);
     $documentBrandLabel = 'Project Invoice PI-' . $docNum;
     $documentBrandMetaLines = [
       'Project ' . $pi['project_name'],
@@ -175,8 +174,8 @@ $documentSender = document_sender_for_creator($pdo, $appConfig, !empty($pi['crea
         <div style="font-size:24px;font-weight:700">$<?php echo number_format((float)$pi['balance_due'], 2); ?></div>
       </div>
       <div style="<?php echo $isPdf ? 'display:table-cell;vertical-align:top;width:35%;padding-right:10px' : ''; ?>">
-        <div style="font-size:12px;color:#6b7280">Billing Period</div>
-        <div style="font-weight:700"><?php echo htmlspecialchars(date('M j, Y', strtotime($pi['billing_period_start']))); ?> - <?php echo htmlspecialchars(date('M j, Y', strtotime($pi['billing_period_end']))); ?></div>
+        <div style="font-size:12px;color:#6b7280"><?php echo ($pi['finalization_source'] ?? '') === 'billing_mode_transition' ? 'Closing Period' : 'Billing Period'; ?></div>
+        <div style="font-weight:700"><?php echo htmlspecialchars($statementPeriod); ?></div>
       </div>
       <div style="<?php echo $isPdf ? 'display:table-cell;vertical-align:top;width:25%;padding-right:10px' : ''; ?>">
         <div style="font-size:12px;color:#6b7280">Due Date</div>

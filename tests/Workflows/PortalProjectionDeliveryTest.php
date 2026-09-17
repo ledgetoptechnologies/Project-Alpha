@@ -48,16 +48,20 @@ final class PortalProjectionDeliveryTest extends TestCase
 
         self::assertSame(['processed'=>1, 'delivered'=>1, 'failed'=>0, 'dead_lettered'=>0], $summary);
         self::assertSame('https://receiver.example/internal/portal', $captured['url']);
-        self::assertSame($body, $captured['rawBody']);
+        $outer=json_decode($captured['rawBody'],true,32,JSON_THROW_ON_ERROR);
+        self::assertSame('delivery-two',$outer['event_id']);
+        self::assertSame('portal.projection',$outer['event_type']);
+        self::assertSame(1,$outer['schema_version']);
+        self::assertSame('portal_test',$outer['application_key']);
+        self::assertSame('portal',$outer['projection_kind']);
+        self::assertSame(json_decode($body,true,32,JSON_THROW_ON_ERROR),$outer['projection']);
         self::assertSame(15, $captured['timeout']);
         $headers = $this->headers($captured['headers']);
-        self::assertSame('portal_test', $headers['x-portal-integration-application-key']);
-        self::assertSame('key-current', $headers['x-portal-integration-key-id']);
-        self::assertSame('delivery-two', $headers['x-portal-integration-delivery-id']);
-        self::assertSame(hash('sha256', $body), $headers['x-portal-integration-body-sha256']);
-        $canonical = $headers['x-portal-integration-timestamp'] . "\nPOST\n/internal/portal\nkey-current\ndelivery-two\n" . $body;
-        self::assertSame('sha256=' . hash_hmac('sha256', $canonical, str_repeat('c', 32)), $headers['x-portal-integration-signature']);
-        self::assertSame('Bearer opaque-test-value', $headers['authorization']);
+        self::assertSame('delivery-two',$headers['x-pa-event-id']);
+        self::assertSame('sha256='.hash_hmac('sha256',$headers['x-pa-timestamp'].'.'.$captured['rawBody'],str_repeat('e',32)),$headers['x-pa-signature']);
+        self::assertSame('external-access-id',$headers['cf-access-client-id']);
+        self::assertSame('external-access-secret',$headers['cf-access-client-secret']);
+        self::assertArrayNotHasKey('x-portal-integration-signature',$headers);
         self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM portal_projection_outbox WHERE delivered_at IS NOT NULL")->fetchColumn());
         self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM portal_projection_outbox WHERE delivered_at IS NULL")->fetchColumn());
         self::assertSame('profile_disabled_superseded', $pdo->query("SELECT last_error_code FROM portal_projection_outbox WHERE delivery_id='delivery-one'")->fetchColumn());
@@ -85,6 +89,138 @@ final class PortalProjectionDeliveryTest extends TestCase
         self::assertStringNotContainsString('secret host detail', (string)$pdo->query('SELECT last_error_code FROM portal_projection_outbox WHERE id=1')->fetchColumn());
     }
 
+    public function testUnreadableSharedCredentialsDoNotClaimOrBurnQueuedPortalDelivery(): void
+    {
+        $pdo = $this->deliveryDatabase();
+        $pdo->exec('UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1 WHERE id=1');
+        $this->insertDelivery($pdo, 1, 'activation-waits-for-credentials', '{"kind":"snapshot.activate"}');
+        $encrypted = (string)$pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->fetchColumn();
+        $pdo->prepare("UPDATE app_config SET config_value='unreadable-ciphertext' WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->execute();
+        $transportCalled = false;
+
+        $summary = (new PortalProjectionOutboxSender())->deliverDue($pdo, 10, static function () use (&$transportCalled): array {
+            $transportCalled = true;
+            return ['status'=>204];
+        });
+
+        self::assertSame(['processed'=>0, 'delivered'=>0, 'failed'=>0, 'dead_lettered'=>0], $summary);
+        self::assertFalse($transportCalled);
+        self::assertSame(['attempts'=>0, 'dead'=>null, 'claimed'=>null], $pdo->query("SELECT attempts,dead_lettered_at dead,claimed_at claimed FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetch(PDO::FETCH_ASSOC));
+
+        $pdo->prepare("UPDATE app_config SET config_value=? WHERE organization_id=0 AND config_key='external_ops_credentials_enc'")->execute([$encrypted]);
+        $pdo->exec("UPDATE app_config SET config_value='0' WHERE organization_id=0 AND config_key='external_ops_enabled'");
+        self::assertSame(['processed'=>0, 'delivered'=>0, 'failed'=>0, 'dead_lettered'=>0], (new PortalProjectionOutboxSender())->deliverDue($pdo, 10));
+        self::assertSame(0, (int)$pdo->query("SELECT attempts FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetchColumn());
+
+        $pdo->exec("UPDATE app_config SET config_value='1' WHERE organization_id=0 AND config_key='external_ops_enabled'");
+        $summary = (new PortalProjectionOutboxSender())->deliverDue($pdo, 10, static fn(): array => ['status'=>204]);
+        self::assertSame(['processed'=>1, 'delivered'=>1, 'failed'=>0, 'dead_lettered'=>0], $summary);
+        self::assertNotNull($pdo->query("SELECT delivered_at FROM portal_projection_outbox WHERE delivery_id='activation-waits-for-credentials'")->fetchColumn());
+    }
+
+    public function testEveryProjectionKindUsesTheExactExternalOperationsEndpointAndStrictEnvelope(): void
+    {
+        foreach(['portal','catalog','service_assignments'] as $kind){
+            $pdo=$this->deliveryDatabase();
+            $pdo->exec('UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1,catalog_projection_enabled=1,service_assignment_projection_enabled=1 WHERE id=1');
+            $inner=['schemaVersion'=>1,'applicationKey'=>'portal_test','deliveryId'=>'delivery-kind','occurredAt'=>'2026-09-04T12:00:00.000Z','kind'=>'event'];
+            $pdo->prepare("INSERT INTO portal_projection_outbox(integration_profile_id,delivery_id,workspace_public_id,schema_version,source_sequence,delivery_kind,route_type,is_revocation,destination_url,signing_key_id,payload_json)VALUES(1,'delivery-kind','workspace-a',1,1,'event',?,0,'https://obsolete.example.test/direct',NULL,?)")
+                ->execute([$kind,json_encode($inner,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)]);
+            $captured=[];
+            $summary=(new PortalProjectionOutboxSender())->deliverDue($pdo,1,static function(string$url,array$headers,string$body)use(&$captured):array{$captured=compact('url','headers','body');return['status'=>204];});
+            self::assertSame(1,$summary['delivered']);
+            self::assertSame('https://receiver.example/internal/portal',$captured['url']);
+            $outer=json_decode($captured['body'],true,32,JSON_THROW_ON_ERROR);
+            self::assertSame('portal.projection',$outer['event_type']);
+            self::assertSame($kind,$outer['projection_kind']);
+            self::assertSame($inner,$outer['projection']);
+            self::assertSame('delivery-kind',$outer['event_id']);
+            self::assertSame('portal_test',$outer['application_key']);
+        }
+    }
+
+    public function testUrlRotationCannotRetargetAnAlreadyQueuedProjection(): void
+    {
+        $pdo = $this->deliveryDatabase();
+        $pdo->exec('UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1 WHERE id=1');
+        $this->insertDelivery($pdo, 1, 'queued-before-url-rotation', '{"kind":"event"}');
+
+        try {
+            (new \App\Services\ExternalOpsConfigService())->save($pdo, [
+                'enabled' => 1,
+                'application_key' => 'portal_test',
+                'label' => 'Operations',
+                'webhook_url' => 'https://replacement.example/internal/events',
+            ]);
+            self::fail('A replacement receiver must not inherit queued portal data.');
+        } catch (DomainException $error) {
+            self::assertStringContainsString('pending client portal projection', $error->getMessage());
+        }
+
+        $current = (new \App\Services\ExternalOpsConfigService())->load($pdo);
+        self::assertSame('https://receiver.example/internal/portal', $current['webhook_url']);
+        $receivers = [];
+        $summary = (new PortalProjectionOutboxSender())->deliverDue(
+            $pdo,
+            1,
+            static function (string $url) use (&$receivers): array {
+                $receivers[] = $url;
+                return ['status' => 204];
+            }
+        );
+        self::assertSame(1, $summary['delivered']);
+        self::assertSame(['https://receiver.example/internal/portal'], $receivers);
+    }
+
+    public function testApplicationRotationCannotLoseOrRetargetAQueuedRevocation(): void
+    {
+        $pdo = $this->deliveryDatabase();
+        $this->insertDelivery($pdo, 1, 'revocation-before-application-rotation', '{"kind":"event"}', true);
+        $config = new \App\Services\ExternalOpsConfigService();
+        $config->save($pdo, [
+            'enabled' => 0,
+            'application_key' => 'portal_test',
+            'label' => 'Operations',
+            'webhook_url' => 'https://receiver.example/internal/portal',
+        ]);
+
+        try {
+            $config->save($pdo, [
+                'enabled' => 0,
+                'application_key' => 'replacement_app',
+                'label' => 'Replacement',
+                'webhook_url' => 'https://replacement.example/internal/events',
+            ]);
+            self::fail('A replacement application must not inherit a queued revocation.');
+        } catch (DomainException $error) {
+            self::assertStringContainsString('pending client portal projection', $error->getMessage());
+        }
+
+        $unchanged = $config->load($pdo);
+        self::assertSame('portal_test', $unchanged['application_key']);
+        self::assertSame('https://receiver.example/internal/portal', $unchanged['webhook_url']);
+        self::assertFalse($unchanged['configured_enabled']);
+        $config->save($pdo, [
+            'enabled' => 1,
+            'application_key' => 'portal_test',
+            'label' => 'Operations',
+            'webhook_url' => 'https://receiver.example/internal/portal',
+        ]);
+
+        $receivers = [];
+        $summary = (new PortalProjectionOutboxSender())->deliverDue(
+            $pdo,
+            1,
+            static function (string $url) use (&$receivers): array {
+                $receivers[] = $url;
+                return ['status' => 204];
+            }
+        );
+        self::assertSame(1, $summary['delivered']);
+        self::assertSame(['https://receiver.example/internal/portal'], $receivers);
+        self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM portal_projection_outbox WHERE delivery_id='revocation-before-application-rotation' AND delivered_at IS NOT NULL")->fetchColumn());
+    }
+
     public function testOrdinaryTombstoneCannotLeapAQueuedEarlierSequence(): void
     {
         $pdo = $this->deliveryDatabase();
@@ -99,7 +235,7 @@ final class PortalProjectionDeliveryTest extends TestCase
         });
 
         self::assertSame(1, $summary['processed']);
-        self::assertSame(['{"sourceSequence":10,"event":{"action":"upsert"}}'], $seen);
+        self::assertSame(['upsert'],array_map(static fn(string $body):string=>(string)json_decode($body,true,32,JSON_THROW_ON_ERROR)['projection']['event']['action'],$seen));
         self::assertSame(0, (int)$pdo->query("SELECT attempts FROM portal_projection_outbox WHERE delivery_id='remove-sequence-11'")->fetchColumn());
         self::assertSame(0, (int)$pdo->query("SELECT is_revocation FROM portal_projection_outbox WHERE delivery_id='remove-sequence-11'")->fetchColumn());
     }
@@ -207,7 +343,10 @@ final class PortalProjectionDeliveryTest extends TestCase
         self::assertStringNotContainsString('rotation requires both a distinct new key ID and a new secret.', $view);
         self::assertStringContainsString('Changing the signing secret requires a new signing key ID.', $service);
         self::assertStringContainsString('A rotated signing key ID requires a new signing secret.', $service);
-        self::assertStringContainsString('$error instanceof DomainException?$error->getMessage()', $handler);
+        self::assertStringContainsString('$error instanceof DomainException', $handler);
+        self::assertStringContainsString('? $error->getMessage()', $handler);
+        self::assertStringContainsString('$error instanceof PDOException', $handler);
+        self::assertStringContainsString('The integration database schema does not match this Project Alpha release.', $handler);
     }
 
     public function testRevocationWaitsForLiveClaimThenSupersedesExpiredNormalRow(): void
@@ -226,7 +365,7 @@ final class PortalProjectionDeliveryTest extends TestCase
             return ['status'=>204];
         });
         self::assertSame(1, $summary['delivered']);
-        self::assertSame(['{"event":{"action":"tombstone"}}'], $seen);
+        self::assertSame(['tombstone'],array_map(static fn(string $body):string=>(string)json_decode($body,true,32,JSON_THROW_ON_ERROR)['projection']['event']['action'],$seen));
         self::assertSame(['profile_disabled_superseded', null], $pdo->query('SELECT last_error_code FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
         self::assertNull($pdo->query("SELECT claim_token FROM portal_projection_outbox WHERE delivery_id='normal-claimed'")->fetchColumn());
     }
@@ -274,8 +413,8 @@ final class PortalProjectionDeliveryTest extends TestCase
         }
 
         $source = (string)file_get_contents(dirname(__DIR__, 2) . '/src/services/PortalProjectionMutationService.php');
-        $revokePass = "reconcileWorkspace(\$pdo,\$scope,'tombstone')";
-        $grantPass = "reconcileWorkspace(\$pdo,\$scope,'upsert')";
+        $revokePass = "reconcileWorkspace(\$pdo,\$scope,'tombstone',\$provisionPortalAuthority)";
+        $grantPass = "reconcileWorkspace(\$pdo,\$scope,'upsert',\$provisionPortalAuthority)";
         self::assertIsInt(strpos($source, $revokePass));
         self::assertIsInt(strpos($source, $grantPass));
         self::assertLessThan(strpos($source, $grantPass), strpos($source, $revokePass));
@@ -432,11 +571,23 @@ final class PortalProjectionDeliveryTest extends TestCase
             'authHeaders'=>['Authorization'=>'Bearer opaque-test-value'],
         ], JSON_THROW_ON_ERROR));
         $pdo->exec("CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT,PRIMARY KEY(organization_id,config_key));
-            CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,application_key TEXT,enabled INTEGER,portal_projection_enabled INTEGER,catalog_projection_enabled INTEGER,portal_route TEXT,catalog_route TEXT,delivery_enabled INTEGER,delivery_key_id TEXT,delivery_previous_key_id TEXT,delivery_previous_valid_until TEXT,delivery_credentials_enc TEXT,delivery_timeout_seconds INTEGER,delivery_max_attempts INTEGER,updated_by INTEGER);
+            CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,application_key TEXT,enabled INTEGER,portal_projection_enabled INTEGER,catalog_projection_enabled INTEGER,service_assignment_projection_enabled INTEGER,portal_route TEXT,catalog_route TEXT,delivery_enabled INTEGER,delivery_key_id TEXT,delivery_previous_key_id TEXT,delivery_previous_valid_until TEXT,delivery_credentials_enc TEXT,delivery_timeout_seconds INTEGER,delivery_max_attempts INTEGER,updated_by INTEGER);
             CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,delivery_id TEXT,workspace_public_id TEXT,schema_version INTEGER,source_sequence INTEGER,delivery_kind TEXT,route_type TEXT,is_revocation INTEGER DEFAULT 0,destination_url TEXT,signing_key_id TEXT,payload_json TEXT,attempts INTEGER DEFAULT 0,next_attempt_at TEXT DEFAULT '2000-01-01 00:00:00.000000',claim_token TEXT,claimed_at TEXT,delivered_at TEXT,dead_lettered_at TEXT,last_http_status INTEGER,last_error_code TEXT);
+            CREATE TABLE portal_projection_recoveries(id INTEGER PRIMARY KEY AUTOINCREMENT,integration_profile_id INTEGER,workspace_public_id TEXT,route_type TEXT DEFAULT 'portal',failed_row_cutoff_id INTEGER,source_generation TEXT,activation_delivery_id TEXT UNIQUE,state TEXT DEFAULT 'queued',requested_by INTEGER,completed_at TEXT,failed_at TEXT,last_error_code TEXT);
             INSERT INTO app_config VALUES(0,'portal_outbound_delivery_enabled','1'),(0,'portal_authoritative_hooks_enabled','0');");
-        $insert = $pdo->prepare("INSERT INTO portal_integration_profiles VALUES(1,'portal_test',0,0,0,'https://receiver.example/internal/portal','https://receiver.example/internal/catalog',1,'key-current','key-previous','2099-01-01 00:00:00.000000',?,15,12,NULL)");
+        $insert = $pdo->prepare("INSERT INTO portal_integration_profiles VALUES(1,'portal_test',0,0,0,0,'https://receiver.example/internal/portal','https://receiver.example/internal/catalog',1,'key-current','key-previous','2099-01-01 00:00:00.000000',?,15,12,NULL)");
         $insert->execute([$credentials]);
+        (new \App\Services\ExternalOpsConfigService())->save($pdo,[
+            'enabled'=>1,
+            'label'=>'Operations',
+            'application_key'=>'portal_test',
+            'webhook_url'=>'https://receiver.example/internal/portal',
+            'access_client_id'=>'external-access-id',
+            'access_client_secret'=>'external-access-secret',
+            'hmac_secret'=>str_repeat('e',32),
+            'timeout_seconds'=>15,
+            'max_attempts'=>12,
+        ]);
         return $pdo;
     }
 
@@ -471,6 +622,7 @@ final class PortalProjectionDeliveryTest extends TestCase
             CREATE TABLE portal_v2_workspaces(id INTEGER PRIMARY KEY,public_id TEXT,root_type TEXT,root_public_id TEXT,display_name TEXT,source_version TEXT,active INTEGER);
             CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,enabled INTEGER,portal_projection_enabled INTEGER);
             CREATE TABLE portal_integration_profile_workspaces(profile_id INTEGER,workspace_id INTEGER,active INTEGER,PRIMARY KEY(profile_id,workspace_id));
+            CREATE TABLE portal_client_access_roots(root_type TEXT,root_public_id TEXT,access_state TEXT,state_reason TEXT,last_reconciled_at TEXT,created_by INTEGER,updated_by INTEGER,PRIMARY KEY(root_type,root_public_id));
             CREATE TABLE portal_v2_contacts(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT DEFAULT (lower(hex(randomblob(16)))),client_id INTEGER UNIQUE,display_name TEXT,source_version TEXT,active INTEGER);
             CREATE TABLE portal_v2_relations(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT DEFAULT (lower(hex(randomblob(16)))),relation_type TEXT,from_type TEXT,from_public_id TEXT,to_type TEXT,to_public_id TEXT,source_version TEXT,active INTEGER,UNIQUE(relation_type,from_type,from_public_id,to_type,to_public_id));
             CREATE TABLE portal_projection_outbox(id INTEGER PRIMARY KEY AUTOINCREMENT);

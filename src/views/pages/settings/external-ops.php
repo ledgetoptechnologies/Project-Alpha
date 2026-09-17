@@ -22,6 +22,16 @@ $accessDetail = null;
 $projectSources = [];
 $status = [];
 $directoryError = false;
+$portalStatus = ['configured'=>false,'ready'=>false,'profile'=>null,'counts'=>['active_roots'=>0,'revoked_roots'=>0,'eligible'=>0,'review_required'=>0,'revoked'=>0,'active_workspaces'=>0,'historical_remaining'=>0,'failed_backfill'=>0,'pending'=>0,'retrying'=>0,'failed'=>0,'failed_portal'=>0,'failed_revocations'=>0,'recoveries_pending'=>0],'delivery_diagnostics'=>['oldest_pending_age_seconds'=>null,'retries'=>[],'terminal'=>[]],'scheduler'=>['reconciliation'=>['state'=>'unknown','last_run'=>null],'delivery'=>['state'=>'unknown','last_run'=>null]],'preflight'=>['ready'=>false,'operations_delivery_ready'=>false,'checks'=>[],'issues'=>[],'receiver_verification'=>'']];
+$portalStatusError = false;
+
+try {
+    $portalProvisioning = new \App\Services\PortalClientProvisioningService();
+    $portalStatus = $portalProvisioning->status($pdo, $applicationKey);
+} catch (Throwable $error) {
+    $portalStatusError = true;
+    error_log('[custom_integration_settings] Failed to load connected-workspace synchronization status: ' . $error->getMessage());
+}
 
 if (!empty($config['enabled'])) {
     try {
@@ -78,9 +88,71 @@ if (!empty($config['enabled'])) {
       <label class="field" style="grid-column:1/-1"><span class="label">HMAC secret</span><input class="input" type="password" name="hmac_secret" minlength="32" autocomplete="new-password" placeholder="<?=!empty($config['hmac_secret'])?'Configured - leave blank to keep':'Same 32+ character secret as the receiver'?>"></label>
       <label class="field"><span class="label">Timeout seconds</span><input class="input" type="number" name="timeout_seconds" min="2" max="30" value="<?=(int)$config['timeout_seconds']?>"></label>
       <label class="field"><span class="label">Maximum attempts</span><input class="input" type="number" name="max_attempts" min="1" max="100" value="<?=(int)$config['max_attempts']?>"></label>
+      <label class="check-row" style="grid-column:1/-1"><input type="checkbox" name="service_assignment_projection_enabled" value="1" <?=!empty($portalStatus['profile']['service_assignment_projection_enabled'])?'checked':''?>> Publish assigned services to the connected application</label>
+      <small style="grid-column:1/-1">Default off. This publishes explicit service availability through the same signed connection. It never grants sign-in, workspace membership, file access, billing access, or notifications.</small>
+      <label class="check-row" style="grid-column:1/-1"><input type="checkbox" name="contact_assignment_projection_enabled" value="1" <?=!empty($portalStatus['profile']['contact_assignment_projection_enabled'])?'checked':''?>> Publish scoped contact roles to the connected application</label>
+      <small style="grid-column:1/-1">Default off. This publishes explicit department and project contact roles as informational metadata. It never creates a sign-in, membership, entitlement, file grant, billing authority, or notification recipient.</small>
     </div>
     <button class="btn btn-primary">Save integration</button>
   </form>
+</div>
+
+<?php $signingKeys=(array)($config['signing_keys']??[]);$activeSigningMode=(string)($config['signing_mode']??'hmac-sha256'); ?>
+<div class="settings-card" id="outbound-signing">
+  <div class="settings-section-heading"><h3>Outbound signing</h3><p>This is the signing method for the same External Operations connection above. It does not create another endpoint, application profile, or client-portal connection.</p></div>
+  <div class="settings-form-grid">
+    <div><span class="label">Active method</span><strong><?=$h($activeSigningMode==='ed25519'?'Ed25519':'HMAC-SHA256')?></strong></div>
+    <div><span class="label">Active key ID</span><strong><?=$h((string)($config['signing_key_id']??'external_ops_hmac_v1'))?></strong></div>
+    <?php if($activeSigningMode==='ed25519'):?><div style="grid-column:1/-1"><span class="label">Active public key</span><code style="display:block;overflow-wrap:anywhere;white-space:normal"><?=$h((string)($config['signing_public_key']??''))?></code></div><?php endif;?>
+  </div>
+  <p style="color:var(--muted);font-size:13px">Private signing keys are encrypted and never displayed or exported. Generate a staged key, register its public key with the existing receiver, then explicitly activate it after all pending deliveries have been resolved.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+    <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Generate a new staged Ed25519 key? Project Alpha will display only its public key.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="generate-ed25519-signing-key"><button class="btn">Generate staged Ed25519 key</button></form>
+    <?php if($activeSigningMode==='ed25519'):?><form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Switch back to the configured HMAC key? This is blocked while the current signing contract has pending delivery.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="activate-hmac-signing"><label class="check-row"><input type="checkbox" name="confirm_hmac_fallback" value="1" required> Receiver still accepts HMAC</label><button class="btn">Use HMAC-SHA256</button></form><?php endif;?>
+  </div>
+  <?php foreach($signingKeys as $signingKey): if(($signingKey['state']??'')!=='staged')continue; ?>
+    <div class="settings-alert settings-alert-info" style="margin-top:10px"><strong>Staged Ed25519 key: <?=$h((string)$signingKey['key_id'])?></strong><br><span class="label">Public key</span><code style="display:block;overflow-wrap:anywhere;white-space:normal"><?=$h((string)$signingKey['public_key_b64'])?></code>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Activate this Ed25519 key on the existing connection? This is blocked while any signed delivery remains unresolved.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="activate-ed25519-signing-key"><input type="hidden" name="signing_key_id" value="<?=$h((string)$signingKey['key_id'])?>"><label class="check-row"><input type="checkbox" name="receiver_key_registered" value="1" required> Receiver has registered this exact public key</label><button class="btn btn-primary">Activate Ed25519</button></form>
+        <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('Retire this unused staged key? Its private material will be removed permanently.')"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="retire-ed25519-signing-key"><input type="hidden" name="signing_key_id" value="<?=$h((string)$signingKey['key_id'])?>"><button class="btn">Retire staged key</button></form>
+      </div>
+    </div>
+  <?php endforeach; ?>
+</div>
+
+<div class="settings-card" id="connected-workspace-synchronization">
+  <div class="settings-section-heading"><h3>Connected workspace synchronization</h3><p>Project Alpha publishes eligible client identities and organization structure as signed events through this external application connection. The connected application can use those records to provision its own client-facing workspaces. Sign-in and resource access remain controlled by that application.</p></div>
+  <?php if($portalStatusError):?>
+    <div class="settings-alert settings-alert-danger" role="alert">Connected workspace synchronization status could not be loaded. Apply the current database migrations, then reload this page.</div>
+  <?php else:?>
+    <?php $portalCounts=(array)$portalStatus['counts'];$portalDiagnostics=(array)($portalStatus['delivery_diagnostics']??[]);$portalRetries=(array)($portalDiagnostics['retries']??[]);$portalTerminal=(array)($portalDiagnostics['terminal']??[]);$portalScheduler=(array)($portalStatus['scheduler']??[]);$portalPreflight=(array)($portalStatus['preflight']??[]);$portalIssues=(array)($portalPreflight['issues']??[]);$cronPreflightCodes=(array)($portalScheduler['reconciliation']['preflight_codes']??[]);$preflightLabels=[];foreach((array)($portalPreflight['checks']??[])as$check){$key=(string)($check['key']??'');if($key!=='')$preflightLabels[$key]=(string)($check['label']??$key);}$cronPreflightLabels=[];foreach($cronPreflightCodes as$code)if(isset($preflightLabels[(string)$code]))$cronPreflightLabels[]=$preflightLabels[(string)$code];$oldestQueuedAge=isset($portalDiagnostics['oldest_pending_age_seconds'])&&$portalDiagnostics['oldest_pending_age_seconds']!==null?(int)$portalDiagnostics['oldest_pending_age_seconds']:null;$formatQueuedAge=static function(?int$seconds):string{if($seconds===null)return'None';if($seconds<60)return'Under a minute';if($seconds<3600)return floor($seconds/60).' minutes';if($seconds<86400)return floor($seconds/3600).' hours';return floor($seconds/86400).' days';};$schedulerLabel=static function(string$state):string{return match($state){'ran'=>'Observed','preflight_not_ready'=>'Preflight not ready','running'=>'Running','failed'=>'Failed',default=>'Not yet observed'};};?>
+    <?php if(!empty($portalStatus['transition_message'])):?><div class="settings-alert settings-alert-warning" role="status"><?=$h($portalStatus['transition_message'])?></div><?php endif;?>
+    <div class="settings-form-grid">
+      <div><span class="label">External application connection</span><strong><?=!empty($portalPreflight['operations_delivery_ready'])?'Ready':'Paused'?></strong></div>
+      <div><span class="label">Workspace event routing</span><strong><?=!empty($portalStatus['ready'])?'Ready':'Paused'?></strong></div>
+      <div><span class="label">Active workspaces</span><strong><?=(int)($portalCounts['active_workspaces']??0)?></strong></div>
+      <div><span class="label">Historical roots remaining</span><strong><?=(int)($portalCounts['historical_remaining']??0)?></strong></div>
+      <div><span class="label">Historical roots requiring retry</span><strong><?=(int)($portalCounts['failed_backfill']??0)?></strong></div>
+      <div><span class="label">Eligible contacts</span><strong><?=(int)($portalCounts['eligible']??0)?></strong></div>
+      <div><span class="label">Needs review</span><strong><?=(int)($portalCounts['review_required']??0)?></strong></div>
+      <div><span class="label">Revoked</span><strong><?=(int)($portalCounts['revoked']??0)?></strong></div>
+      <div><span class="label">Total pending / retrying (subset) / terminal failed</span><strong><?=(int)($portalCounts['pending']??0)?> / <?=(int)($portalCounts['retrying']??0)?> / <?=(int)($portalCounts['failed']??0)?></strong></div>
+      <div><span class="label">Replacement snapshots pending</span><strong><?=(int)($portalCounts['recoveries_pending']??0)?></strong></div>
+      <div><span class="label">Oldest queued age</span><strong><?=$h($formatQueuedAge($oldestQueuedAge))?></strong></div>
+      <div><span class="label">Scheduled reconciliation</span><strong><?=$h($schedulerLabel((string)($portalScheduler['reconciliation']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['reconciliation']['last_run']??'No run recorded'))?></small></div>
+      <div><span class="label">Scheduled delivery</span><strong><?=$h($schedulerLabel((string)($portalScheduler['delivery']['state']??'unknown')))?></strong><small><?=$h((string)($portalScheduler['delivery']['last_run']??'No run recorded'))?></small></div>
+    </div>
+    <?php if($cronPreflightLabels):?><div class="settings-alert settings-alert-warning" role="status"><strong>Cron-reported prerequisite blockers:</strong> <?=$h(implode(', ',$cronPreflightLabels))?>.<br><small>If the web process is ready but cron reports these blockers, recreate cron from the current release while preserving the shared configuration volume. Verify cron loaded the same effective application encryption key without printing key values or credentials.</small></div><?php endif;?>
+    <?php if($portalRetries):?><div class="settings-alert settings-alert-warning" role="status"><strong>Workspace-event retries:</strong><div class="pa-table-wrap"><table class="pa-table"><thead><tr><th>Safe code</th><th>HTTP status</th><th>Highest attempt</th><th>Records</th></tr></thead><tbody><?php foreach($portalRetries as$retry):?><tr><td><code><?=$h((string)($retry['code']??'delivery_retry'))?></code></td><td><?=$h(isset($retry['http_status'])&&$retry['http_status']!==null?(string)$retry['http_status']:'None')?></td><td><?=(int)($retry['attempts']??0)?></td><td><?=(int)($retry['count']??0)?></td></tr><?php endforeach;?></tbody></table></div><small>Only fixed sender codes and numeric statuses are shown; receiver bodies, addresses, delivery IDs, workspace identifiers, and credentials are never displayed.</small></div><?php endif;?>
+    <?php if($portalTerminal):?><div class="settings-alert settings-alert-danger" role="alert"><strong>Terminal workspace-event failures require investigation:</strong><div class="pa-table-wrap"><table class="pa-table"><thead><tr><th>Projection</th><th>Safe code</th><th>HTTP status</th><th>Highest attempt</th><th>Records</th><th>Workspaces</th></tr></thead><tbody><?php foreach($portalTerminal as$failure):?><tr><td><?=$h((string)($failure['route']??'unknown'))?></td><td><code><?=$h((string)($failure['code']??'terminal_failure'))?></code></td><td><?=$h(isset($failure['http_status'])&&$failure['http_status']!==null?(string)$failure['http_status']:'None')?></td><td><?=(int)($failure['attempts']??0)?></td><td><?=(int)($failure['count']??0)?></td><td><?=(int)($failure['workspaces']??0)?></td></tr><?php endforeach;?></tbody></table></div><small>Repair and verify the receiver before queuing replacement snapshots. Original failed records remain preserved for audit.</small></div><?php endif;?>
+    <p style="color:var(--muted);font-size:13px">Retrying is included in total pending. Scheduled reconciliation and delivery are evidence recorded by the cron process, separate from this page's web-process readiness check.</p>
+    <p><strong>One outbound connection.</strong> Workspace records and ordinary integration updates use the signed event URL and credentials configured above. API-key pull reconciliation remains a receiver-driven recovery path.</p>
+    <?php if($portalIssues):?>
+      <div class="settings-alert settings-alert-warning" role="status"><strong>Workspace publisher still needs:</strong> <?=$h(implode(', ',$portalIssues))?>.</div>
+    <?php endif;?>
+    <p style="color:var(--muted);font-size:13px"><?=$h((string)($portalPreflight['receiver_verification']??''))?> Project Alpha reports only its own producer prerequisites and never displays credential values.</p>
+    <?php require __DIR__ . '/external-ops-recovery-actions.php'; ?>
+  <?php endif;?>
 </div>
 
 <?php if (!empty($config['configured_enabled']) && empty($config['delivery_ready'])): ?>
@@ -174,4 +246,4 @@ if (!empty($config['enabled'])) {
   </script>
 <?php endif; ?>
 
-<div class="settings-card"><h3>Synchronization status</h3><div class="settings-form-grid"><div><span class="label">Connection</span><strong><?=empty($config['configured_enabled'])?'Disabled':(!empty($config['delivery_ready'])?'Ready':'Paused')?></strong></div><div><span class="label">Pending</span><strong><?=(int)($status['pending']??0)?></strong></div><div><span class="label">Retry errors</span><strong><?=(int)($status['failed']??0)?></strong></div><div><span class="label">Last delivered</span><strong><?=$h($status['last_delivered_at']??'Never')?></strong></div></div><form method="post" action="/?page=settings/external-ops-handler"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="send-now"><button class="btn" <?=empty($config['delivery_ready'])?'disabled aria-disabled="true" title="Outbound delivery is paused"':''?>>Send due outbound events</button></form></div>
+<div class="settings-card"><h3>Synchronization status</h3><div class="settings-form-grid"><div><span class="label">Connection</span><strong><?=empty($config['configured_enabled'])?'Disabled':(!empty($config['delivery_ready'])?'Ready':'Paused')?></strong></div><div><span class="label">Pending ordinary events</span><strong><?=(int)($status['pending']??0)?></strong></div><div><span class="label">Ordinary retry errors</span><strong><?=(int)($status['failed']??0)?></strong></div><div><span class="label">Pending portal events</span><strong><?=(int)(($portalStatus['counts']['pending']??0))?></strong></div><div><span class="label">Last ordinary event delivered</span><strong><?=$h($status['last_delivered_at']??'Never')?></strong></div></div><p>A manual sync activates portal routing from this one connection, reconciles a bounded historical batch, and sends due ordinary and portal events within the request deadline. Repeat it while historical roots remain; scheduled jobs continue safely in the background.</p><form method="post" action="/?page=settings/external-ops-handler"><input type="hidden" name="csrf" value="<?=$h(csrf_token())?>"><input type="hidden" name="action" value="send-now"><button class="btn" <?=empty($config['delivery_ready'])?'disabled aria-disabled="true" title="Outbound delivery is paused"':''?>>Sync now</button></form></div>

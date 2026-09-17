@@ -8,7 +8,7 @@ description: Provider-neutral read-only bootstrap and event contract for externa
 
 Sync Contract v2 is an opt-in, provider-neutral interface for synchronizing a
 least-privilege Project Alpha projection. Project Alpha remains authoritative.
-Version 1 is unchanged.
+Existing version 1 keys and pagination remain compatible.
 
 The route is disabled unless `APP_SYNC_CONTRACT_V2_ENABLED=true`. Keep that
 setting false until every item in the production gate has been completed.
@@ -45,6 +45,39 @@ Consumers identify a resource by the tuple:
 
 Local numeric IDs are serialized as strings. Email addresses, names, codes, and
 other editable attributes are never identities.
+
+The existing **v1** snapshot exports the stored `public_id` of organizations,
+clients, and projects as an additive field on each resource row. The v2
+snapshot and upsert projection export that same value in `data.public_id`. This is
+the same source-issued, 32-character lowercase hexadecimal identifier used by
+the portal projection, **not** a hyphenated installation/session UUID. Numeric
+`id` and relationship fields such as `organization_id` and
+`client_id` retain their original values and types. Build an explicit,
+source-scoped mapping between these identifiers; never infer a link from equal
+names, email addresses, or unqualified IDs from another installation.
+Client `email` and `phone` remain scalar fields; this addition does not introduce
+a contacts array or change their existing null handling.
+
+Migration `0062_client_portal_foundation.sql` backfilled these IDs once, makes
+them non-null and unique within each entity table, and assigns IDs when new rows
+are inserted. Snapshot reads do not create or repair IDs. A missing or malformed
+stored ID fails either export rather than publishing a fabricated mapping. Older
+producers without this additive field remain unmapped until upgraded and synced.
+
+Adding this field changes the v2 content fingerprint of an already-observed
+resource. The contract deliberately reports `sync_state_out_of_date` rather than
+silently replacing that fingerprint; such a deployment requires an explicit
+versioned compatibility transition. Before enabling v2 in production, protect
+global event commit ordering: an
+auto-increment sequence can be allocated before another transaction commits a
+higher sequence, so a consumer checkpointing that higher value could miss the
+earlier transaction's late event. Per-resource locks and a plain `MAX(sequence)`
+high-water read do not prevent this. A transaction-held global sequencing lock
+with consistent lock ordering, or an equivalent proven mechanism, must precede
+the upgrade. Validate it with a real MySQL three-connection test (two writers and
+a reader), including delayed commits, rollbacks, checkpoint advancement, and
+replay convergence. Do not enable v2 in production or synthesize mappings while
+these prerequisites remain incomplete.
 
 ## Snapshot bootstrap
 
@@ -195,6 +228,9 @@ Before an external application consumes v2 in production:
   transaction contract and emit explicit deletion tombstones;
 - expose signed event delivery after `high_water_sequence`, with retry,
   deduplication, leasing, dead-letter, and replay behavior;
+- protect global event commit order and prove checkpoint/replay convergence with
+  two concurrent writers and a reader before any snapshot-driven public-ID
+  fingerprint upgrade;
 - add tenant isolation if an installation hosts more than one security tenant;
 - run a full snapshot plus concurrent-mutation convergence test;
 - document rate-limit headers and operational cursor-expiry/restart behavior;

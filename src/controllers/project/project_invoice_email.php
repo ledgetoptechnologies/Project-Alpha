@@ -43,7 +43,9 @@ if (invoice_should_prompt_for_missing_content_links($pdo, 'project_invoice', $id
         exit;
     }
 }
-$sent = project_invoice_send_email($pdo, $id, $appConfig, $recipientClientIds, true, $recipientKeys);
-$param = $sent > 0 ? 'emailed=1' : 'email_err=' . urlencode('No new project invoice emails were sent.');
+$delivery = project_invoice_send_email_result($pdo, $id, $appConfig, $recipientClientIds, true, $recipientKeys);
+$param = $delivery['sent'] > 0
+    ? 'emailed=1'
+    : 'email_err=' . urlencode((string)$delivery['message']);
 header('Location: /?page=project/project-invoice-details&id=' . $id . '&' . $param);
 exit;

@@ -28,6 +28,7 @@ final class ProjectCloseGuardServiceTest extends TestCase
         $this->pdo->exec('CREATE TABLE contracts (id INTEGER PRIMARY KEY,project_id INTEGER,job_id INTEGER,doc_number TEXT,status TEXT NOT NULL,contract_type TEXT NOT NULL DEFAULT \'regular\')');
         $this->pdo->exec('CREATE TABLE invoices (id INTEGER PRIMARY KEY,project_id INTEGER,status TEXT,balance_due TEXT,collection_mode TEXT,finalized_at TEXT)');
         $this->pdo->exec('CREATE TABLE project_invoices (id INTEGER PRIMARY KEY,project_id INTEGER,status TEXT,balance_due TEXT,finalized_at TEXT)');
+        $this->pdo->exec('CREATE TABLE project_invoice_items (id INTEGER PRIMARY KEY,project_invoice_id INTEGER,invoice_id INTEGER UNIQUE)');
         $this->pdo->exec('CREATE TABLE system_audit (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,organization_id INTEGER,action TEXT,entity_type TEXT,entity_id INTEGER,details TEXT,ip_address TEXT,user_agent TEXT)');
         $this->pdo->exec("INSERT INTO projects (id,organization_id,status,source_version) VALUES (1,7,'active','initial'),(2,7,'active','initial'),(3,7,'completed','initial')");
     }
@@ -65,6 +66,7 @@ final class ProjectCloseGuardServiceTest extends TestCase
             (23,1,'partial','3.75','direct','2026-08-01'),
             (24,1,'overdue','2.00','direct','2026-08-01'),
             (25,1,'sent','50.00','project_aggregate','2026-08-01'),
+            (28,1,'draft','11.00','project_aggregate',NULL),
             (26,1,'credited','9.00','direct','2026-08-01'),
             (27,1,'unpaid','0.00','direct','2026-08-01')");
         $this->pdo->exec("INSERT INTO project_invoices VALUES
@@ -80,8 +82,9 @@ final class ProjectCloseGuardServiceTest extends TestCase
         self::assertSame('completed', $this->projectStatus(1));
         $details = json_decode((string)$this->pdo->query('SELECT details FROM system_audit ORDER BY id DESC LIMIT 1')->fetchColumn(), true);
         self::assertTrue($details['closed_with_outstanding_receivables']);
-        self::assertSame(2100, $details['outstanding_receivables_minor']);
+        self::assertSame(7100, $details['outstanding_receivables_minor']);
         self::assertSame(['count' => 3, 'amount_minor' => 1600], $details['outstanding_receivables_sources']['direct_invoices']);
+        self::assertSame(['count' => 1, 'amount_minor' => 5000], $details['outstanding_receivables_sources']['pending_project_charges']);
         self::assertSame(['count' => 1, 'amount_minor' => 500], $details['outstanding_receivables_sources']['project_invoices']);
     }
 
@@ -209,10 +212,17 @@ final class ProjectCloseGuardServiceTest extends TestCase
 
     public function testReceivablesBatchReturnsExactTotalsAndZeroRows(): void
     {
-        $this->pdo->exec("INSERT INTO invoices VALUES (1,1,'sent','1.25','direct','2026-08-01'),(2,2,'partial','2.50','direct','2026-08-01')");
-        $this->pdo->exec("INSERT INTO project_invoices VALUES (3,1,'unpaid','3.75','2026-08-01')");
+        $this->pdo->exec("INSERT INTO invoices VALUES
+            (1,1,'sent','1.25','direct','2026-08-01'),
+            (2,2,'partial','2.50','direct','2026-08-01'),
+            (4,1,'unpaid','4.25','project_aggregate','2026-08-01'),
+            (5,1,'draft','9.00','project_aggregate',NULL),
+            (6,1,'unpaid','8.00','project_aggregate','2026-08-01')");
+        $this->pdo->exec("INSERT INTO project_invoices VALUES (3,1,'overdue','3.75','2026-08-01')");
+        $this->pdo->exec('INSERT INTO project_invoice_items VALUES (1,3,6)');
         $summaries = (new ProjectReceivablesSummaryService($this->pdo))->summarizeProjects([999, 2, 1]);
-        self::assertSame(500, $summaries[1]['total_minor']);
+        self::assertSame(925, $summaries[1]['total_minor']);
+        self::assertSame(['count' => 1, 'amount_minor' => 425], $summaries[1]['sources']['pending_project_charges']);
         self::assertSame(250, $summaries[2]['total_minor']);
         self::assertSame(0, $summaries[999]['total_minor']);
         self::assertFalse($summaries[999]['has_outstanding']);

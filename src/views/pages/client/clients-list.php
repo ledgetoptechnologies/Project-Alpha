@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../../utils/format.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/acl.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus = api_v2_directory_management_status($pdo);
 $per = null; // show all clients
 $pageN = 1;
 $offset = 0;
@@ -52,6 +54,7 @@ function client_list_email_html(?string $email): string
 ?>
 <section>
   <h2>Clients</h2>
+  <?php if($directoryManagementStatus['configured']):?><div style="margin:10px 0;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;font-size:13px"><?php echo e(api_v2_directory_management_warning($directoryManagementStatus)); ?></div><?php endif;?>
   <div style="margin:8px 0">
     <a href="/?page=client/archived-clients" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff">View Archived</a>
   </div>
@@ -102,8 +105,7 @@ function client_list_email_html(?string $email): string
           <th style="padding:10px">Phone</th>
           <th style="padding:10px">Organization</th>
           <!-- <th style="padding:10px">Created</th> -->
-          <th style="padding:10px">Edit</th>
-          <th style="padding:10px">Actions</th>
+          <?php if(!$directoryManagementStatus['effective']):?><th style="padding:10px">Edit</th><th style="padding:10px">Actions</th><?php endif;?>
         </tr>
       </thead>
       <tbody>
@@ -114,7 +116,7 @@ function client_list_email_html(?string $email): string
             <td style="padding:10px"><?php echo htmlspecialchars(format_phone($c['phone'] ?? '')); ?></td>
             <td style="padding:10px"><?php echo htmlspecialchars($c['organization_name'] ?? ''); ?></td>
             <!-- <td style="padding:10px"><?php echo htmlspecialchars($c['created_at']); ?></td> -->
-            <td style="padding:10px"><a href="/?page=client/clients-edit&id=<?php echo (int)$c['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: medium;">Edit</a></td>
+            <?php if(!$directoryManagementStatus['effective']):?><td style="padding:10px"><a href="/?page=client/clients-edit&id=<?php echo (int)$c['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: medium;">Edit</a></td>
             <td style="padding:10px">
               <!-- TODO: archive button does not work on the edit view of a client -->
               <form method="post" action="/?page=client/clients-delete" onsubmit="return confirm('Archive client <?php echo e($c['name']); ?>? This moves the client to Archived Clients.');" style="display:inline">
@@ -123,6 +125,7 @@ function client_list_email_html(?string $email): string
                 <button type="submit" style="padding:6px 10px;border:1px solid #fca5a5;border-radius:8px;background:#fff;color:#b91c1c">Archive</button>
               </form>
             </td>
+            <?php endif;?>
           </tr>
         <?php endforeach; ?>
       </tbody>

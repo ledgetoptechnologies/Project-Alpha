@@ -3,13 +3,14 @@
 declare(strict_types=1);
 
 use App\Services\ExternalOpsIntegrationService;
-use App\Services\ExternalOpsOutboxSender;
 use App\Services\ExternalOpsConfigService;
 use App\Services\PortalAuthorityService;
 use App\Services\PortalProjectionService;
 use App\Services\PortalProjectionMutationService;
 use App\Services\PortalProjectionDeliveryConfigService;
 use App\Services\PortalProjectionOutboxSender;
+use App\Services\PortalClientProvisioningService;
+use App\Services\ExternalOpsSyncOrchestrator;
 
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
@@ -31,12 +32,76 @@ try {
     $action = (string)($_POST['action'] ?? '');
     $config = pa_external_ops_delivery_config($pdo);
     if ($action === 'save-config') {
-        $config = (new ExternalOpsConfigService())->save($pdo, $_POST);
-        audit_log($pdo, 'external_ops.configured', 'settings', null, [
-            'enabled' => !empty($config['enabled']),
-            'application_key' => (string)$config['application_key'],
-            'webhook_host' => (string)(parse_url((string)$config['webhook_url'], PHP_URL_HOST) ?: ''),
-        ]);
+        $pdo->beginTransaction();
+        try {
+            $config = (new ExternalOpsConfigService())->save($pdo, $_POST);
+            // This capability is intentionally not part of the generic
+            // integration config or deployment secrets. It remains an
+            // explicit, administrator-controlled checkbox on the one connection.
+            $config['service_assignment_projection_enabled'] = !empty($_POST['service_assignment_projection_enabled']);
+            $config['contact_assignment_projection_enabled'] = !empty($_POST['contact_assignment_projection_enabled']);
+            $portalProvisioning = new PortalClientProvisioningService();
+            $profileId = $portalProvisioning->configureConnection($pdo, $config, $actorUserId);
+            $portalConnectionStatus = $portalProvisioning->status($pdo, (string)$config['application_key']);
+            if (!empty($portalConnectionStatus['transition_message'])) $message = (string)$portalConnectionStatus['transition_message'];
+            audit_log($pdo, 'external_ops.configured', 'settings', null, [
+                'enabled' => !empty($config['enabled']),
+                'application_key' => (string)$config['application_key'],
+                'webhook_host' => (string)(parse_url((string)$config['webhook_url'], PHP_URL_HOST) ?: ''),
+                'client_portal_profile_id' => $profileId,
+            ]);
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
+        }
+    } elseif ($action === 'generate-ed25519-signing-key') {
+        $created = (new ExternalOpsConfigService())->generateEd25519Key($pdo);
+        audit_log($pdo, 'external_ops.signing_key.generated', 'settings', null, ['key_id' => $created['key_id']]);
+        $message = 'A staged Ed25519 public key was created. Register that public key at the receiver, then activate it here.';
+    } elseif ($action === 'activate-ed25519-signing-key') {
+        if (empty($_POST['receiver_key_registered'])) {
+            throw new DomainException('Confirm that the receiver has registered this exact Ed25519 public key before activation.');
+        }
+        $keyId = trim((string)($_POST['signing_key_id'] ?? ''));
+        (new ExternalOpsConfigService())->activateEd25519Key($pdo, $keyId);
+        audit_log($pdo, 'external_ops.signing_key.activated', 'settings', null, ['key_id' => $keyId]);
+        $message = 'Ed25519 signing was activated on the existing External Operations connection.';
+    } elseif ($action === 'activate-hmac-signing') {
+        if (empty($_POST['confirm_hmac_fallback'])) {
+            throw new DomainException('Confirm the receiver still accepts the configured HMAC key before switching signing methods.');
+        }
+        (new ExternalOpsConfigService())->activateHmacSigning($pdo);
+        audit_log($pdo, 'external_ops.signing_hmac.activated', 'settings', null, []);
+        $message = 'HMAC-SHA256 signing was reactivated on the existing External Operations connection.';
+    } elseif ($action === 'retire-ed25519-signing-key') {
+        $keyId = trim((string)($_POST['signing_key_id'] ?? ''));
+        (new ExternalOpsConfigService())->retireEd25519Key($pdo, $keyId);
+        audit_log($pdo, 'external_ops.signing_key.retired', 'settings', null, ['key_id' => $keyId]);
+        $message = 'The staged Ed25519 private key was removed. Its public-key record remains for audit.';
+    } elseif ($action === 'reconcile-client-portal') {
+        $summary=(new ExternalOpsSyncOrchestrator())->run($pdo,100,50,50,null,null,20);
+        $reconciliation=$summary['reconciliation'];$portal=$summary['portal'];
+        $message=sprintf('Workspace sync considered %d roots, completed %d, with %d remaining; %d workspace events delivered and %d retrying.',$reconciliation['considered'],$reconciliation['completed'],$reconciliation['remaining'],$portal['delivered'],$portal['failed']);
+    } elseif ($action === 'recover-client-portal-deliveries') {
+        $summary=(new PortalClientProvisioningService())->recoverFailedPortalWorkspaces($pdo,(string)$config['application_key'],$actorUserId,25);
+        $message=sprintf('Queued fresh complete snapshots for %d workspace(s), covering %d terminal delivery record(s). Original failures remain in the audit history until the replacement activations are acknowledged.',$summary['queued'],$summary['failed_records']);
+    } elseif ($action === 'retry-client-portal-backfill') {
+        $retried=(new PortalClientProvisioningService())->retryFailedBackfillRoots($pdo,(string)$config['application_key'],$actorUserId,25);
+        $message=sprintf('%d terminal historical workspace root(s) were requeued for bounded reconciliation.',$retried);
+    } elseif ($action === 'retry-client-portal-revocations') {
+        $retried=(new PortalClientProvisioningService())->retryFailedRevocations($pdo,(string)$config['application_key'],$actorUserId);
+        $message=sprintf('%d failed workspace revocation(s) were requeued against the unchanged retired receiver contract.',$retried);
+    } elseif ($action === 'set-client-portal-root') {
+        if (!user_can($pdo,$actorUserId,'users.manage',0)) throw new DomainException('User-management permission is required to change client portal login access.');
+        $active=(string)($_POST['access_state']??'')==='active';
+        (new PortalClientProvisioningService())->setRootAccess($pdo,(string)$config['application_key'],(string)($_POST['root_type']??''),(string)($_POST['root_public_id']??''),$active,$actorUserId);
+        $message=$active?'Client portal workspace restored.':'Client portal workspace revoked; existing content grants remain recorded but are no longer reachable.';
+    } elseif ($action === 'set-client-portal-client') {
+        if (!user_can($pdo,$actorUserId,'users.manage',0)) throw new DomainException('User-management permission is required to change client portal login access.');
+        $active=(string)($_POST['access_state']??'')==='active';
+        (new PortalClientProvisioningService())->setClientAccess($pdo,(string)$config['application_key'],(int)($_POST['client_id']??0),$active,$actorUserId);
+        $message=$active?'Client portal login eligibility restored for reconciliation.':'Client portal login eligibility revoked.';
     } elseif ($action === 'save-portal-profile') {
         $profileId=(new PortalAuthorityService())->saveProfile($pdo,$_POST,$actorUserId);
         audit_log($pdo,'portal.integration_profile.saved','portal_integration_profile',$profileId,['application_key'=>(string)($_POST['application_key']??''),'enabled'=>!empty($_POST['enabled'])]);
@@ -112,7 +177,13 @@ try {
         if (empty($config['delivery_ready'])) {
             throw new DomainException('Outbound delivery is paused. Complete the required delivery settings or disable it until the receiver is ready.');
         }
-        (new ExternalOpsOutboxSender())->deliverDue($pdo, $config, 50);
+        $summary=(new ExternalOpsSyncOrchestrator())->run($pdo,25,50,50,null,null,20);
+        $reconciliation=$summary['reconciliation'];$ordinary=$summary['ordinary'];$portal=$summary['portal'];
+        if (empty($summary['ready'])) {
+            $message = 'Synchronization paused: workspace producer preflight is not ready. No historical workspace roots were provisioned or delivered.';
+        } else {
+            $message=sprintf('Synchronization completed a bounded pass: %d historical roots completed, %d remaining; ordinary events %d delivered / %d retrying; portal events %d delivered / %d retrying / %d failed.',$reconciliation['completed'],$reconciliation['remaining'],$ordinary['delivered'],$ordinary['failed'],$portal['delivered'],$portal['failed'],$portal['dead_lettered']);
+        }
     } else {
         throw new DomainException('Unknown integration action.');
     }
@@ -121,20 +192,30 @@ try {
     $clientActions = ['save-portal-workspace','set-portal-workspace-link','save-portal-principal','revoke-portal-principal','save-portal-entitlement','appoint-portal-manager','offboard-portal-manager','save-viewer-share-entitlement'];
     $advancedActions = ['save-portal-profile','save-portal-runtime','save-portal-delivery','send-portal-now','queue-portal-snapshot','queue-catalog-snapshot'];
     $returnTab = in_array($action, $clientActions, true) ? 'client-portal-access' : (in_array($action, $advancedActions, true) ? 'integration-advanced' : 'external-ops');
-    $location = $returnTo === 'account-edit' && !empty($_POST['user_id'])
+    if($returnTo==='client-details'&&!empty($_POST['client_id']))$location='/?page=client/client-details&id='.(int)$_POST['client_id'].'&updated=1';
+    elseif($returnTo==='organization-view'&&!empty($_POST['organization_id']))$location='/?page=organization/organization-view&id='.(int)$_POST['organization_id'].'&updated=1';
+    else $location = $returnTo === 'account-edit' && !empty($_POST['user_id'])
         ? '/?page=account-edit&id=' . (int)$_POST['user_id'] . '&success=' . rawurlencode($message ?? 'Saved')
         : '/?page=settings&tab=' . $returnTab . '&saved=1' . (isset($message) ? '&message=' . rawurlencode($message) : '');
     header('Location: ' . $location);
 } catch (Throwable $error) {
     $diagnostic=substr(hash('sha256',get_class($error).':'.$error->getMessage()),0,12);error_log('[external_ops_settings] failed code='.$diagnostic);
+    $publicError = $error instanceof DomainException
+        ? $error->getMessage()
+        : (($error instanceof PDOException && str_starts_with((string)$error->getCode(), '42'))
+            ? 'The integration database schema does not match this Project Alpha release. Apply the current database migrations, then retry. Diagnostic code '.$diagnostic
+            : 'The integration action failed. Diagnostic code '.$diagnostic);
+    error_log('[external_ops_settings] action='.(string)($_POST['action']??'unknown').' class='.get_class($error).' error_code='.(string)$error->getCode().' diagnostic='.$diagnostic);
     $returnTo = trim((string)($_POST['return_to'] ?? ''));
     $failedAction = (string)($_POST['action'] ?? '');
     $clientActions = ['save-portal-workspace','set-portal-workspace-link','save-portal-principal','revoke-portal-principal','save-portal-entitlement','appoint-portal-manager','offboard-portal-manager','save-viewer-share-entitlement'];
     $advancedActions = ['save-portal-profile','save-portal-runtime','save-portal-delivery','send-portal-now','queue-portal-snapshot','queue-catalog-snapshot'];
     $returnTab = in_array($failedAction, $clientActions, true) ? 'client-portal-access' : (in_array($failedAction, $advancedActions, true) ? 'integration-advanced' : 'external-ops');
-    $location = $returnTo === 'account-edit' && !empty($_POST['user_id'])
-        ? '/?page=account-edit&id=' . (int)$_POST['user_id'] . '&error=' . rawurlencode($error->getMessage())
-        : '/?page=settings&tab=' . $returnTab . '&saved=0&error=' . rawurlencode($error instanceof DomainException?$error->getMessage():'The integration action failed. Diagnostic code '.$diagnostic);
+    if($returnTo==='client-details'&&!empty($_POST['client_id']))$location='/?page=client/client-details&id='.(int)$_POST['client_id'].'&error='.rawurlencode($publicError);
+    elseif($returnTo==='organization-view'&&!empty($_POST['organization_id']))$location='/?page=organization/organization-view&id='.(int)$_POST['organization_id'].'&error='.rawurlencode($publicError);
+    else $location = $returnTo === 'account-edit' && !empty($_POST['user_id'])
+        ? '/?page=account-edit&id=' . (int)$_POST['user_id'] . '&error=' . rawurlencode($publicError)
+        : '/?page=settings&tab=' . $returnTab . '&saved=0&error=' . rawurlencode($publicError);
     header('Location: ' . $location);
 }
 exit;

@@ -114,6 +114,7 @@ $invoice_discount=$discount_type==='percent'?max(0,min(100,$discount_value))*$in
 $invoice_total=max(0,$invoice_subtotal-$invoice_discount+max(0,$tax_percent)*max(0,$invoice_subtotal-$invoice_discount)/100);
 
 $memo = trim((string)($_POST['memo'] ?? '')) ?: null;
+$scope = trim((string)($_POST['scope'] ?? '')) ?: null;
 
 // Extract custom field values from POST data (only non-empty values)
 $customFields = extractCustomFieldValues($_POST);
@@ -122,8 +123,8 @@ $customFieldsJson = !empty($customFields) ? json_encode($customFields) : null;
 $pdo->beginTransaction();
 try{
   (new App\Services\ProjectContractEligibilityGuardService($pdo))->assertCanCreateOrAttach($project_id);
-  $pdo->prepare('INSERT INTO contracts (quote_id, client_id, project_id, status, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, deposit_type, deposit_amount, deposit_paid, fulfillment_date, memo, custom_fields, organization_id, show_contact_on_document, created_by) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      ->execute([$client_id, $project_id, 'draft', $billing_mode, $discount_type, $discount_value, $tax_percent, $subtotal, $total, $deposit_type, $deposit_amount, 0, $fulfillment_date, $memo, $customFieldsJson, $__orgId, $showContactOnDocument, $__creator]);
+  $pdo->prepare('INSERT INTO contracts (quote_id, client_id, project_id, status, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, deposit_type, deposit_amount, deposit_paid, fulfillment_date, memo, scope, custom_fields, organization_id, show_contact_on_document, created_by) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      ->execute([$client_id, $project_id, 'draft', $billing_mode, $discount_type, $discount_value, $tax_percent, $subtotal, $total, $deposit_type, $deposit_amount, 0, $fulfillment_date, $memo, $scope, $customFieldsJson, $__orgId, $showContactOnDocument, $__creator]);
   $co_id = (int)$pdo->lastInsertId();
 
   // Assign Project ID and doc number (fallback if unavailable)
@@ -154,13 +155,10 @@ try{
   mileage_save_document_rule($pdo,'contract',$co_id,$__orgId,$client_id,(int)$__creator,$travelRule);
 
   // Auto-create an invoice for this contract (invoice total is balance after deposit)
-  $dueDate = null;
-  $pdo->prepare('INSERT INTO invoices (contract_id, quote_id, client_id, project_id, job_id, service_location_id, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, status, due_date, project_code, fulfillment_date, organization_id, show_contact_on_document, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      ->execute([$co_id, null, $client_id, $project_id, $jobId, $serviceLocationId, $billing_mode, $discount_type, $discount_value, $tax_percent, $invoice_subtotal, $invoice_total, 'draft', $dueDate, $projectCode, $fulfillment_date, $__orgId, $showContactOnDocument, $__creator]);
+  $projectBillingContext = project_invoice_billing_context($pdo, $project_id, $appConfig, null, true);
+  $pdo->prepare('INSERT INTO invoices (contract_id, quote_id, client_id, project_id, job_id, service_location_id, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, status, due_date, payment_terms_days, due_date_source, project_code, fulfillment_date, scope, organization_id, show_contact_on_document, created_by, collection_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      ->execute([$co_id, null, $client_id, $project_id, $jobId, $serviceLocationId, $billing_mode, $discount_type, $discount_value, $tax_percent, $invoice_subtotal, $invoice_total, 'draft', $projectBillingContext['due_date'], $projectBillingContext['net_terms_days'], 'terms', $projectCode, $fulfillment_date, $scope, $__orgId, $showContactOnDocument, $__creator, $projectBillingContext['collection_mode']]);
   $invoice_id = (int)$pdo->lastInsertId();
-  if ($project_id && project_uses_monthly_invoice_billing($pdo, $project_id)) {
-    $pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$invoice_id]);
-  }
   $ii=$pdo->prepare('INSERT INTO invoice_items (invoice_id,item_library_id,item,description,quantity,unit_price,line_total,billing_unit,catalog_snapshot) VALUES (?,?,?,?,?,?,?,?,?)');
   foreach($items as $it){if($billing_mode==='hourly')continue;$catalog=$it['catalog']??catalog_document_snapshot($pdo,(int)($it['catalog_id']??0),$it);$ii->execute([$invoice_id,$catalog['item_library_id'],$it['i'],$it['d'],$it['q'],$it['p'],$it['t'],$it['u'],$catalog['catalog_snapshot']]);}
   if($travelItem&&$travelItem['pricing_status']==='standard')$pdo->prepare('INSERT INTO invoice_items (invoice_id,item,description,quantity,unit_price,line_total,billing_unit,is_travel,pricing_status) VALUES (?,?,?,?,?,?,?,1,"standard")')->execute([$invoice_id,$travelItem['item'],$travelItem['description'],$travelItem['quantity'],$travelItem['unit_price'],$travelItem['line_total'],$travelItem['billing_unit']]);

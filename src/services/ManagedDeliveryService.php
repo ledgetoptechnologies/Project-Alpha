@@ -13,9 +13,10 @@ use Throwable;
 final class ManagedDeliveryService
 {
     public const ENABLED_KEY = 'managed_delivery_enabled';
-    public const URL_KEY = 'managed_delivery_intent_url';
-    public const PROFILE_KEY = 'managed_delivery_profile_id';
     public const GUEST_KEY = 'managed_delivery_guest_links_enabled';
+    public const TRANSPORT_EXTERNAL_OPS = 'external_ops';
+    public const TRANSPORT_LEGACY_PROFILE = 'legacy_profile';
+    private const EXTERNAL_OPS_KEY_ID = 'external_ops_hmac_v1';
 
     private const SCOPE_TABLES = [
         'organization' => 'organizations',
@@ -28,48 +29,22 @@ final class ManagedDeliveryService
     public function config(PDO $pdo): array
     {
         $values = [];
-        $statement = $pdo->prepare('SELECT config_key,config_value FROM app_config WHERE organization_id=0 AND config_key IN (?,?,?,?)');
-        $statement->execute([self::ENABLED_KEY, self::URL_KEY, self::PROFILE_KEY, self::GUEST_KEY]);
+        $statement = $pdo->prepare('SELECT config_key,config_value FROM app_config WHERE organization_id=0 AND config_key IN (?,?)');
+        $statement->execute([self::ENABLED_KEY, self::GUEST_KEY]);
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $values[(string)$row['config_key']] = (string)$row['config_value'];
         }
         $enabled = filter_var($values[self::ENABLED_KEY] ?? '0', FILTER_VALIDATE_BOOLEAN);
-        $url = trim((string)($values[self::URL_KEY] ?? ''));
-        $profileId = max(0, (int)($values[self::PROFILE_KEY] ?? 0));
-        $profile = null;
-        if ($profileId > 0) {
-            $profileStatement = $pdo->prepare('SELECT * FROM portal_integration_profiles WHERE id=? LIMIT 1');
-            $profileStatement->execute([$profileId]);
-            $profile = $profileStatement->fetch(PDO::FETCH_ASSOC) ?: null;
-        }
-        $issues = [];
-        if ($url === '') {
-            $issues[] = 'delivery-intent URL';
-        } else {
-            try {
-                self::validateIntentUrl($url);
-            } catch (DomainException) {
-                $issues[] = 'valid delivery-intent URL';
-            }
-        }
-        if (!$profile || empty($profile['enabled']) || empty($profile['delivery_enabled'])) $issues[] = 'enabled integration delivery profile';
-        if ($profile && trim((string)($profile['application_key'] ?? '')) === '') $issues[] = 'integration application key';
-        if ($profile && trim((string)($profile['delivery_key_id'] ?? '')) === '') $issues[] = 'integration signing key ID';
-        if ($profile) {
-            try {
-                $credentials = (new PortalProjectionDeliveryConfigService())->credentials($profile);
-                if (strlen($credentials['currentSecret']) < 32) $issues[] = 'integration signing secret';
-            } catch (Throwable) {
-                $issues[] = 'readable integration delivery credentials';
-            }
+        $externalOps = (new ExternalOpsConfigService())->load($pdo);
+        $issues = (array)($externalOps['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($externalOps));
+        if (empty($externalOps['configured_enabled'])) {
+            array_unshift($issues, 'enabled External Operations connection');
         }
 
         return [
             'enabled' => $enabled,
-            'intent_url' => $url,
-            'profile_id' => $profileId,
-            'profile_label' => (string)($profile['display_label'] ?? ''),
-            'application_key' => (string)($profile['application_key'] ?? ''),
+            'connection_label' => (string)($externalOps['label'] ?? 'External operations'),
+            'application_key' => (string)($externalOps['application_key'] ?? ''),
             'guest_links_enabled' => filter_var($values[self::GUEST_KEY] ?? '0', FILTER_VALIDATE_BOOLEAN),
             'default_access_mode' => 'portal',
             'configured' => $issues === [],
@@ -83,27 +58,20 @@ final class ManagedDeliveryService
     {
         $enabled = !empty($input['enabled']);
         $guest = !empty($input['guest_links_enabled']);
-        $profileId = max(0, (int)($input['profile_id'] ?? 0));
-        $url = trim((string)($input['intent_url'] ?? ''));
-        if ($url !== '') {
-            self::validateIntentUrl($url);
+        $externalOps = (new ExternalOpsConfigService())->load($pdo);
+        if ($enabled && (empty($externalOps['configured_enabled']) || (array)($externalOps['delivery_issues'] ?? ExternalOpsConfigService::deliveryIssues($externalOps)) !== [])) {
+            throw new DomainException('Complete and enable the External Operations connection before enabling managed delivery.');
         }
-        if ($enabled && $url === '') {
-            throw new DomainException('The managed delivery-intent URL is required before enabling the provider.');
-        }
-        if ($enabled && $profileId < 1) throw new DomainException('Select an integration delivery profile before enabling managed delivery.');
         $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
             ? 'INSERT INTO app_config(organization_id,config_key,config_value) VALUES(0,?,?) ON CONFLICT(organization_id,config_key) DO UPDATE SET config_value=excluded.config_value'
             : 'INSERT INTO app_config(organization_id,config_key,config_value) VALUES(0,?,?) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value)';
         $save = $pdo->prepare($sql);
         $save->execute([self::ENABLED_KEY, $enabled ? '1' : '0']);
-        $save->execute([self::URL_KEY, $url]);
-        $save->execute([self::PROFILE_KEY, (string)$profileId]);
         $save->execute([self::GUEST_KEY, $guest ? '1' : '0']);
         return $this->config($pdo);
     }
 
-    /** @return array{profileId:int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
+    /** @return array{transportMode:string,profileId:?int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
     public function deliveryContract(PDO $pdo, bool $requireProviderEnabled = true): array
     {
         $config = $this->config($pdo);
@@ -112,104 +80,63 @@ final class ManagedDeliveryService
                 ? 'Managed delivery is disabled or incomplete.'
                 : 'Managed delivery connection settings are incomplete.');
         }
-        $statement = $pdo->prepare('SELECT * FROM portal_integration_profiles WHERE id=? AND enabled=1 AND delivery_enabled=1 LIMIT 1');
-        $statement->execute([(int)$config['profile_id']]);
-        $profile = $statement->fetch(PDO::FETCH_ASSOC);
-        if (!$profile) throw new DomainException('Managed delivery integration profile is unavailable.');
-        $credentials = (new PortalProjectionDeliveryConfigService())->credentials($profile);
-        $authHeaders = $credentials['authHeaders'];
+        $externalOps = (new ExternalOpsConfigService())->load($pdo);
+        $authHeaders = [
+            'CF-Access-Client-Id' => (string)$externalOps['access_client_id'],
+            'CF-Access-Client-Secret' => (string)$externalOps['access_client_secret'],
+        ];
         return [
-            'profileId' => (int)$profile['id'],
-            'url' => (string)$config['intent_url'],
-            'applicationKey' => (string)$profile['application_key'],
-            'keyId' => (string)$profile['delivery_key_id'],
-            'secret' => $credentials['currentSecret'],
+            'transportMode' => self::TRANSPORT_EXTERNAL_OPS,
+            'profileId' => null,
+            'url' => (string)$externalOps['webhook_url'],
+            'applicationKey' => (string)$externalOps['application_key'],
+            'keyId' => (string)($externalOps['signing_key_id'] ?? self::EXTERNAL_OPS_KEY_ID),
+            'signingMode' => (string)($externalOps['signing_mode'] ?? ExternalOpsSigner::HMAC_SHA256),
+            'signingPublicKey' => (string)($externalOps['signing_public_key'] ?? ''),
+            'secret' => (string)$externalOps['hmac_secret'],
             'authHeaders' => $authHeaders,
-            'contractHash' => self::contractHash((int)$profile['id'], (string)$profile['application_key'], (string)$config['intent_url'], (string)$profile['delivery_key_id'], $authHeaders, $credentials['currentSecret']),
-            'timeout' => max(2, min(30, (int)($profile['delivery_timeout_seconds'] ?? 15))),
-            'maxAttempts' => max(1, min(50, (int)($profile['delivery_max_attempts'] ?? 12))),
+            'contractHash' => self::contractHash(0, (string)$externalOps['application_key'], (string)$externalOps['webhook_url'], (string)($externalOps['signing_key_id'] ?? self::EXTERNAL_OPS_KEY_ID), $authHeaders, (string)$externalOps['hmac_secret'], (string)($externalOps['signing_mode'] ?? ExternalOpsSigner::HMAC_SHA256), (string)($externalOps['signing_public_key'] ?? '')),
+            'timeout' => max(2, min(30, (int)$externalOps['timeout_seconds'])),
+            'maxAttempts' => max(1, min(50, (int)$externalOps['max_attempts'])),
         ];
     }
 
-    /** @param array<string,mixed> $claim @return array{profileId:int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
+    /** @param array<string,mixed> $claim @return array{transportMode:string,profileId:?int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
     public function deliveryContractForClaim(PDO $pdo, array $claim): array
     {
-        $profileId = (int)($claim['integration_profile_id'] ?? 0);
-        $url = (string)($claim['destination_url'] ?? '');
-        $applicationKey = (string)($claim['pinned_application_key'] ?? '');
-        $keyId = (string)($claim['signing_key_id'] ?? '');
-        self::validateIntentUrl($url);
-        if ($profileId < 1 || $applicationKey === '' || $keyId === '') throw new DomainException('The pinned managed delivery contract is incomplete.');
-        $statement = $pdo->prepare('SELECT * FROM portal_integration_profiles WHERE id=? AND enabled=1 AND delivery_enabled=1 LIMIT 1');
-        $statement->execute([$profileId]);
-        $profile = $statement->fetch(PDO::FETCH_ASSOC);
-        if (!$profile || !hash_equals($applicationKey, (string)$profile['application_key'])) throw new DomainException('The pinned managed delivery profile is unavailable.');
-        $credentials = (new PortalProjectionDeliveryConfigService())->credentials($profile);
-        $secret = '';
-        if (hash_equals((string)($profile['delivery_key_id'] ?? ''), $keyId)) {
-            $secret = $credentials['currentSecret'];
-        } elseif (hash_equals((string)($profile['delivery_previous_key_id'] ?? ''), $keyId)
-            && !empty($profile['delivery_previous_valid_until'])
-            && (string)$profile['delivery_previous_valid_until'] > (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s.u')) {
-            $secret = $credentials['previousSecret'];
+        if (($claim['transport_mode'] ?? self::TRANSPORT_LEGACY_PROFILE) !== self::TRANSPORT_EXTERNAL_OPS) {
+            throw new DomainException('The retired managed-delivery transport cannot dispatch. Recreate or explicitly retry this request through External Operations.');
         }
-        if (strlen($secret) < 32) throw new DomainException('The pinned managed delivery signing key is unavailable.');
-        $contractHash = self::contractHash($profileId, $applicationKey, $url, $keyId, $credentials['authHeaders'], $secret);
-        if (!hash_equals((string)($claim['signing_contract_hash'] ?? ''), $contractHash)) throw new DomainException('The pinned managed delivery contract epoch is unavailable.');
-        return [
-            'profileId' => $profileId,
-            'url' => $url,
-            'applicationKey' => $applicationKey,
-            'keyId' => $keyId,
-            'secret' => $secret,
-            'authHeaders' => $credentials['authHeaders'],
-            'contractHash' => $contractHash,
-            'timeout' => max(2, min(30, (int)($claim['delivery_timeout_seconds'] ?? 15))),
-            'maxAttempts' => max(1, min(50, (int)($claim['delivery_max_attempts'] ?? 12))),
-        ];
+        return $this->externalOpsContractForClaim($pdo, $claim);
     }
 
-    /** @param array<string,mixed> $original @return array{profileId:int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
+    /** @param array<string,mixed> $claim @return array<string,mixed> */
+    private function externalOpsContractForClaim(PDO $pdo, array $claim): array
+    {
+        $contract = $this->deliveryContract($pdo, false);
+        if (!hash_equals((string)($claim['destination_url'] ?? ''), $contract['url'])
+            || !hash_equals((string)($claim['pinned_application_key'] ?? ''), $contract['applicationKey'])
+            || !hash_equals((string)($claim['signing_key_id'] ?? ''), $contract['keyId'])
+            || !hash_equals((string)($claim['signing_contract_hash'] ?? ''), $contract['contractHash'])) {
+            throw new DomainException('The pinned External Operations delivery contract epoch is unavailable.');
+        }
+        $contract['timeout'] = max(2, min(30, (int)($claim['delivery_timeout_seconds'] ?? $contract['timeout'])));
+        $contract['maxAttempts'] = max(1, min(50, (int)($claim['delivery_max_attempts'] ?? $contract['maxAttempts'])));
+        return $contract;
+    }
+
+    /** @param array<string,mixed> $original @return array{transportMode:string,profileId:?int,url:string,applicationKey:string,keyId:string,secret:string,authHeaders:array<string,string>,contractHash:string,timeout:int,maxAttempts:int} */
     public function revocationContract(PDO $pdo, array $original): array
     {
-        $profileId = (int)($original['integration_profile_id'] ?? 0);
-        $url = (string)($original['destination_url'] ?? '');
-        $applicationKey = (string)($original['pinned_application_key'] ?? '');
-        self::validateIntentUrl($url);
-        if ($profileId < 1 || $applicationKey === '') throw new DomainException('The pinned managed delivery receiver is incomplete.');
-        $statement = $pdo->prepare('SELECT * FROM portal_integration_profiles WHERE id=? AND enabled=1 AND delivery_enabled=1 LIMIT 1');
-        $statement->execute([$profileId]);
-        $profile = $statement->fetch(PDO::FETCH_ASSOC);
-        if (!$profile || !hash_equals($applicationKey, (string)$profile['application_key'])) throw new DomainException('The pinned managed delivery receiver is unavailable.');
-        $credentials = (new PortalProjectionDeliveryConfigService())->credentials($profile);
-        $keyId = (string)($profile['delivery_key_id'] ?? '');
-        $secret = $credentials['currentSecret'];
-        if ($keyId === '' || strlen($secret) < 32) throw new DomainException('The pinned managed delivery receiver has no current signing key.');
-        $authHeaders = $credentials['authHeaders'];
-        return [
-            'profileId' => $profileId,
-            'url' => $url,
-            'applicationKey' => $applicationKey,
-            'keyId' => $keyId,
-            'secret' => $secret,
-            'authHeaders' => $authHeaders,
-            'contractHash' => self::contractHash($profileId, $applicationKey, $url, $keyId, $authHeaders, $secret),
-            'timeout' => max(2, min(30, (int)($original['delivery_timeout_seconds'] ?? 15))),
-            'maxAttempts' => max(1, min(50, (int)($original['delivery_max_attempts'] ?? 12))),
-        ];
-    }
-
-    public static function validateIntentUrl(string $url): void
-    {
-        $parts = parse_url($url);
-        $host = strtolower((string)($parts['host'] ?? ''));
-        $scheme = strtolower((string)($parts['scheme'] ?? ''));
-        $local = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
-        if (strlen($url) > 500 || !filter_var($url, FILTER_VALIDATE_URL) || ($scheme !== 'https' && !$local)
-            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])
-            || (string)($parts['path'] ?? '') !== '/api/internal/project-alpha/delivery-intents') {
-            throw new DomainException('The managed delivery URL must be the exact HTTPS /api/internal/project-alpha/delivery-intents route.');
+        if (($original['transport_mode'] ?? self::TRANSPORT_LEGACY_PROFILE) !== self::TRANSPORT_EXTERNAL_OPS) {
+            throw new DomainException('This historical delivery used a retired receiver contract. Revoke it in the original delivery system and record the resolution manually; Project Alpha will not send its receipt to the current External Operations receiver.');
         }
+        $contract = $this->deliveryContract($pdo, false);
+        if (!hash_equals((string)$original['destination_url'], $contract['url'])
+            || !hash_equals((string)$original['pinned_application_key'], $contract['applicationKey'])) {
+            throw new DomainException('The accepted delivery receiver changed before revocation. Restore the original External Operations connection first.');
+        }
+        return $contract;
     }
 
     /** @return array{deliveryId:string,replayed:bool,status:string} */
@@ -272,9 +199,9 @@ final class ManagedDeliveryService
             throw new DomainException('The delivery request is too large.');
         }
         $fingerprint = hash('sha256', $body);
-        $insert = $pdo->prepare('INSERT INTO managed_delivery_intent_outbox(delivery_id,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+        $insert = $pdo->prepare('INSERT INTO managed_delivery_intent_outbox(delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         try {
-            $insert->execute([$deliveryId, $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId, $scopeType, $scopePublicId, $audienceType, $audiencePublicId, $accessMode, $fingerprint, $body]);
+            $insert->execute([$deliveryId, $contract['transportMode'], $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId, $scopeType, $scopePublicId, $audienceType, $audiencePublicId, $accessMode, $fingerprint, $body]);
         } catch (Throwable $error) {
             $existing->execute([$deliveryId]);
             $prior = $existing->fetch(PDO::FETCH_ASSOC);
@@ -319,8 +246,8 @@ final class ManagedDeliveryService
             'reasonCode' => 'project_alpha_delivery_revoked',
         ];
         $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-        $insert = $pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,intent_type,target_delivery_id,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,'revoke',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-        $insert->execute([$deliveryId, $targetDeliveryId, $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId, (string)$original['scope_type'], (string)$original['scope_public_id'], (string)$original['audience_type'], (string)$original['audience_public_id'], (string)$original['access_mode'], hash('sha256', $body), $body]);
+        $insert = $pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,intent_type,target_delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,'revoke',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        $insert->execute([$deliveryId, $targetDeliveryId, $contract['transportMode'], $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId > 0 ? $actorUserId : null, (string)$original['scope_type'], (string)$original['scope_public_id'], (string)$original['audience_type'], (string)$original['audience_public_id'], (string)$original['access_mode'], hash('sha256', $body), $body]);
         return ['deliveryId' => $deliveryId, 'replayed' => false, 'status' => 'queued'];
     }
 
@@ -339,6 +266,9 @@ final class ManagedDeliveryService
             $original = $pdo->prepare("SELECT 1 FROM managed_delivery_intent_outbox WHERE delivery_id=? AND intent_type='provision' AND delivered_at IS NOT NULL AND revoked_at IS NULL LIMIT 1{$lock}");
             $original->execute([$targetDeliveryId]);
             if (!$original->fetchColumn()) throw new DomainException('The failed revocation is no longer eligible for retry.');
+            if (($failedIntent['transport_mode'] ?? self::TRANSPORT_LEGACY_PROFILE) !== self::TRANSPORT_EXTERNAL_OPS) {
+                throw new DomainException('This historical revocation used a retired receiver contract and cannot be rebound automatically. Resolve it in the original delivery system and retain this record for audit.');
+            }
             $this->deliveryContractForClaim($pdo, $failedIntent);
             $statement = $pdo->prepare("UPDATE managed_delivery_intent_outbox SET attempts=0,next_attempt_at=CURRENT_TIMESTAMP,claim_token=NULL,claimed_at=NULL,dead_lettered_at=NULL,last_http_status=NULL,last_error_code=NULL WHERE delivery_id=? AND intent_type='revoke' AND delivered_at IS NULL AND dead_lettered_at IS NOT NULL");
             $statement->execute([$deliveryId]);
@@ -356,16 +286,24 @@ final class ManagedDeliveryService
     }
 
     /** @param array<string,string> $authHeaders */
-    private static function contractHash(int $profileId, string $applicationKey, string $url, string $keyId, array $authHeaders, string $secret): string
+    private static function contractHash(int $profileId, string $applicationKey, string $url, string $keyId, array $authHeaders, string $secret, string $signingMode = ExternalOpsSigner::HMAC_SHA256, string $signingPublicKey = ''): string
     {
         ksort($authHeaders, SORT_STRING);
-        return hash('sha256', $profileId . "\n" . $applicationKey . "\n" . $url . "\n" . $keyId . "\n" . json_encode($authHeaders, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . hash('sha256', $secret));
+        $legacy = $profileId . "\n" . $applicationKey . "\n" . $url . "\n" . $keyId . "\n"
+            . json_encode($authHeaders, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . hash('sha256', $secret);
+        // Existing HMAC claims must keep their exact contract epoch after an
+        // Ed25519-capable release. The extended identity is only necessary
+        // once an Ed25519 public key is actually active.
+        if ($signingMode === ExternalOpsSigner::HMAC_SHA256) {
+            return hash('sha256', $legacy);
+        }
+        return hash('sha256', $legacy . "\n" . $signingMode . "\n" . $signingPublicKey);
     }
 
     private function scopeExists(PDO $pdo, string $type, string $publicId): bool
     {
         $table = self::SCOPE_TABLES[$type];
-        $suffix = $type === 'project' ? " AND status<>'cancelled'" : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
+        $suffix = $type === 'project' ? " AND status<>'cancelled' AND " . ProjectLifecycleSchema::visibility($pdo, '', true) : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
         $statement = $pdo->prepare("SELECT 1 FROM {$table} WHERE public_id=?{$suffix} LIMIT 1");
         $statement->execute([$publicId]);
         return (bool)$statement->fetchColumn();

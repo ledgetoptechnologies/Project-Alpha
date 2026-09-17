@@ -14,7 +14,7 @@ final class DocumentListRecipientPresentationTest extends TestCase
         self::assertStringContainsString('<th style="padding:10px">Customer</th>', $source);
         self::assertStringContainsString('<th style="padding:10px">Contact</th>', $source);
         self::assertStringContainsString(
-            'LEFT JOIN organizations o ON o.id=COALESCE(' . $documentAlias . '.organization_id,c.organization_id)',
+            "pa_document_effective_organization_joins('{$documentAlias}', 'c')",
             $source
         );
         self::assertStringContainsString('(c.name LIKE ? OR o.name LIKE ?)', $source);

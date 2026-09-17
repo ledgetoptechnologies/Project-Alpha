@@ -8,13 +8,34 @@ Project Alpha remains the authoritative source for organizations, departments, c
 
 1. Apply migrations `0066_generic_portal_v2_integration.sql`, `0067_portal_projection_delivery.sql`, and `0068_portal_contract_completeness.sql`, then pass schema health checks.
 2. Provision distinct producer/command capabilities: `portal.catalog.publish`, `portal.pricing.preview`, and `portal.quote-draft.create`. Pricing and draft keys must each contain exactly one command scope; a `full` or multi-scope key is rejected. Catalog delivery uses only the selected profile's dedicated signed producer contract.
-3. Create a generic profile in Settings → Custom integrations. Leave every capability disabled.
-4. Configure distinct pricing/draft source identifiers and HTTPS receiver routes. Outbound HMAC and optional receiver-authorization values are encrypted with `APP_ENCRYPTION_KEY`; they are never displayed again or written to logs.
+3. Save the single generic External Operations connection. Normal administration
+   does not expose profiles, routes, workspaces, principals, or signing fields.
+4. Pair the deployment-managed `portal` signing capability once, then use the
+   compact connection health card and its reconcile action. Pricing/draft
+   command capabilities remain separate internal contracts. Outbound HMAC and
+   optional receiver-authorization values are encrypted with
+   `APP_ENCRYPTION_KEY`; they are never displayed again or written to logs.
 5. Verify the five payload fixtures plus the byte-pinned `portal-integration-wire-v1.json` transport fixture in `tests/fixtures` and the compatibility test.
-6. Create a workspace (which links only the selected profile), verify the profile/workspace allowlist, then create a portal principal and explicit manager entitlement. Contacts and public links do not create authority.
+6. Reconcile active organization roots and standalone consumer clients. Project
+   Alpha creates the exact profile/workspace link and login-eligibility intent;
+   ambiguous records remain review-required. Contacts and public links do not
+   bind an external identity or grant content.
 7. Preflight receiver authentication and the exact application key while its inbox remains disabled. After a separately approved receiver window is open, enable only the required profile capabilities, the profile delivery switch, scoped authoritative hooks, and finally outbound delivery. Queue the portal and Service Library snapshots from Projection recovery, run delivery, and verify every page and activation before enabling consumer reads.
 
-Feature gates are exact-string opt-ins: `APP_PORTAL_PRICING_PREVIEW_ENABLED=true` and `APP_PORTAL_DRAFT_QUOTES_ENABLED=true`. Migration-created application flags also default to `0` for portal v2, relations v3, catalog v2, pricing preview, and draft quotes.
+The command endpoints have separate exact-string environment opt-ins:
+`APP_PORTAL_PRICING_PREVIEW_ENABLED=true` and
+`APP_PORTAL_DRAFT_QUOTES_ENABLED=true`. Projection delivery is controlled by
+the selected profile's `enabled`, `portal_projection_enabled`,
+`relation_projection_enabled`, `catalog_projection_enabled`,
+`contact_assignment_projection_enabled`,
+`service_assignment_projection_enabled`, and `delivery_enabled` columns plus
+the runtime `portal_outbound_delivery_enabled` and
+`portal_authoritative_hooks_enabled` application settings. Migration 0066 also
+created the default-zero compatibility settings
+`portal_v2_relations_enabled`, `portal_catalog_v2_enabled`,
+`portal_pricing_preview_enabled`, and `portal_draft_quotes_enabled`; current
+runtime code does not read those four compatibility rows, so changing them does
+not enable a producer, sender, hook, pricing command, or draft command.
 
 ## Server-only command contract
 
@@ -38,7 +59,7 @@ Pricing is planning guidance only. Fixed `each`/`project` services use exact min
 
 ## Projection and recovery
 
-Portal snapshot pages are capped at 100 records, 100 pages, and 2,000 records. Service Library pages are capped at 50 items, 100 pages, and 500 total items. All pages in a generation share the same monotonic per-profile source sequence, unique generation ID, hash, and counts; `snapshot.activate` follows every page. Relations/lifecycles require schema v3 and an explicit profile flag. Project `completed_at` is set on the first completed transition, retained across repeated completed updates, and cleared only by a later reopen.
+Portal snapshot pages are capped at 100 records, 100 pages, and 2,000 records. Service Library pages are capped at 50 items, 100 pages, and 500 total items. All pages in a generation share the same monotonic per-profile source sequence, unique generation ID, hash, and counts; `snapshot.activate` follows every page. Relations/lifecycles require schema v3 and an explicit profile flag. Contact assignments require schema v4 and a second default-off profile capability; their records participate in the same page limits, hash, and counts. Project `completed_at` is set on the first completed transition, retained across repeated completed updates, and cleared only by a later reopen.
 
 Source versions are deterministic hashes of client-visible content. Renames, reparenting, deactivation, lifecycle changes, and Service Library question changes therefore cannot reuse a prior source version. Complete snapshots are the recovery mechanism after a gap or interrupted generation. Receiver activation must be atomic and must not expose partial pages.
 
@@ -53,6 +74,14 @@ Queued revocations are durable control-plane records, not evidence of network de
 Profile key/route changes and every projection outbox enqueue serialize on the same `portal_integration_profiles` row lock inside their transaction. This prevents a concurrent producer from inserting an old-contract delivery between the pending-outbox check and a contract rotation. Producers that wait behind a disable reload the locked profile and fail closed instead of publishing with stale flags or routes.
 
 Ordinary organization, department, client/contact, project create/update/reparent/status/delete, onboarding-merge, and department-contact assignment paths call the scoped mutation reconciler inside the authoritative database transaction. After the first complete snapshot establishes a checkpoint, resource state is diffed and strict ordered upsert/tombstone events are appended; Service Library edits do the same for catalog items. Manual complete snapshots remain the bounded recovery mechanism. Reparent and delete paths lock the authoritative client/project row before reading the old scope, then reconcile that locked old scope with the actual post-mutation scope; multi-row paths acquire locks in numeric ID order. The reconciler operates only on those organization/standalone-client roots, persists relation upserts/tombstones, and fans out only through active profile/workspace allowlist rows. Any relation, checkpoint, audit, or outbox failure aborts the authoritative transaction. No global reconciliation or implicit profile fanout is performed.
+
+Schema v4 publishes scoped contact roles only from explicit department-contact
+and project-client associations. It never infers a role from project ownership,
+email, eligibility, identities, entitlements, public links, or invoice recipient
+rows. Assignment topology additions/removals use replacement generations; role
+or billing-flag updates on an existing assignment may use events. Primary
+billing ownership does not imply invoice-email delivery. See
+[Portal contact-assignment projection v4](architecture/portal-contact-assignment-projection-v4.md).
 
 Manager appointment/offboarding, its audit record, recovery state, and projection events share one transaction. Removing the final `member.manage` authority for an exact profile/workspace/scope persists `recovery_required`; the staff UI lists that scope until a replacement manager is appointed. A primary contact or display link never clears this state.
 
@@ -75,7 +104,7 @@ The outbound signature input is `timestamp + "\nPOST\n" + path + "\n" + keyId + 
 
 Destinations must be HTTPS URLs without embedded credentials, query strings, or fragments. The sender resolves the host for each attempt, accepts only public routable addresses, rejects the entire attempt if any DNS answer is unsafe, and rejects IPv4-mapped, compatible, NAT64, 6to4, Teredo, and ISATAP encodings that could hide a private or reserved IPv4 destination. It pins the selected address into cURL, verifies TLS, rejects redirects, caps the response body, and never stores routes, payloads, response bodies, auth headers, or exception messages in delivery errors. Optional generic receiver-auth headers are encrypted and restricted to four non-reserved values.
 
-Success is any 2xx. Redirects, network failures, 408, 409, 425, 429, and 5xx responses retry with jittered exponential backoff from 30 seconds to one hour. Other 4xx responses and the configured attempt ceiling dead-letter the row. Delivery is ordered per profile/workspace/route; a retryable earlier row blocks later rows in that stream, while a dead-letter requires explicit operator investigation and complete-snapshot recovery. Claims expire after five minutes so a crashed worker can resume safely.
+Success is any 2xx. Redirects, network failures, 408, 409, 425, 429, and 5xx responses retry with jittered exponential backoff from 30 seconds to one hour. Other 4xx responses and the configured attempt ceiling dead-letter the row. Delivery is ordered per profile/workspace/route; a retryable earlier row blocks later rows in that stream, while a dead-letter requires explicit operator investigation and complete-snapshot recovery. The settings action queues fresh generations only for current active links on the unchanged ready receiver contract, in batches of at most 25 workspaces. Original dead letters remain immutable and are linked to the recovery cutoff; they leave the active failure count only after the receiver acknowledges the replacement activation. Revocations use a separate audited retry and are never resolved by a replacement snapshot. Claims expire after five minutes so a crashed worker can resume safely.
 
 Manual run:
 

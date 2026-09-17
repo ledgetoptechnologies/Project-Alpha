@@ -109,7 +109,11 @@ final class RecurringServicesTest extends TestCase
         self::assertSame($annualDate, (string)$hostingStmt->fetchColumn(), 'The annual hosting schedule must not move when the monthly ads invoice is generated.');
         $adsStmt = $this->pdo->prepare('SELECT next_invoice_date FROM contract_recurring_services WHERE id=?');
         $adsStmt->execute([$adsId]);
-        self::assertSame(date('Y-m-d', strtotime($today . ' +1 month')), (string)$adsStmt->fetchColumn());
+        self::assertSame(
+            pa_recurring_service_next_date($today, 1, 'month', $today),
+            (string)$adsStmt->fetchColumn(),
+            'Month-end schedules stay anchored to the last valid day of the next month.'
+        );
 
         self::assertTrue(recurring_invoice_send_on_generate_if_enabled($this->pdo, $invoiceId, $config));
         self::assertCount(1, $deliveries);

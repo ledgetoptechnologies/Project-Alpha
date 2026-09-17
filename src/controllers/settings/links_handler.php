@@ -178,8 +178,6 @@ try {
 
     (new \App\Services\ManagedDeliveryService())->saveConfig($pdo, [
         'enabled' => isset($_POST['managed_delivery_enabled']),
-        'intent_url' => (string)($_POST['managed_delivery_intent_url'] ?? ''),
-        'profile_id' => (int)($_POST['managed_delivery_profile_id'] ?? 0),
         'guest_links_enabled' => isset($_POST['managed_delivery_guest_links_enabled']),
     ]);
     pa_remove_disabled_resolver_links($pdo);

@@ -14,12 +14,13 @@ require_once __DIR__ . '/../../../services/StripeService.php';
 require_once __DIR__ . '/../../../utils/invoice_due_dates.php';
 require_once __DIR__ . '/../../../utils/general_recipient_invoices.php';
 require_once __DIR__ . '/../../../utils/document_recipient.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/document_pricing_adjustments.php';
 $id = (int)($_GET['id'] ?? 0);
 if (!defined('PDF_MODE') && !defined('PUBLIC_VIEW')) {
     require_record_ownership($pdo, 'invoices', $id);
 }
-$st = $pdo->prepare('SELECT i.*, c.name client_name, c.email client_email, c.phone client_phone, c.address_line1 client_address_line1, c.address_line2 client_address_line2, c.city client_city, c.state client_state, c.postal_code client_postal_code, c.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM invoices i JOIN clients c ON c.id=i.client_id LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,c.organization_id) WHERE i.id=?');
+$st = $pdo->prepare('SELECT i.*, c.name client_name, c.email client_email, c.phone client_phone, c.address_line1 client_address_line1, c.address_line2 client_address_line2, c.city client_city, c.state client_state, c.postal_code client_postal_code, c.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM invoices i JOIN clients c ON c.id=i.client_id' . pa_document_effective_organization_joins('i', 'c') . ' WHERE i.id=?');
 $st->execute([$id]);
 $inv = $st->fetch(PDO::FETCH_ASSOC);
 if(!$inv){ echo '<p>Invoice not found</p>'; return; }

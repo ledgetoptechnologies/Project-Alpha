@@ -2,6 +2,7 @@
 // src/views/pages/contract/long-term-contract-print.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/document_recipient.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 $id = (int)($_GET['id'] ?? 0);
@@ -12,7 +13,7 @@ require_once __DIR__ . '/../../../utils/document_pricing_adjustments.php';
 if (!defined('PDF_MODE') && !defined('PUBLIC_VIEW')) {
     require_record_ownership($pdo, 'contracts', $id);
 }
-$c = $pdo->prepare('SELECT ltc.*, cl.name client_name, cl.email client_email, cl.phone client_phone, cl.address_line1 client_address_line1, cl.address_line2 client_address_line2, cl.city client_city, cl.state client_state, cl.postal_code client_postal_code, cl.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM contracts ltc JOIN clients cl ON cl.id=ltc.client_id LEFT JOIN organizations o ON o.id=COALESCE(ltc.organization_id,cl.organization_id) WHERE ltc.id=? AND ltc.contract_type="long_term"');
+$c = $pdo->prepare('SELECT ltc.*, cl.name client_name, cl.email client_email, cl.phone client_phone, cl.address_line1 client_address_line1, cl.address_line2 client_address_line2, cl.city client_city, cl.state client_state, cl.postal_code client_postal_code, cl.country client_country, o.name organization_name, o.general_email organization_email, o.general_phone organization_phone, o.address_line1 organization_address_line1, o.address_line2 organization_address_line2, o.city organization_city, o.state organization_state, o.postal_code organization_postal_code, o.country organization_country FROM contracts ltc JOIN clients cl ON cl.id=ltc.client_id' . pa_document_effective_organization_joins('ltc', 'cl') . ' WHERE ltc.id=? AND ltc.contract_type="long_term"');
 $c->execute([$id]);
 $contract = $c->fetch(PDO::FETCH_ASSOC);
 if(!$contract){ echo '<p>Long-term contract not found</p>'; return; }
@@ -487,10 +488,14 @@ $isOngoing = empty($contract['end_date']);
     </tr>
   </table>
 
-  <?php if (!empty($contract['scope'])): ?>
+  <?php
+  $scopeText = trim((string)($contract['scope'] ?? ''));
+  $scopeEnabled = !isset($appConfig['contract_scope_enabled']) || !empty($appConfig['contract_scope_enabled']);
+  if ($scopeEnabled && $scopeText !== ''):
+  ?>
   <div style="margin:16px 0;padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
     <div style="font-weight:600;margin-bottom:8px">Scope of Work</div>
-    <div style="white-space:pre-wrap;font-size:14px;line-height:1.6;color:#374151"><?php echo nl2br(htmlspecialchars($contract['scope'])); ?></div>
+    <div style="white-space:pre-wrap;font-size:14px;line-height:1.6;color:#374151"><?php echo nl2br(htmlspecialchars($scopeText)); ?></div>
   </div>
   <?php endif; ?>
 

@@ -5,7 +5,7 @@ Project Alpha is provider-neutral open-source software. Deployment product names
 The normal administrator experience intentionally has one surface:
 
 - **Custom integrations** contains the external application connection, explicit Project Alpha account access, and synchronization health.
-- **Links & Storage → Managed Delivery Service** delegates delivery intents to the configured service. That service owns object storage and client-facing links. Project Alpha never receives its object-storage credentials.
+- **Links & Storage → Managed Delivery Service** delegates delivery intents through the same External Operations signed endpoint. That service owns object storage and client-facing links. Project Alpha never receives its object-storage credentials, and there is no second receiver profile or signer to configure.
 - Direct Dropbox, Google Drive, S3, and R2 adapters remain available to standalone installations.
 
 Portal projection profiles, workspace/principal administration, allowlists, runtime gates, recovery actions, and viewer-sharing authority are not rendered as normal Settings controls. They remain internal compatibility contracts for connected deployments and automation. Existing database contracts, handler action names, stable capability identifiers, explicit profile/workspace allowlists, deny precedence, immutable signing epochs, retries, tenant isolation, and default-off gates remain compatibility requirements.

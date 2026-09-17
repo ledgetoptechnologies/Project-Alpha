@@ -1,6 +1,7 @@
 <?php
 // src/views/pages/contracts-list.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
@@ -34,7 +35,7 @@ $per = (int)($_GET['per_page'] ?? 50); if(!in_array($per,[50,100],true)) $per=50
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' JOIN clients c ON c.id=co.client_id LEFT JOIN organizations o ON o.id=COALESCE(co.organization_id,c.organization_id)';
+$documentJoins = ' JOIN clients c ON c.id=co.client_id' . pa_document_effective_organization_joins('co', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM contracts co'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 

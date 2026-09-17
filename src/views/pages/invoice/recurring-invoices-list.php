@@ -2,6 +2,7 @@
 // src/views/pages/invoice/recurring-invoices-list.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 
@@ -47,8 +48,7 @@ $sql = "SELECT ltc.id, ltc.doc_number, ltc.project_code, ltc.status, ltc.billing
                (SELECT COUNT(*) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status<>\"ended\") AS recurring_service_count,
                (SELECT COALESCE(SUM(rs.amount),0) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status IN (\"active\",\"paused\") AND rs.approval_status=\"approved\" AND rs.next_invoice_date=ltc.next_invoice_date) AS next_service_amount
         FROM contracts ltc
-        LEFT JOIN clients c ON c.id=ltc.client_id
-        LEFT JOIN organizations o ON o.id=COALESCE(ltc.organization_id,c.organization_id)";
+        LEFT JOIN clients c ON c.id=ltc.client_id" . pa_document_effective_organization_joins('ltc', 'c');
 
 if ($where) {
     $sql .= ' WHERE ' . implode(' AND ', $where);
@@ -76,7 +76,7 @@ if ($historyScopeWhere !== '') {
     $historyParams = array_merge($historyParams, $historyScopeParams);
 }
 
-$historyFrom = ' FROM invoices i LEFT JOIN clients c ON c.id=i.client_id LEFT JOIN contracts ltc ON ltc.id=i.contract_id LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,ltc.organization_id,c.organization_id)';
+$historyFrom = ' FROM invoices i LEFT JOIN clients c ON c.id=i.client_id LEFT JOIN contracts ltc ON ltc.id=i.contract_id LEFT JOIN projects document_project ON document_project.id=i.project_id LEFT JOIN organizations o ON o.id=COALESCE(document_project.organization_id,i.organization_id,ltc.organization_id,c.organization_id)';
 $historyWhereSql = ' WHERE ' . implode(' AND ', $historyWhere);
 $historyCountStmt = $pdo->prepare('SELECT COUNT(*)' . $historyFrom . $historyWhereSql);
 $historyCountStmt->execute($historyParams);

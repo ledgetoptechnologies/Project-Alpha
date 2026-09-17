@@ -2443,10 +2443,12 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 CREATE TABLE IF NOT EXISTS archived_clients (
     id INT AUTO_INCREMENT PRIMARY KEY,
     client_id INT NULL,
+    public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
     name VARCHAR(150) NOT NULL,
     email VARCHAR(255) NULL,
     phone VARCHAR(50) NULL,
     organization_id INT NULL,
+    client_type ENUM('unknown','business','consumer') NULL,
     notes TEXT NULL,
     address_line1 VARCHAR(255) NULL,
     address_line2 VARCHAR(255) NULL,
@@ -2455,10 +2457,22 @@ CREATE TABLE IF NOT EXISTS archived_clients (
     postal_code VARCHAR(20) NULL,
     country VARCHAR(100) NULL DEFAULT 'US',
     created_at TIMESTAMP NULL,
+    portal_principal_id BIGINT UNSIGNED NULL,
+    portal_manual_state ENUM('automatic','revoked') NULL,
+    portal_canonical_email VARCHAR(254) CHARACTER SET ascii COLLATE ascii_general_ci NULL,
+    portal_identity_binding_ids_json JSON NULL,
+    portal_principal_authorization_version INT UNSIGNED NULL,
+    portal_principal_disabled_for_archive TINYINT(1) NULL,
+    portal_principal_was_present TINYINT(1) NOT NULL DEFAULT 0,
+    portal_entitlement_ids_json JSON NULL,
+    portal_affected_workspace_ids_json JSON NULL,
     archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_archived_clients_client (client_id),
     INDEX idx_archived_clients_org (organization_id),
-    INDEX idx_archived_clients_name (name)
+    INDEX idx_archived_clients_name (name),
+    INDEX idx_archived_clients_portal_principal (portal_principal_id),
+    UNIQUE KEY uq_archived_clients_public_id (public_id),
+    CONSTRAINT fk_archived_clients_portal_principal FOREIGN KEY (portal_principal_id) REFERENCES portal_principals(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS archived_entities (

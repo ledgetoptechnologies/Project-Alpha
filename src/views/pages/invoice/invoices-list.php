@@ -1,6 +1,7 @@
 <?php
 // src/views/pages/invoices-list.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
@@ -78,7 +79,7 @@ $per = (int)($_GET['per_page'] ?? 50); if(!in_array($per,[50,100],true)) $per=50
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' JOIN clients c ON c.id=i.client_id LEFT JOIN organizations o ON o.id=COALESCE(i.organization_id,c.organization_id)';
+$documentJoins = ' JOIN clients c ON c.id=i.client_id' . pa_document_effective_organization_joins('i', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM invoices i'.$documentJoins.' WHERE '.implode(' AND ', $where);
 $stc = $pdo->prepare($sqlCount);
 $stc->execute($params);
@@ -226,7 +227,7 @@ $clients = $pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archi
                 <button type="submit" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">Email</button>
               </form>
               <?php endif; ?>
-              <?php if (in_array(strtolower((string)$r['status']), ['sent','unpaid','partial','overdue'], true)): ?>
+              <?php if (in_array(strtolower((string)$r['status']), ['sent','unpaid','partial','overdue'], true) && ($r['collection_mode'] ?? 'direct') === 'direct'): ?>
                 <form method="post" action="/?page=invoice/invoices-mark-paid" onsubmit="return confirm('Mark invoice paid?')" style="display:inline">
                   <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
                   <button type="submit" style="padding:6px 10px;border:0;border-radius:8px;background:#d1fae5;color:#065f46; font-size: small;">Paid</button>

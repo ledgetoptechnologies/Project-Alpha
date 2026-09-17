@@ -69,6 +69,7 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
 # PHP 8.5's bundled DOM depends on bundled Lexbor and should not be rebuilt here.
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" gd mbstring zip pdo_mysql mysqli curl xmlwriter \
+    && php -m | grep -qx sodium \
     && a2enmod rewrite
 
 # Create php ini file for error logging and future php customization
@@ -99,11 +100,14 @@ RUN echo "$APP_VERSION" > /var/www/APP_VERSION
 
 # Entry script
 WORKDIR /var/www
+RUN mkdir -p /usr/local/lib/project-alpha
+COPY ./cron/entrypoint-encryption-key.sh /usr/local/lib/project-alpha/app-encryption-key.sh
 COPY ./docker/start.sh /usr/local/bin/start.sh
 COPY ./docker/migrate.sh /usr/local/bin/migrate.sh
 COPY ./docker/enable-mysql-encryption.sh /usr/local/bin/enable-mysql-encryption.sh
 # Normalize Windows CRLF to LF to avoid "env: 'bash\r'" errors
-RUN sed -i 's/\r$//' /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh \
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/app-encryption-key.sh /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh \
+    && chmod 0644 /usr/local/lib/project-alpha/app-encryption-key.sh \
     && chmod +x /usr/local/bin/start.sh /usr/local/bin/migrate.sh /usr/local/bin/enable-mysql-encryption.sh
 
 EXPOSE 80
@@ -172,7 +176,8 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
         default-mysql-client cron curl tzdata zlib1g-dev libzip-dev libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN docker-php-ext-install -j"$(nproc)" zip pdo_mysql mysqli curl
+RUN docker-php-ext-install -j"$(nproc)" zip pdo_mysql mysqli curl \
+    && php -m | grep -qx sodium
 
 WORKDIR /var/www
 
@@ -192,7 +197,11 @@ RUN echo "$APP_VERSION" > /var/www/APP_VERSION \
 COPY cron/crontab /etc/cron.d/project-alpha
 RUN sed -i 's/\r$//' /etc/cron.d/project-alpha && chmod 0644 /etc/cron.d/project-alpha
 
+RUN mkdir -p /usr/local/lib/project-alpha
+COPY cron/entrypoint-encryption-key.sh /usr/local/lib/project-alpha/cron-encryption-key.sh
 COPY cron/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/cron-encryption-key.sh /usr/local/bin/entrypoint.sh \
+    && chmod 0644 /usr/local/lib/project-alpha/cron-encryption-key.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 CMD ["entrypoint.sh"]

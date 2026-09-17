@@ -6,6 +6,9 @@ on:
   push:
     branches: [dev]
 
+permissions:
+  contents: read
+
 jobs:
   smoke-test:
     runs-on: ubuntu-latest
@@ -14,6 +17,9 @@ jobs:
 
       - name: Validate canonical Compose configuration
         run: docker compose config >/tmp/compose.yml
+
+      - name: Verify scheduled-worker shared encryption key
+        run: bash cron/tests/entrypoint-encryption-key-test.sh
 
       - name: Build CI images
         run: |
@@ -103,6 +109,30 @@ jobs:
         env:
           PORTAL_SCOPE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-portal-scope-mysql-integration.ps1
+
+      - name: MySQL API v2 Project synchronization regressions
+        shell: pwsh
+        env:
+          API_V2_PROJECT_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-project-lifecycle-mysql-integration.ps1
+
+      - name: MySQL API v2 directory client profile regressions
+        shell: pwsh
+        env:
+          API_V2_CLIENT_PROFILE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-client-profile-mysql-integration.ps1
+
+      - name: MySQL API v2 directory creation regressions
+        shell: pwsh
+        env:
+          API_V2_DIRECTORY_CREATE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-directory-create-mysql-integration.ps1
+
+      - name: MySQL API v2 directory organization and lifecycle regressions
+        shell: pwsh
+        env:
+          API_V2_ORG_PROFILE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-organization-profile-mysql-integration.ps1
 
       - name: Dump logs on failure
         if: failure()

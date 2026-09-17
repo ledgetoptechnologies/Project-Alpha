@@ -209,6 +209,7 @@ function page_permission_map(): array
         'client/clients-create'  => 'clients.create',
         'client/clients-edit'    => 'clients.edit',
         'client/clients-update'  => 'clients.edit',
+        'portal/service-assignments-handler' => 'portal_service_assignments.manage',
         'client/onboarding'      => 'clients.onboarding',
         'client/onboarding-invite' => 'clients.onboarding',
         'client/onboarding-review' => 'clients.onboarding',

@@ -11,10 +11,12 @@ test('custom integrations exposes one generic connection and hides technical por
   const clientAlias = fs.readFileSync(path.join(root, 'src/views/pages/settings/client-portal-access.php'), 'utf8');
   const advancedAlias = fs.readFileSync(path.join(root, 'src/views/pages/settings/integration-advanced.php'), 'utf8');
   assert.match(page, /External application connection/);
+  assert.match(page, /Connected workspace synchronization/);
   assert.match(page, /Custom-integration access/);
   assert.match(page, /Synchronization status/);
   assert.match(page, /data-external-ops-grant-form/);
   assert.doesNotMatch(page, /Portal projection runtime|Advanced integration profiles|Workspaces and portal principals|Scoped client access|Profile workspace allowlist|Manager appointment|Projection recovery|viewer\.share\.create/i);
+  assert.doesNotMatch(page, /Client portal provisioning|Operations routes/i);
   assert.doesNotMatch(registry, /'tab'\s*=>\s*'(?:client-portal-access|integration-advanced)'/);
   assert.match(clientAlias, /require __DIR__ \. '\/external-ops\.php'/);
   assert.match(advancedAlias, /require __DIR__ \. '\/external-ops\.php'/);

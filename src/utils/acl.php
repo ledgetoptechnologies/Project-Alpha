@@ -55,14 +55,7 @@ function request_client_org_id(): int
 function resolve_client_context_org_id(PDO $pdo, int $clientId = 0, ?int $projectId = null, ?int $requestedOrgId = null): ?int
 {
     $requestedOrgId = (int)($requestedOrgId ?? 0);
-    if ($requestedOrgId > 0) {
-        return $requestedOrgId;
-    }
     $projectId = (int)($projectId ?? 0);
-    if ($clientId <= 0 && $projectId <= 0) {
-        return null;
-    }
-
     try {
         if ($projectId > 0) {
             $stmt = $pdo->prepare('SELECT organization_id FROM projects WHERE id = ? LIMIT 1');
@@ -77,12 +70,18 @@ function resolve_client_context_org_id(PDO $pdo, int $clientId = 0, ?int $projec
             $stmt = $pdo->prepare('SELECT organization_id FROM clients WHERE id = ? LIMIT 1');
             $stmt->execute([$clientId]);
             $orgId = (int)($stmt->fetchColumn() ?: 0);
-            return $orgId > 0 ? $orgId : null;
+            if ($orgId > 0) {
+                return $orgId;
+            }
         }
+
     } catch (Throwable $e) {
     }
 
-    return null;
+    // A requested organization is only a fallback when no client or project
+    // relationship establishes authoritative context. Never let a stale form
+    // value override either relationship.
+    return $requestedOrgId > 0 ? $requestedOrgId : null;
 }
 
 function compute_permissions_hash(PDO $pdo, int $userId, int $organizationId = 0): string

@@ -1,6 +1,7 @@
 <?php
 // src/views/pages/quotes-list.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 $client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
@@ -36,7 +37,7 @@ $per = (int)($_GET['per_page'] ?? 50); if(!in_array($per,[50,100],true)) $per=50
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 
-$documentJoins = ' JOIN clients c ON c.id=q.client_id LEFT JOIN organizations o ON o.id=COALESCE(q.organization_id,c.organization_id)';
+$documentJoins = ' JOIN clients c ON c.id=q.client_id' . pa_document_effective_organization_joins('q', 'c');
 $sqlCount = 'SELECT COUNT(*) FROM quotes q'.$documentJoins.($where? ' WHERE '.implode(' AND ', $where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 

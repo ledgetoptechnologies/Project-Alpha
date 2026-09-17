@@ -1,0 +1,73 @@
+{
+  "contract": "ltds-project-alpha-portal-contact-assignments-v4",
+  "endpoint": "/api/internal/project-alpha/portal-v2",
+  "schemaVersion": 4,
+  "requiredProfileCapability": "contact_assignment_projection_enabled",
+  "expectedSnapshotHash": "fa787865c479b1cbdfaba7361d9dd15e8fa9f7d9ffcdad25fa232e1004f71cfa",
+  "deliveryOrder": ["snapshotPage", "snapshotActivate", "roleUpdateEvent", "assignmentTombstone", "relationTombstone", "contactTombstone"],
+  "valid": {
+    "snapshotPage": {
+      "schemaVersion": 4,
+      "applicationKey": "field_operations_portal",
+      "deliveryId": "contact-assignments-page",
+      "occurredAt": "2026-09-02T18:00:00.000Z",
+      "sourceGeneration": "contact-assignments-generation",
+      "sourceSequence": 20,
+      "workspaceId": "pa-workspace-contacts",
+      "kind": "snapshot.page",
+      "snapshotHash": "fa787865c479b1cbdfaba7361d9dd15e8fa9f7d9ffcdad25fa232e1004f71cfa",
+      "pageNumber": 1,
+      "pageCount": 1,
+      "recordCount": 9,
+      "workspace": {"publicId": "pa-workspace-contacts", "rootType": "organization", "rootPublicId": "pa-org-contacts", "displayName": "Contacts Inc", "sourceVersion": "workspace-v1", "active": true},
+      "entities": [
+        {"type": "organization", "publicId": "pa-org-contacts", "parentPublicId": null, "displayName": "Contacts Inc", "sourceVersion": "org-v1", "active": true, "primaryContact": false},
+        {"type": "client", "publicId": "pa-client-manager", "parentPublicId": "pa-org-contacts", "displayName": "Manager", "sourceVersion": "client-v1", "active": true, "primaryContact": false},
+        {"type": "project", "publicId": "pa-project-north", "parentPublicId": "pa-client-manager", "displayName": "North Project", "sourceVersion": "project-v1", "active": true, "primaryContact": false},
+        {"type": "contact", "publicId": "pa-contact-manager", "parentPublicId": "pa-client-manager", "displayName": "Manager", "sourceVersion": "contact-v1", "active": true, "primaryContact": false}
+      ],
+      "principals": [],
+      "entitlements": [],
+      "relations": [
+        {"publicId": "pa-relation-org-client", "relationType": "contains", "from": {"type": "organization", "publicId": "pa-org-contacts"}, "to": {"type": "client", "publicId": "pa-client-manager"}, "sourceVersion": "relation-org-client-v1", "active": true},
+        {"publicId": "pa-relation-client-project", "relationType": "contains", "from": {"type": "client", "publicId": "pa-client-manager"}, "to": {"type": "project", "publicId": "pa-project-north"}, "sourceVersion": "relation-client-project-v1", "active": true},
+        {"publicId": "pa-relation-project-contact", "relationType": "contact_assignment", "from": {"type": "project", "publicId": "pa-project-north"}, "to": {"type": "contact", "publicId": "pa-contact-manager"}, "sourceVersion": "relation-project-contact-v1", "active": true}
+      ],
+      "projectLifecycles": [
+        {"projectPublicId": "pa-project-north", "status": "active", "completedAt": null, "sourceVersion": "lifecycle-v1"}
+      ],
+      "contactAssignments": [
+        {"publicId": "pa-assignment-project-manager", "contactPublicId": "pa-contact-manager", "clientPublicId": "pa-client-manager", "scopeType": "project", "scopePublicId": "pa-project-north", "role": "billing_contact", "primary": false, "primaryBilling": true, "sendProjectInvoices": false, "canViewInvoiceLinks": true, "sourceVersion": "assignment-v1", "active": true}
+      ]
+    },
+    "snapshotActivate": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-assignments-activate", "occurredAt": "2026-09-02T18:00:00.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 20, "workspaceId": "pa-workspace-contacts", "kind": "snapshot.activate", "snapshotHash": "fa787865c479b1cbdfaba7361d9dd15e8fa9f7d9ffcdad25fa232e1004f71cfa", "pageCount": 1, "recordCount": 9},
+    "roleUpdateEvent": {
+      "schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-assignment-role-update", "occurredAt": "2026-09-02T18:01:00.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 21, "workspaceId": "pa-workspace-contacts", "kind": "event",
+      "event": {"resource": "contact_assignment", "action": "upsert", "contactAssignment": {"publicId": "pa-assignment-project-manager", "contactPublicId": "pa-contact-manager", "clientPublicId": "pa-client-manager", "scopeType": "project", "scopePublicId": "pa-project-north", "role": "project_liaison", "primary": false, "primaryBilling": true, "sendProjectInvoices": false, "canViewInvoiceLinks": true, "sourceVersion": "assignment-v2", "active": true}}
+    },
+    "assignmentTombstone": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-assignment-tombstone", "occurredAt": "2026-09-02T18:02:00.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 22, "workspaceId": "pa-workspace-contacts", "kind": "event", "event": {"resource": "contact_assignment", "action": "tombstone", "publicId": "pa-assignment-project-manager", "sourceVersion": "assignment-v3"}},
+    "relationTombstone": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-relation-tombstone", "occurredAt": "2026-09-02T18:02:01.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 23, "workspaceId": "pa-workspace-contacts", "kind": "event", "event": {"resource": "relation", "action": "tombstone", "publicId": "pa-relation-project-contact", "sourceVersion": "relation-v2"}},
+    "contactTombstone": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-entity-tombstone", "occurredAt": "2026-09-02T18:02:02.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 24, "workspaceId": "pa-workspace-contacts", "kind": "event", "event": {"resource": "entity", "action": "tombstone", "publicId": "pa-contact-manager", "sourceVersion": "contact-v2"}}
+  },
+  "invalid": [
+    {"name": "v4-disabled", "delivery": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-disabled", "occurredAt": "2026-09-02T18:00:00.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 20, "workspaceId": "pa-workspace-contacts", "kind": "snapshot.activate", "snapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "pageCount": 1, "recordCount": 0}},
+    {
+      "name": "project-primary-invalid",
+      "delivery": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-invalid-primary", "occurredAt": "2026-09-02T18:03:00.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 25, "workspaceId": "pa-workspace-contacts", "kind": "event", "event": {"resource": "contact_assignment", "action": "upsert", "contactAssignment": {"publicId": "pa-assignment-project-manager", "contactPublicId": "pa-contact-manager", "clientPublicId": "pa-client-manager", "scopeType": "project", "scopePublicId": "pa-project-north", "role": "billing_contact", "primary": true, "primaryBilling": true, "sendProjectInvoices": false, "canViewInvoiceLinks": true, "sourceVersion": "assignment-invalid", "active": true}}}
+    },
+    {
+      "name": "billing-flags-on-department",
+      "delivery": {"schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-invalid-scope", "occurredAt": "2026-09-02T18:03:01.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 26, "workspaceId": "pa-workspace-contacts", "kind": "event", "event": {"resource": "contact_assignment", "action": "upsert", "contactAssignment": {"publicId": "pa-assignment-department-manager", "contactPublicId": "pa-contact-manager", "clientPublicId": "pa-client-manager", "scopeType": "department", "scopePublicId": "pa-department-field", "role": "contact", "primary": true, "primaryBilling": false, "sendProjectInvoices": true, "canViewInvoiceLinks": false, "sourceVersion": "assignment-invalid", "active": true}}}
+    },
+    {
+      "name": "missing-contact-endpoint",
+      "validationLayer": "receiver-generation",
+      "delivery": {
+        "schemaVersion": 4, "applicationKey": "field_operations_portal", "deliveryId": "contact-missing-endpoint", "occurredAt": "2026-09-02T18:03:02.000Z", "sourceGeneration": "contact-assignments-generation", "sourceSequence": 27, "workspaceId": "pa-workspace-contacts", "kind": "snapshot.page", "snapshotHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "pageNumber": 1, "pageCount": 1, "recordCount": 1,
+        "workspace": {"publicId": "pa-workspace-contacts", "rootType": "organization", "rootPublicId": "pa-org-contacts", "displayName": "Contacts Inc", "sourceVersion": "workspace-v1", "active": true},
+        "entities": [], "principals": [], "entitlements": [], "relations": [], "projectLifecycles": [],
+        "contactAssignments": [{"publicId": "pa-assignment-project-manager", "contactPublicId": "pa-contact-manager", "clientPublicId": "pa-client-manager", "scopeType": "project", "scopePublicId": "pa-project-north", "role": "contact", "primary": false, "primaryBilling": false, "sendProjectInvoices": false, "canViewInvoiceLinks": false, "sourceVersion": "assignment-v1", "active": true}]
+      }
+    }
+  ]
+}

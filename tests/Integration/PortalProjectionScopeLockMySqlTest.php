@@ -104,6 +104,28 @@ final class PortalProjectionScopeLockMySqlTest extends TestCase
         $this->second->rollBack();
     }
 
+    public function testArchivedClientRestoreLockSerializesCompetingConsumers(): void
+    {
+        $this->first->exec("INSERT INTO archived_clients(id,client_id,name) VALUES(1,10,'Archived client')");
+        $this->first->beginTransaction();
+        $lock = $this->first->prepare('SELECT * FROM archived_clients WHERE id=? FOR UPDATE');
+        $lock->execute([1]);
+        self::assertSame(1, (int)$lock->fetchColumn());
+
+        $this->second->beginTransaction();
+        $this->assertLockWaits(function (): void {
+            $competing = $this->second->prepare('SELECT * FROM archived_clients WHERE id=? FOR UPDATE');
+            $competing->execute([1]);
+        });
+        $this->first->rollBack();
+        $this->second->rollBack();
+
+        $service = (string)file_get_contents(dirname(__DIR__, 2) . '/src/services/ClientArchivePortalStateService.php');
+        self::assertStringContainsString("SELECT * FROM archived_clients WHERE id=?' . \$this->lockSuffix(\$pdo)", $service);
+        self::assertStringContainsString("'DELETE FROM archived_clients WHERE id=?'", $service);
+        self::assertStringContainsString("if (\$delete->rowCount() !== 1)", $service);
+    }
+
     private function assertLockWaits(callable $operation): void
     {
         try {
@@ -125,7 +147,7 @@ final class PortalProjectionScopeLockMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['organization_department_contacts','projects','organization_departments','clients','organizations'] as $table) {
+        foreach (['archived_clients','organization_department_contacts','projects','organization_departments','clients','organizations'] as $table) {
             $this->first->exec("DROP TABLE IF EXISTS {$table}");
         }
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -148,6 +170,9 @@ final class PortalProjectionScopeLockMySqlTest extends TestCase
             CREATE TABLE organization_department_contacts(
                 department_id INT NOT NULL, client_id INT NOT NULL,
                 PRIMARY KEY(department_id,client_id), KEY idx_department_contacts_client(client_id)
+            ) ENGINE=InnoDB;
+            CREATE TABLE archived_clients(
+                id INT PRIMARY KEY, client_id INT NULL, name VARCHAR(150) NOT NULL
             ) ENGINE=InnoDB;
             INSERT INTO organizations VALUES
                 (1,'org-a','Organization A'),(2,'org-b','Organization B'),(3,'org-c','Organization C');

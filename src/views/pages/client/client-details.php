@@ -5,6 +5,10 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/format.php';
+require_once __DIR__ . '/../../../utils/csrf.php';
+require_once __DIR__ . '/../../../utils/external_ops.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
@@ -25,6 +29,21 @@ $client = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$client) {
     echo '<p>Client not found.</p>';
     return;
+}
+
+$portalLogin = null;
+$portalLoginConfigured = false;
+$canManagePortalLogin = user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'users.manage', 0)
+    && user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'settings.manage', 0);
+try {
+    $portalConfig = pa_external_ops_delivery_config($pdo);
+    $portalState = (new \App\Services\PortalClientProvisioningService())->status($pdo, (string)$portalConfig['application_key']);
+    $portalLoginConfigured = !empty($portalState['configured']);
+    $portalStmt = $pdo->prepare('SELECT * FROM portal_client_login_eligibility WHERE client_id=?');
+    $portalStmt->execute([$id]);
+    $portalLogin = $portalStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+} catch (Throwable $error) {
+    error_log('[client_details] Client portal status unavailable: ' . $error->getMessage());
 }
 
 $projectStmt = $pdo->prepare('
@@ -58,7 +77,7 @@ $addressLines = array_values(array_filter([
 <style>
   .client-view { max-width: 1280px; margin: 0 auto; padding-bottom: 32px; }
   .client-view__header { display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:18px; }
-  .client-view__title { margin:0;font-size:30px;line-height:1.15; }
+  .client-view__title { margin:0;font-size:30px;line-height:1.15;overflow-wrap:anywhere; }
   .client-view__meta { margin-top:6px;color:var(--muted);font-size:13px; }
   .client-view__actions { display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end; }
   .client-view__button { padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:inherit;text-decoration:none;font-size:13px; }
@@ -75,15 +94,30 @@ $addressLines = array_values(array_filter([
   .client-stat span { display:block;color:var(--muted);font-size:12px; }
   .client-stat strong { display:block;margin-top:5px;font-size:22px; }
   .client-projects { display:grid;gap:10px; }
-  .client-project { display:flex;justify-content:space-between;gap:12px;padding:12px;border:1px solid #e5e7eb;border-radius:8px;text-decoration:none;color:inherit; }
+  .client-project { display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px;border:1px solid #e5e7eb;border-radius:8px;text-decoration:none;color:inherit;min-width:0; }
+  .client-project__name { min-width:0;overflow-wrap:anywhere; }
+  .client-project__status { flex:0 1 auto;overflow-wrap:anywhere;text-align:right; }
   .client-empty { padding:20px;text-align:center;color:var(--muted);border:1px dashed #d1d5db;border-radius:8px;background:#f9fafb; }
   .client-links-card > div { margin-top:0 !important;padding-top:0 !important;border-top:0 !important; }
+  .client-danger-zone { border-color:#fecaca;background:#fffafa; }
+  .client-danger-zone__head { display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap; }
+  .client-danger-zone__description { color:var(--muted);font-size:13px; }
+  .client-danger-zone .client-view__button--danger { border-color:#fca5a5;color:#b91c1c; }
   @media (max-width:900px) { .client-view__layout { grid-template-columns:1fr; } .client-view__header { display:grid; } .client-view__actions { justify-content:flex-start; } }
+  @media (max-width:560px) {
+    .client-view__header { gap:12px; }
+    .client-stats { grid-template-columns:1fr; }
+    .client-project { flex-direction:column;gap:4px; }
+    .client-project__status { text-align:left; }
+  }
 </style>
 
 <section class="client-view">
   <?php if (!empty($_GET['updated'])): ?>
     <div style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Client updated.</div>
+  <?php endif; ?>
+  <?php if (!empty($_GET['error'])): ?>
+    <div role="alert" style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca"><?php echo e((string)$_GET['error']); ?></div>
   <?php endif; ?>
   <div class="client-view__header">
     <div>
@@ -93,7 +127,9 @@ $addressLines = array_values(array_filter([
       </div>
     </div>
     <div class="client-view__actions">
+      <?php if(!$directoryManagementStatus['effective']):?>
       <a class="client-view__button client-view__button--primary" href="/?page=client/clients-edit&id=<?php echo $id; ?>">Edit Client</a>
+      <?php endif;?>
       <?php if (!empty($client['organization_id'])): ?>
         <a class="client-view__button" href="/?page=organization/organization-view&id=<?php echo (int)$client['organization_id']; ?>">View Organization</a>
       <?php endif; ?>
@@ -124,9 +160,19 @@ $addressLines = array_values(array_filter([
           <?php endforeach; ?>
         </div>
       </div>
+
     </aside>
 
     <main class="client-view__main">
+      <div class="client-card" id="assigned-services">
+        <?php
+        $portalServiceAssignmentSubjectType = empty($client['organization_id']) ? 'standalone_client' : 'client';
+        $portalServiceAssignmentSubjectId = $id;
+        $portalServiceAssignmentEntityPermission = 'clients.edit';
+        include __DIR__ . '/../../components/portal_service_assignments.php';
+        ?>
+      </div>
+
       <div class="client-card client-links-card">
         <?php
         $entityType = 'client';
@@ -141,8 +187,8 @@ $addressLines = array_values(array_filter([
           <div class="client-projects">
             <?php foreach ($projects as $project): ?>
               <a class="client-project" href="/?page=project/projects-details&id=<?php echo (int)$project['id']; ?>">
-                <span><strong><?php echo e((string)($project['name'] ?: 'Project')); ?></strong></span>
-                <span><?php echo e(ucwords(str_replace('_', ' ', (string)($project['status'] ?? '')))); ?></span>
+                <span class="client-project__name"><strong><?php echo e((string)($project['name'] ?: 'Project')); ?></strong></span>
+                <span class="client-project__status"><?php echo e(ucwords(str_replace('_', ' ', (string)($project['status'] ?? '')))); ?></span>
               </a>
             <?php endforeach; ?>
           </div>
@@ -152,4 +198,27 @@ $addressLines = array_values(array_filter([
       </div>
     </main>
   </div>
+
+  <?php if($portalLoginConfigured):?>
+    <?php
+      $portalLoginStatus=(string)($portalLogin['eligibility_status']??'review_required');
+      $portalLoginReason=(string)($portalLogin['review_reason']??'not_reconciled');
+      $portalLoginActive=$portalLoginStatus==='eligible'&&(string)($portalLogin['manual_state']??'automatic')!=='revoked';
+    ?>
+    <section class="client-card client-danger-zone" aria-labelledby="clientPortalAccessTitle">
+      <div class="client-danger-zone__head">
+        <div>
+          <h3 id="clientPortalAccessTitle">Portal access</h3>
+          <p><strong><?=e(ucwords(str_replace('_',' ',$portalLoginStatus)))?></strong></p>
+          <p class="client-danger-zone__description"><?=e($portalLoginReason==='none'?'Revoke portal login only when this person should no longer be eligible. The first verified sign-in still binds the external identity.':ucwords(str_replace('_',' ',$portalLoginReason)))?></p>
+        </div>
+        <?php if($canManagePortalLogin):?>
+          <form method="post" action="/?page=settings/external-ops-handler" onsubmit="return confirm('<?=$portalLoginActive?'Revoke this person’s client portal login eligibility? Existing Project Alpha records are preserved.':'Restore automatic client portal eligibility? The contact must still pass email and identity verification.'?>')">
+            <input type="hidden" name="csrf" value="<?=e(csrf_token())?>"><input type="hidden" name="action" value="set-client-portal-client"><input type="hidden" name="return_to" value="client-details"><input type="hidden" name="client_id" value="<?=$id?>"><input type="hidden" name="access_state" value="<?=$portalLoginActive?'revoked':'active'?>">
+            <button class="client-view__button client-view__button--danger"><?=$portalLoginActive?'Revoke portal login':'Restore portal login'?></button>
+          </form>
+        <?php endif;?>
+      </div>
+    </section>
+  <?php endif;?>
 </section>

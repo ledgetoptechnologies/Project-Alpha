@@ -2,6 +2,9 @@
 // src/controllers/clients_delete.php
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+if (api_v2_directory_management_guard($pdo,'client','archive')) { header('Location: /?page=client/clients-list&directory_managed=1'); exit; }
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {
@@ -21,13 +24,19 @@ if (!$client) {
 $projection=new App\Services\PortalProjectionMutationService();$pdo->beginTransaction();
 try {
   $beforeScopes=$projection->lockedClientScopes($pdo,$id);
+  // Refresh after the locking read so the archived identity and profile fields
+  // cannot come from a stale pre-transaction snapshot.
+  $st->execute([$id]);
+  $client = $st->fetch(PDO::FETCH_ASSOC);
+  if (!$client) {
+    throw new DomainException('Client not found while preparing the archive.');
+  }
   // 1) Archive client basic row
-  $insC = $pdo->prepare('INSERT INTO archived_clients (client_id,name,email,phone,organization_id,notes,address_line1,address_line2,city,state,postal_code,country,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
-  $insC->execute([
-    $client['id'], $client['name'], $client['email'] ?? null, $client['phone'] ?? null, $client['organization_id'] ?? null,
-    $client['notes'] ?? null, $client['address_line1'] ?? null, $client['address_line2'] ?? null, $client['city'] ?? null,
-    $client['state'] ?? null, $client['postal_code'] ?? null, $client['country'] ?? null, $client['created_at'] ?? null
-  ]);
+  $affectedPrincipalWorkspaces=(new App\Services\ClientArchivePortalStateService())->archive(
+    $pdo,
+    $client,
+    (int)($_SESSION['user']['id'] ?? 0)
+  );
 
   // Helper to archive a set
   $arch = $pdo->prepare('INSERT INTO archived_entities (client_id, entity_type, entity_id, payload) VALUES (?,?,?,JSON_OBJECT())');
@@ -79,8 +88,12 @@ try {
   }
 
   // 6) Delete client (will cascade to related tables based on FKs in schema)
-  $pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$id]);
+  api_v2_directory_record_delete($pdo, 'client', (string)$client['public_id']);
+  $delete = $pdo->prepare('DELETE FROM clients WHERE id=?');
+  $delete->execute([$id]);
+  if ($delete->rowCount() !== 1) throw new DomainException('Client changed while preparing the archive.');
   $projection->afterMutation($pdo,$beforeScopes);
+  $projection->queueWorkspaceIds($pdo,$affectedPrincipalWorkspaces);
 
   $pdo->commit();
   header('Location: /?page=client/clients-list&archived=1');

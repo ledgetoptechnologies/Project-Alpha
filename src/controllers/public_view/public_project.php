@@ -120,7 +120,16 @@ if (!empty($project['public_project_can_view_documents'])) {
 }
 
 if (!empty($project['public_project_can_view_invoices'])) {
-    $invoiceStmt = $pdo->prepare('SELECT id, doc_number, invoice_type, status, total, amount_paid, balance_due, created_at FROM invoices WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
+    $invoiceStmt = $pdo->prepare('
+        SELECT i.id, i.doc_number, i.invoice_type, i.status, i.total, i.amount_paid, i.balance_due, i.created_at
+        FROM invoices i
+        LEFT JOIN project_invoice_items pii ON pii.invoice_id = i.id
+        WHERE i.project_id = ?
+          AND COALESCE(i.collection_mode, "direct") = "direct"
+          AND pii.invoice_id IS NULL
+        ORDER BY i.created_at DESC
+        LIMIT 50
+    ');
     $invoiceStmt->execute([$projectId]);
     $invoices = $invoiceStmt->fetchAll(PDO::FETCH_ASSOC);
 

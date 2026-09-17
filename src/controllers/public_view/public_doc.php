@@ -16,6 +16,7 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/csrf_sf.php';
 require_once __DIR__ . '/../../utils/public_links.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/document_organization.php';
 
 $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
 if ($token === '') {
@@ -189,7 +190,7 @@ try {
       if ($type === 'quote') {
         try {
           $idParam = (int)$rid;
-          $stmt = $pdo->prepare('SELECT q.*, c.name client_name, o.name AS client_org, c.email client_email, c.phone client_phone, c.address_line1, c.address_line2, c.city, c.state, c.postal_code, c.country FROM quotes q JOIN clients c ON c.id=q.client_id LEFT JOIN organizations o ON o.id=c.organization_id WHERE q.id=?');
+          $stmt = $pdo->prepare('SELECT q.*, c.name client_name, o.name AS client_org, c.email client_email, c.phone client_phone, c.address_line1, c.address_line2, c.city, c.state, c.postal_code, c.country FROM quotes q JOIN clients c ON c.id=q.client_id' . pa_document_effective_organization_joins('q', 'c') . ' WHERE q.id=?');
           $stmt->execute([$idParam]);
           $quote = $stmt->fetch(PDO::FETCH_ASSOC);
           if ($quote) {

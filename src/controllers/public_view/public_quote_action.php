@@ -21,6 +21,7 @@ require_once __DIR__ . '/../../utils/public_links.php';
 require_once __DIR__ . '/../../utils/mileage.php';
 require_once __DIR__ . '/../../utils/job_work_materialization.php';
 require_once __DIR__ . '/../../utils/document_pricing_adjustments.php';
+require_once __DIR__ . '/../../utils/document_organization.php';
 require_once __DIR__ . '/../../services/ProjectContractEligibilityGuardService.php';
 $submitted = (string)($_POST['_token'] ?? ($_POST['csrf'] ?? ''));
 if (!csrf_sf_is_valid('public_quote_action', $submitted)) {
@@ -94,7 +95,7 @@ try {
         // Resolve creator + organization for derived records (no session user for public link)
         $fallbackUserId = 1;
         $quoteCreator = (int)($quote['created_by'] ?? 0) ?: $fallbackUserId;
-        $quoteOrgId   = !empty($quote['organization_id']) ? (int)$quote['organization_id'] : null;
+        $quoteOrgId = pa_document_effective_organization_id($pdo, 'quote', $qid);
         $billingMode = (($quote['billing_mode'] ?? 'fixed') === 'hourly') ? 'hourly' : 'fixed';
         $depositType = $quote['deposit_type'] ?? 'none';
         $depositValue = (float)($quote['deposit_amount'] ?? 0);
@@ -165,6 +166,8 @@ try {
 
         if ($quoteType === 'regular') {
           // Create a private draft. Contract completion is the billing event.
+          $invoiceProjectId = !empty($quote['project_id']) ? (int)$quote['project_id'] : null;
+          $projectBillingContext = project_invoice_billing_context($pdo, $invoiceProjectId, $appConfig, null, true);
           $invoiceSubtotal=0.0;
           foreach($qitems as $it){if(($it['pricing_status']??'standard')!=='standard')continue;$invoiceSubtotal+=(float)$it['line_total'];}
           $invoiceDiscount=0.0;
@@ -172,14 +175,11 @@ try {
           elseif(($quote['discount_type']??'none')==='fixed')$invoiceDiscount=min($invoiceSubtotal,max(0,(float)$quote['discount_value']));
           $invoiceTaxable=max(0,$invoiceSubtotal-$invoiceDiscount);
           $invoiceTotal=$invoiceTaxable+(max(0,(float)$quote['tax_percent'])*$invoiceTaxable/100);
-          $pdo->prepare('INSERT INTO invoices (contract_id, quote_id, client_id, project_id, invoice_type, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, status, due_date, project_code, fulfillment_date, organization_id, show_contact_on_document, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-             ->execute([$contract_id, $qid, (int)$quote['client_id'], !empty($quote['project_id']) ? (int)$quote['project_id'] : null, 'regular', $billingMode, $quote['discount_type'], $quote['discount_value'], $quote['tax_percent'], $invoiceSubtotal, $invoiceTotal, 'draft', null, $projectCode, $quote['fulfillment_date'] ?? null, $quoteOrgId, (int)($quote['show_contact_on_document'] ?? 0), $quoteCreator]);
+          $pdo->prepare('INSERT INTO invoices (contract_id, quote_id, client_id, project_id, invoice_type, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, status, due_date, payment_terms_days, due_date_source, project_code, fulfillment_date, organization_id, show_contact_on_document, created_by, collection_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+             ->execute([$contract_id, $qid, (int)$quote['client_id'], $invoiceProjectId, 'regular', $billingMode, $quote['discount_type'], $quote['discount_value'], $quote['tax_percent'], $invoiceSubtotal, $invoiceTotal, 'draft', $projectBillingContext['due_date'], $projectBillingContext['net_terms_days'], 'terms', $projectCode, $quote['fulfillment_date'] ?? null, $quoteOrgId, (int)($quote['show_contact_on_document'] ?? 0), $quoteCreator, $projectBillingContext['collection_mode']]);
           $invoice_id = (int)$pdo->lastInsertId();
           $pdo->prepare('UPDATE invoices SET job_id=?,service_location_id=? WHERE id=?')
             ->execute([!empty($quote['job_id'])?(int)$quote['job_id']:null,!empty($quote['service_location_id'])?(int)$quote['service_location_id']:null,$invoice_id]);
-          if (!empty($quote['project_id']) && project_uses_monthly_invoice_billing($pdo, (int)$quote['project_id'])) {
-            $pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$invoice_id]);
-          }
 
           $ii = $pdo->prepare('INSERT INTO invoice_items (invoice_id,item_library_id,item,description,quantity,unit_price,line_total,billing_unit,is_travel,pricing_status,catalog_snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
           foreach ($qitems as $it) {

@@ -186,6 +186,7 @@ final class OpsSnapshotV2Service
      *   select:string,
      *   where:string,
      *   ids:list<string>,
+     *   public_ids:list<string>,
      *   booleans:list<string>,
      *   timestamps:list<string>
      * }>
@@ -195,25 +196,27 @@ final class OpsSnapshotV2Service
         return [
             [
                 'type' => 'organization',
-                'select' => 'SELECT id,name,address_line1,address_line2,city,state,postal_code,country,created_at,updated_at FROM organizations',
+                'select' => 'SELECT id,public_id,name,address_line1,address_line2,city,state,postal_code,country,created_at,updated_at FROM organizations',
                 'where' => '1=1',
                 'ids' => [],
+                'public_ids' => ['public_id'],
                 'booleans' => [],
                 'timestamps' => ['created_at', 'updated_at'],
             ],
             [
                 'type' => 'client',
-                'select' => 'SELECT id,name,email,phone,address_line1,address_line2,city,state,postal_code,country,
+                'select' => 'SELECT id,public_id,name,email,phone,address_line1,address_line2,city,state,postal_code,country,
                                     organization_id,client_type,archived,created_at,updated_at
                              FROM clients',
                 'where' => 'deleted_at IS NULL',
                 'ids' => ['organization_id'],
+                'public_ids' => ['public_id'],
                 'booleans' => ['archived'],
                 'timestamps' => ['created_at', 'updated_at'],
             ],
             [
                 'type' => 'project',
-                'select' => 'SELECT id,client_id,parent_id,organization_id,business_unit_id,manager_user_id,
+                'select' => 'SELECT id,public_id,client_id,parent_id,organization_id,business_unit_id,manager_user_id,
                                     name,description,status,start_date,end_date,estimated_start,estimated_end,
                                     created_at,updated_at
                              FROM projects',
@@ -221,6 +224,7 @@ final class OpsSnapshotV2Service
                 'ids' => [
                     'client_id', 'parent_id', 'organization_id', 'business_unit_id', 'manager_user_id',
                 ],
+                'public_ids' => ['public_id'],
                 'booleans' => [],
                 'timestamps' => ['created_at', 'updated_at'],
             ],
@@ -231,6 +235,7 @@ final class OpsSnapshotV2Service
                              FROM service_locations',
                 'where' => '1=1',
                 'ids' => ['organization_id', 'client_id', 'project_id'],
+                'public_ids' => [],
                 'booleans' => ['archived'],
                 'timestamps' => ['created_at', 'updated_at'],
             ],
@@ -243,6 +248,7 @@ final class OpsSnapshotV2Service
                 'ids' => [
                     'client_id', 'organization_id', 'project_id', 'default_service_location_id',
                 ],
+                'public_ids' => [],
                 'booleans' => ['archived'],
                 'timestamps' => ['completed_at', 'created_at', 'updated_at'],
             ],
@@ -251,12 +257,23 @@ final class OpsSnapshotV2Service
 
     /**
      * @param array<string,mixed> $row
-     * @param array{ids:list<string>,booleans:list<string>,timestamps:list<string>} $definition
+     * @param array{ids:list<string>,public_ids:list<string>,booleans:list<string>,timestamps:list<string>} $definition
      * @return array<string,mixed>
      */
     private function normalizeData(array $row, array $definition): array
     {
         unset($row['id']);
+        // Migration 0062 assigns these once. Export only the stored
+        // source-issued identifier; snapshot reads must never manufacture or
+        // repair cross-system identity.
+        foreach ($definition['public_ids'] as $field) {
+            if (!array_key_exists($field, $row)
+                || !is_string($row[$field])
+                || !preg_match('/^[0-9a-f]{32}$/D', $row[$field])
+            ) {
+                throw new \UnexpectedValueException('The operations source public ID is missing or invalid.');
+            }
+        }
         foreach ($definition['ids'] as $field) {
             if (array_key_exists($field, $row) && $row[$field] !== null) {
                 $row[$field] = (string)$row[$field];

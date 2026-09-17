@@ -15,6 +15,7 @@ require_once __DIR__ . '/../services/DocumentRevisionService.php';
 require_once __DIR__ . '/../utils/invoice_notifications.php';
 require_once __DIR__ . '/../utils/document_pdf.php';
 require_once __DIR__ . '/../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../utils/public_links.php';
 
 $type = $_POST['type'] ?? '';
 $id = (int)($_POST['id'] ?? 0);
@@ -115,50 +116,16 @@ try {
   $includePublicLink = !empty($appConfig['public_links_in_email']);
   $absoluteUrl = '';
   if ($includePublicLink) {
-  // Create/ensure public link table exists
-  try {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS public_links (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      token VARCHAR(64) NOT NULL,
-      document_type VARCHAR(50) NOT NULL,
-      document_id INT NOT NULL,
-      redirect VARCHAR(255) NULL,
-      expires_at DATETIME NULL,
-      expire_when_paid TINYINT(1) NOT NULL DEFAULT 0,
-      revoked TINYINT(1) NOT NULL DEFAULT 0,
-      access_count INT NOT NULL DEFAULT 0,
-      last_accessed_at TIMESTAMP NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_public_token (token),
-      INDEX idx_public_type_document (document_type, document_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
-  } catch (Throwable $e) { /* ignore */ }
-  try {
-    $pdo->exec('ALTER TABLE public_links MODIFY COLUMN expires_at DATETIME NULL');
-  } catch (Throwable $e) { /* ignore */ }
-  try {
-    $pdo->exec('ALTER TABLE public_links ADD COLUMN expire_when_paid TINYINT(1) NOT NULL DEFAULT 0');
-  } catch (Throwable $e) { /* ignore */ }
-
   // Pending quotes/contracts keep one stable public link across revisions.
   // Invoice links stay valid until payment or manual revocation; other
   // document links keep the configured date-based expiration.
-  $token = '';
   $days = isset($appConfig['documents_valid_days']) ? (int)$appConfig['documents_valid_days'] : 14;
   if ($days <= 0) { $days = 14; }
   $expireWhenPaid = $type === 'invoice';
   $exp = $expireWhenPaid ? null : date('Y-m-d H:i:s', time() + ($days * 24 * 60 * 60));
-  if (in_array($type, ['quote','contract'], true)) {
-    $existingLink = $pdo->prepare('SELECT token FROM public_links WHERE document_type=? AND document_id=? AND revoked=0 AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY id DESC LIMIT 1');
-    $existingLink->execute([$type, $id]);
-    $token = (string)($existingLink->fetchColumn() ?: '');
-  }
-  if ($token === '') {
-    $token = bin2hex(random_bytes(32));
-    $ins = $pdo->prepare('INSERT INTO public_links (document_type, document_id, token, redirect, expires_at, expire_when_paid) VALUES (?,?,?,?,?,?)');
-    $ins->execute([$type, $id, $token, null, $exp, $expireWhenPaid ? 1 : 0]);
-    $publicLinkId = (int)$pdo->lastInsertId();
-  }
+  $publicLink = pa_public_link_reuse_or_create($pdo, $type, $id, $exp, $expireWhenPaid);
+  $token = (string)$publicLink['token'];
+  $publicLinkId = !empty($publicLink['created']) ? (int)$publicLink['id'] : 0;
 
   // Public links always use the validated configured instance origin.
   $publicUrl = '/?page=public-doc&token=' . rawurlencode($token);
@@ -238,10 +205,6 @@ try {
     'document_revision' => $revision,
     'message_key' => implode(':', ['document', $type, $id, $revision, strtolower((string)$to)]),
   ]);
-  if ($publicLinkId > 0 && (!$sent || $err === 'Already sent')) {
-    $pdo->prepare('UPDATE public_links SET revoked=1 WHERE id=?')->execute([$publicLinkId]);
-  }
-
   $toUrl = $redirectTo ?: $baseView;
   $join = (strpos($toUrl,'?')!==false)?'&':'?';
   if ($sent) {
@@ -274,9 +237,6 @@ try {
   header('Location: ' . $toUrl . $join . ($sent ? 'emailed=1' : ('email_err=' . urlencode($err))));
   exit;
 } catch (Throwable $e) {
-  if ($publicLinkId > 0) {
-    try { $pdo->prepare('UPDATE public_links SET revoked=1 WHERE id=?')->execute([$publicLinkId]); } catch (Throwable $ignored) {}
-  }
   app_log('email', 'email exception', ['type'=>$type, 'id'=>$id, 'ex'=>$e->getMessage()]);
   $toUrl = $redirectTo ?: '/?page=home';
   $join = (strpos($toUrl,'?')!==false)?'&':'?';
