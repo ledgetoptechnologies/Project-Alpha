@@ -247,7 +247,7 @@ final class ManagedDeliveryService
         ];
         $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $insert = $pdo->prepare("INSERT INTO managed_delivery_intent_outbox(delivery_id,intent_type,target_delivery_id,transport_mode,integration_profile_id,destination_url,pinned_application_key,signing_key_id,signing_contract_hash,delivery_timeout_seconds,delivery_max_attempts,actor_user_id,scope_type,scope_public_id,audience_type,audience_public_id,access_mode,request_fingerprint,payload_json) VALUES(?,'revoke',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-        $insert->execute([$deliveryId, $targetDeliveryId, $contract['transportMode'], $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId, (string)$original['scope_type'], (string)$original['scope_public_id'], (string)$original['audience_type'], (string)$original['audience_public_id'], (string)$original['access_mode'], hash('sha256', $body), $body]);
+        $insert->execute([$deliveryId, $targetDeliveryId, $contract['transportMode'], $contract['profileId'], $contract['url'], $contract['applicationKey'], $contract['keyId'], $contract['contractHash'], $contract['timeout'], $contract['maxAttempts'], $actorUserId > 0 ? $actorUserId : null, (string)$original['scope_type'], (string)$original['scope_public_id'], (string)$original['audience_type'], (string)$original['audience_public_id'], (string)$original['access_mode'], hash('sha256', $body), $body]);
         return ['deliveryId' => $deliveryId, 'replayed' => false, 'status' => 'queued'];
     }
 
@@ -303,7 +303,7 @@ final class ManagedDeliveryService
     private function scopeExists(PDO $pdo, string $type, string $publicId): bool
     {
         $table = self::SCOPE_TABLES[$type];
-        $suffix = $type === 'project' ? " AND status<>'cancelled'" : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
+        $suffix = $type === 'project' ? " AND status<>'cancelled' AND " . ProjectLifecycleSchema::visibility($pdo, '', true) : ($type === 'client' ? ' AND archived=0 AND deleted_at IS NULL' : '');
         $statement = $pdo->prepare("SELECT 1 FROM {$table} WHERE public_id=?{$suffix} LIMIT 1");
         $statement->execute([$publicId]);
         return (bool)$statement->fetchColumn();

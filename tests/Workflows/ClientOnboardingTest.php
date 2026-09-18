@@ -34,7 +34,7 @@ final class ClientOnboardingTest extends TestCase
         self::assertStringContainsString('name="general_email"', $createView . $editView);
         self::assertStringContainsString('name="general_phone"', $createView . $editView);
         self::assertStringContainsString('General Contact', $detailView);
-        self::assertStringContainsString("'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone']", $migrationHealth);
+        self::assertStringContainsString("'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone', 'archived', 'deleted_at']", $migrationHealth);
     }
 
     public function testInvitationStoresTokenHashAndEncryptedRecoveryToken(): void
@@ -141,6 +141,8 @@ final class ClientOnboardingTest extends TestCase
         self::assertStringContainsString("'organization_name' => \$organizationName", (string)$submit);
         self::assertStringContainsString("'organization_email' => \$organizationEmail", (string)$submit);
         self::assertStringContainsString("\$_POST['organization_phone']", (string)$submit);
+        self::assertStringContainsString("'postal_code' => client_onboarding_clean_text(\$_POST['postal_code'] ?? '', 32)", (string)$submit);
+        self::assertMatchesRegularExpression('/name="postal_code"[^>]*maxlength="32"/', (string)$page);
         self::assertStringContainsString('send_admin_notification', (string)$submit);
         self::assertStringNotContainsString('card_number', (string)$submit . (string)$page);
         self::assertStringNotContainsString('payment_method', (string)$submit . (string)$page);

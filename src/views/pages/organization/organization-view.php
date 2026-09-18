@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/resolver_link_policy.php';
 require_once __DIR__ . '/../../../utils/external_ops.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
@@ -206,7 +208,9 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
       <div class="org-view__meta">Created <?php echo htmlspecialchars(date('F j, Y', strtotime($org['created_at']))); ?></div>
     </div>
     <div class="org-view__actions">
+      <?php if(!$directoryManagementStatus['effective']):?>
       <a class="org-view__button org-view__button--primary" href="/?page=organization/organizations-edit&id=<?php echo $id; ?>">Edit Organization</a>
+      <?php endif;?>
       <form method="post" action="/?page=organization/organizations-upload" enctype="multipart/form-data" style="display:inline-block;margin:0">
         <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
@@ -218,6 +222,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
       <a class="org-view__button" href="/?page=organization/organizations-list">Back to List</a>
     </div>
   </div>
+  <?php if($directoryManagementStatus['configured']):?><div style="margin:10px 0;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;font-size:13px"><?php echo htmlspecialchars(api_v2_directory_management_warning($directoryManagementStatus)); ?></div><?php endif;?>
 
   <?php if (!empty($_GET['client_added'])): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#e6fffa;color:#065f46;border:1px solid #99f6e4">Client added to organization.</div>
@@ -334,10 +339,11 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
         <div class="org-card__head">
           <h3 class="org-card__title">Clients (<?php echo count($clients); ?>)</h3>
         </div>
-        <div style="position:relative;margin-bottom:12px">
+        <?php if(!$directoryManagementStatus['effective']):?><div style="position:relative;margin-bottom:12px">
           <input type="text" id="clientSearchInput" placeholder="Search clients to add..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:small">
           <div id="clientSearchResults" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ddd;border-radius:8px;display:none;max-height:220px;overflow-y:auto;box-shadow:0 4px 6px rgba(0,0,0,0.1);z-index:50;margin-top:4px"></div>
         </div>
+        <?php endif;?>
 
         <?php if (empty($clients)): ?>
           <div class="org-empty">
@@ -351,12 +357,13 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                   <a href="/?page=client/client-details&id=<?php echo (int)$client['id']; ?>" style="font-weight:700;text-decoration:none;color:inherit">
                     <?php echo htmlspecialchars($client['name']); ?>
                   </a>
-                  <form method="post" action="/?page=organization/organization-remove-client" style="margin:0" onsubmit="return confirm('Remove <?php echo e(substr(json_encode((string)$client['name'], JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS), 1, -1)); ?> from this organization?')">
+                  <?php if(!$directoryManagementStatus['effective']):?><form method="post" action="/?page=organization/organization-remove-client" style="margin:0" onsubmit="return confirm('Remove <?php echo e(substr(json_encode((string)$client['name'], JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS), 1, -1)); ?> from this organization?')">
                     <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
                     <input type="hidden" name="client_id" value="<?php echo (int)$client['id']; ?>">
                     <input type="hidden" name="organization_id" value="<?php echo $id; ?>">
                     <button type="submit" style="padding:4px 8px;border:1px solid #fca5a5;border-radius:8px;background:#fff;color:#b91c1c;font-size:12px">Remove</button>
                   </form>
+                  <?php endif;?>
                 </div>
                 <?php if (!empty($client['email']) || !empty($client['phone'])): ?>
                   <div style="font-size:12px;color:var(--muted);line-height:1.5">

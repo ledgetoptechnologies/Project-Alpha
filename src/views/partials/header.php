@@ -4,9 +4,11 @@
 <?php require_once __DIR__ . '/../../utils/acl.php'; ?>
 <?php require_once __DIR__ . '/../../utils/app_version.php'; ?>
 <?php require_once __DIR__ . '/../../Modules/Timekeeping/WorkforceSettings.php'; ?>
+<?php require_once __DIR__ . '/../../utils/api_v2_directory_management.php'; ?>
 <?php if (session_status() !== PHP_SESSION_ACTIVE) {
   session_start();
 }
+$directoryManagementStatus = api_v2_directory_management_status($pdo);
 
 // Permission-based nav visibility helper
 function nav_can(string $permission): bool {
@@ -123,7 +125,7 @@ function nav_can(string $permission): bool {
                 <?php if (nav_can('clients.view')): ?>
                 <li><a href="/?page=client/onboarding" data-page="client/onboarding">Onboarding</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('clients.create')): ?>
+                <?php if (nav_can('clients.create') && !$directoryManagementStatus['effective']): ?>
                 <li><a href="/?page=client/clients-create" data-page="client/clients-create">Create Clients</a></li>
                 <?php endif; ?>
               </ul>

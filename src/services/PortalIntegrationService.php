@@ -97,7 +97,8 @@ final class PortalIntegrationService
             $client = $this->authorizedClient($pdo, (int)$profile['id'], (string)$auth['clientPublicId'], $auth['organizationPublicId']);
             $project = null;
             if ($auth['projectPublicId'] !== null) {
-                $statement = $pdo->prepare('SELECT * FROM projects WHERE public_id=? AND client_id=? AND status<>\'cancelled\'');
+                $visibility = ProjectLifecycleSchema::visibility($pdo, '', true);
+                $statement = $pdo->prepare("SELECT * FROM projects WHERE public_id=? AND client_id=? AND status<>'cancelled' AND {$visibility}");
                 $statement->execute([(string)$auth['projectPublicId'], (int)$client['id']]);
                 $project = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
                 if($project===null){(new PortalIntegrationAuditService())->recordCommand($pdo,$applicationKey,$apiKeyId,PortalIntegrationContract::DRAFT_SCOPE,'denied',$correlationId,'SCOPE_DENIED');if($ownsTransaction)$pdo->commit();return['status'=>403,'body'=>['code'=>'SCOPE_DENIED']];}
@@ -205,10 +206,11 @@ final class PortalIntegrationService
     private function authorizedProject(PDO $pdo, int $profileId, string $rootType, string $rootPublicId, string $projectPublicId): array
     {
         (new PortalWorkspaceAuthorizationService())->requireRoot($pdo, $profileId, $rootType, $rootPublicId);
+        $visibility = ProjectLifecycleSchema::visibility($pdo, 'p', true);
         if ($rootType === 'organization') {
-            $statement = $pdo->prepare("SELECT p.* FROM projects p JOIN organizations o ON o.id=p.organization_id WHERE p.public_id=? AND o.public_id=? AND p.status<>'cancelled'");
+            $statement = $pdo->prepare("SELECT p.* FROM projects p JOIN organizations o ON o.id=p.organization_id WHERE p.public_id=? AND o.public_id=? AND p.status<>'cancelled' AND {$visibility}");
         } else {
-            $statement = $pdo->prepare("SELECT p.* FROM projects p JOIN clients c ON c.id=p.client_id WHERE p.public_id=? AND c.public_id=? AND c.organization_id IS NULL AND p.status<>'cancelled'");
+            $statement = $pdo->prepare("SELECT p.* FROM projects p JOIN clients c ON c.id=p.client_id WHERE p.public_id=? AND c.public_id=? AND c.organization_id IS NULL AND p.status<>'cancelled' AND {$visibility}");
         }
         $statement->execute([$projectPublicId, $rootPublicId]);
         $project = $statement->fetch(PDO::FETCH_ASSOC);

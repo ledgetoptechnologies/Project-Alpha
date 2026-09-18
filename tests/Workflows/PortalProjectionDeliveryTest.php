@@ -413,8 +413,8 @@ final class PortalProjectionDeliveryTest extends TestCase
         }
 
         $source = (string)file_get_contents(dirname(__DIR__, 2) . '/src/services/PortalProjectionMutationService.php');
-        $revokePass = "reconcileWorkspace(\$pdo,\$scope,'tombstone')";
-        $grantPass = "reconcileWorkspace(\$pdo,\$scope,'upsert')";
+        $revokePass = "reconcileWorkspace(\$pdo,\$scope,'tombstone',\$provisionPortalAuthority)";
+        $grantPass = "reconcileWorkspace(\$pdo,\$scope,'upsert',\$provisionPortalAuthority)";
         self::assertIsInt(strpos($source, $revokePass));
         self::assertIsInt(strpos($source, $grantPass));
         self::assertLessThan(strpos($source, $grantPass), strpos($source, $revokePass));

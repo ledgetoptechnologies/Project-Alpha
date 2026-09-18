@@ -5,7 +5,7 @@ description: Assignment-driven synchronization from Project Alpha to a deploymen
 
 # External Operations Integration
 
-This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Projects, Operations, Tasks, teams, and assignments.
+This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Operations, Tasks, teams, and assignments. Separately scoped, default-off API v2 Project commands may create or update an explicitly bound Project after migration, backfill attestation, credential provisioning, and deployment review; this repository does not claim that any deployment has enabled them.
 
 ## Reviewed project-management link
 

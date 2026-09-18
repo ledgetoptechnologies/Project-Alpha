@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/format.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/external_ops.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
@@ -125,7 +127,9 @@ $addressLines = array_values(array_filter([
       </div>
     </div>
     <div class="client-view__actions">
+      <?php if(!$directoryManagementStatus['effective']):?>
       <a class="client-view__button client-view__button--primary" href="/?page=client/clients-edit&id=<?php echo $id; ?>">Edit Client</a>
+      <?php endif;?>
       <?php if (!empty($client['organization_id'])): ?>
         <a class="client-view__button" href="/?page=organization/organization-view&id=<?php echo (int)$client['organization_id']; ?>">View Organization</a>
       <?php endif; ?>

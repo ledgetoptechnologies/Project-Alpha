@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/ScheduleService.php';
 require_once __DIR__ . '/../../utils/external_ops.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../services/ProjectRevisionService.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit; }
 csrf_verify_post_or_redirect('project/projects-update');
@@ -199,6 +200,11 @@ $portalBeforeScopes = $portalProjection->lockedProjectScopes(
 	$organization_id > 0 ? $organization_id : null,
 	$department_id > 0 ? $department_id : null
 );
+$lockedPresentation = $pdo->prepare('SELECT archived_at FROM projects WHERE id=?');
+$lockedPresentation->execute([$id]);
+if ($publicProjectEnabled && $lockedPresentation->fetchColumn() !== null) {
+	throw new DomainException('Restore the Project before explicitly publishing it.');
+}
 $lockedModeStmt = $pdo->prepare('SELECT invoice_billing_period FROM projects WHERE id=?');
 $lockedModeStmt->execute([$id]);
 $lockedInvoiceBillingPeriod = (string)($lockedModeStmt->fetchColumn() ?: 'per_invoice');
@@ -323,6 +329,7 @@ if ($publicProjectPassword !== '') {
 $publicStmt = $pdo->prepare('
 	UPDATE projects
 	SET public_project_enabled = ?,
+	    portal_publish_enabled = CASE WHEN ?=1 THEN 1 ELSE portal_publish_enabled END,
 	    public_project_token = ?,
 	    public_project_require_password = ?,
 	    public_project_password_hash = ?,
@@ -333,6 +340,7 @@ $publicStmt = $pdo->prepare('
 	WHERE id = ?
 ');
 $publicStmt->execute([
+	$publicProjectEnabled,
 	$publicProjectEnabled,
 	$publicProjectToken !== '' ? $publicProjectToken : null,
 	$publicProjectRequirePassword,
@@ -358,6 +366,7 @@ if(!empty($opsConfig['enabled'])){
 }
 if($storedBusinessUnitId!==$businessUnitId)audit_log($pdo,'project.business_unit.changed','project',$id,['from'=>$storedBusinessUnitId?:null,'to'=>$businessUnitId?:null]);
 if($storedManagerUserId!==$managerUserId)audit_log($pdo,'project.manager.changed','project',$id,['from'=>$storedManagerUserId?:null,'to'=>$managerUserId?:null]);
+(new \App\Services\ProjectRevisionService($pdo))->advance($id, 'update', null, null, $actorId ?: null);
 $portalProjection->afterMutation($pdo, array_merge($portalBeforeScopes, $portalProjection->projectScopes($pdo, $id)));
 (new \App\Services\PortalServiceAssignmentManager())->reconcileRoots(
 	$pdo,

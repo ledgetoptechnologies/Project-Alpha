@@ -686,7 +686,7 @@ final class TimekeepingService
 
         if ($projectId) {
             $stmt = $this->pdo->prepare(
-                "SELECT client_id FROM projects WHERE id=? AND status NOT IN ('completed','cancelled')"
+                "SELECT client_id FROM projects WHERE id=? AND status NOT IN ('completed','cancelled') AND " . \App\Services\ProjectLifecycleSchema::visibility($this->pdo, '')
             );
             $stmt->execute([$projectId]);
             $projectClient = $stmt->fetchColumn();
