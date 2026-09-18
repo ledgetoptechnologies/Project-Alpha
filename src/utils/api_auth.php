@@ -32,6 +32,46 @@ function api_get_client_ip(): string {
     return get_client_ip();
 }
 
+/**
+ * Atomically reserve one request against an API key's rolling one-minute limit.
+ *
+ * The api_keys row is the per-key serialization point.  Locking it before the
+ * usage count prevents concurrent requests from both observing capacity and
+ * then each recording a request.
+ */
+function api_admit_rate_limited_key(PDO $pdo, int $apiKeyId, int $limit): string {
+    if ($pdo->inTransaction()) {
+        throw new LogicException('API rate-limit admission requires its own transaction.');
+    }
+    $pdo->beginTransaction();
+
+    try {
+        $key = $pdo->prepare('SELECT id FROM api_keys WHERE id=? AND revoked_at IS NULL FOR UPDATE');
+        $key->execute([$apiKeyId]);
+        if ($key->fetchColumn() === false) {
+            $pdo->rollBack();
+            return 'invalid';
+        }
+
+        $cnt = $pdo->prepare(
+            'SELECT COUNT(*) FROM api_usage WHERE api_key_id=? AND used_at>=NOW() - INTERVAL 60 SECOND'
+        );
+        $cnt->execute([$apiKeyId]);
+        if ((int)$cnt->fetchColumn() >= $limit) {
+            $pdo->rollBack();
+            return 'limited';
+        }
+
+        $pdo->prepare('INSERT INTO api_usage (api_key_id) VALUES (?)')->execute([$apiKeyId]);
+        $pdo->prepare('UPDATE api_keys SET last_used_at=NOW() WHERE id=?')->execute([$apiKeyId]);
+        $pdo->commit();
+        return 'allowed';
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
 function api_require_key(
     array $requiredScopes = [],
     bool $allowFullScope = true,
@@ -72,15 +112,13 @@ function api_require_key(
         // Rate limit per key (per-minute)
         $limit = (int)(getenv('API_RATE_LIMIT_PER_MIN') ?: 60);
         if ($limit < 1) $limit = 60;
-        $since = date('Y-m-d H:i:s', time() - 60);
-        $cnt = $pdo->prepare('SELECT COUNT(*) FROM api_usage WHERE api_key_id=? AND used_at>=?');
-        $cnt->execute([(int)$row['id'], $since]);
-        if((int)$cnt->fetchColumn()>=$limit)$auditDeny(429,'RATE_LIMITED','Rate limit exceeded',(int)$row['id']);
-        // Record usage and touch last_used
-        try {
-            $pdo->prepare('INSERT INTO api_usage (api_key_id) VALUES (?)')->execute([(int)$row['id']]);
-            $pdo->prepare('UPDATE api_keys SET last_used_at=NOW() WHERE id=?')->execute([(int)$row['id']]);
-        } catch (Throwable $e) {}
+        $admission = api_admit_rate_limited_key($pdo, (int)$row['id'], $limit);
+        if ($admission === 'invalid') {
+            $auditDeny(401,'AUTHENTICATION_DENIED','Invalid API key',(int)$row['id']);
+        }
+        if ($admission === 'limited') {
+            $auditDeny(429,'RATE_LIMITED','Rate limit exceeded',(int)$row['id']);
+        }
         $GLOBALS['pa_api_key'] = $row;
         // API keys are explicit service principals. They never synthesize an
         // administrator user session, so future write-capable APIs cannot

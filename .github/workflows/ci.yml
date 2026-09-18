@@ -110,6 +110,12 @@ jobs:
           PORTAL_SCOPE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-portal-scope-mysql-integration.ps1
 
+      - name: MySQL concurrent API-key rate-limit regressions
+        shell: pwsh
+        env:
+          API_RATE_LIMIT_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-rate-limit-mysql-integration.ps1
+
       - name: MySQL API v2 Project synchronization regressions
         shell: pwsh
         env:
