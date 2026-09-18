@@ -20,10 +20,11 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         require_once dirname(__DIR__,2).'/src/utils/api_v2_project_lifecycle.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_project_backfill.php';
         require_once dirname(__DIR__,2).'/src/utils/public_project_links.php';
-        $this->pdo=new PDO('sqlite::memory:');$this->pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
+        $this->pdo=new PDO('sqlite::memory:');$this->pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);$this->pdo->exec('PRAGMA foreign_keys=ON');
         $this->pdo->exec("CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,revoked_at TEXT);
             CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY,application_id TEXT);
             CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT);
+            CREATE TABLE users(id INTEGER PRIMARY KEY);
             CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,name TEXT);CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
             CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT);
             CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,client_id INTEGER,organization_id INTEGER,department_id INTEGER,name TEXT,description TEXT,status TEXT,
@@ -41,7 +42,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
             CREATE TABLE project_invoice_items(id INTEGER PRIMARY KEY,project_invoice_id INTEGER,invoice_id INTEGER);
             CREATE TABLE system_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,organization_id INTEGER,action TEXT,entity_type TEXT,entity_id INTEGER,details TEXT,ip_address TEXT,user_agent TEXT);
             CREATE TABLE project_service_locations(id INTEGER PRIMARY KEY,project_id INTEGER,service_location_id INTEGER,is_default INTEGER);
-            CREATE TABLE schedule_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,project_id INTEGER,job_id INTEGER,service_location_id INTEGER,title TEXT,starts_at TEXT,ends_at TEXT,timezone TEXT,status TEXT,source_type TEXT,source_id INTEGER,created_by INTEGER);
+            CREATE TABLE schedule_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,project_id INTEGER,job_id INTEGER,service_location_id INTEGER,title TEXT,starts_at TEXT,ends_at TEXT,timezone TEXT,status TEXT,source_type TEXT,source_id INTEGER,created_by INTEGER,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
             INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
@@ -65,6 +66,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         $archive=['commandId'=>'423e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'1'];
         $first=api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'archive',$archive,7,$this->headers,'r1');
         self::assertSame(200,$first['status']);self::assertSame('2',$first['payload']['resource']['revision']);
+        self::assertNull($this->pdo->query('SELECT created_by FROM schedule_entries')->fetchColumn());
         self::assertTrue($first['payload']['result']['archived']);self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM projects')->fetchColumn());
         self::assertSame(['portalPublished'=>false,'publicLinkEnabled'=>false],$first['payload']['result']['presentation']);
         self::assertNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
@@ -91,6 +93,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         $out=api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'complete',$command,7,$this->headers,'r');
         self::assertSame(200,$out['status']);self::assertSame('completed',$out['payload']['result']['status']);
         self::assertSame('completed',$this->pdo->query('SELECT status FROM schedule_entries')->fetchColumn());
+        self::assertNull($this->pdo->query('SELECT created_by FROM schedule_entries')->fetchColumn());
         $audit=json_decode((string)$this->pdo->query('SELECT details FROM system_audit')->fetchColumn(),true);
         self::assertSame('223e4567-e89b-42d3-a456-426614174000',$audit['api_v2']['applicationId']);
         self::assertSame($command['commandId'],$audit['api_v2']['commandId']);

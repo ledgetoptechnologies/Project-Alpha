@@ -123,7 +123,7 @@ function api_v2_project_lifecycle_write(PDO $pdo, string $publicId, string $acti
         $project = $result['project'];
         if ($outcome !== 'blocked') {
             if ($outcome === 'applied') {
-                \ScheduleService::syncProject($pdo, (int)$project['id'], getenv('APP_TIMEZONE') ?: 'UTC', 0);
+                \ScheduleService::syncProject($pdo, (int)$project['id'], getenv('APP_TIMEZONE') ?: 'UTC', null);
                 $projection = new PortalProjectionMutationService();
                 $projection->afterMutation($pdo, $projection->projectScopes($pdo, (int)$project['id']));
             }

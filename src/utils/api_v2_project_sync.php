@@ -182,7 +182,7 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
                 $project=(new ProjectRevisionService($pdo))->advance((int)$project['id'],'update',$appPk,$command['commandId']);
             }
         }
-        if(in_array($type,['create','update'],true)){ScheduleService::syncProject($pdo,(int)$project['id'],getenv('APP_TIMEZONE')?:'UTC',0);$project=api_v2_project_hydrate_relations($pdo,$project);}
+        if(in_array($type,['create','update'],true)){ScheduleService::syncProject($pdo,(int)$project['id'],getenv('APP_TIMEZONE')?:'UTC',null);$project=api_v2_project_hydrate_relations($pdo,$project);}
         $revision=(string)$project['revision'];$hash=ProjectRevisionService::projectionHash($project);
         if($type==='bind'||$type==='create'){
             $pdo->prepare('INSERT INTO api_v2_project_external_bindings(application_pk,external_id,project_public_id,project_revision,project_projection_sha256) VALUES(?,?,?,?,?)')
