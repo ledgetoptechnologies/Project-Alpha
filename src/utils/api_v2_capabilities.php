@@ -24,7 +24,21 @@ function api_v2_identity_is_valid(array $identity): bool
 
 function api_v2_enabled(string $name): bool
 {
-    return filter_var(getenv($name) ?: 'false', FILTER_VALIDATE_BOOLEAN);
+    $configured = getenv($name);
+    if ($configured !== false && $configured !== '') {
+        return filter_var($configured, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    // These endpoints are read-only and still require an application-bound,
+    // explicitly scoped key. Commands stay opt-in by default.
+    return in_array($name, [
+        'APP_API_V2_DIRECTORY_READ_ENABLED',
+        'APP_API_V2_BINDING_STATUS_ENABLED',
+        'APP_API_V2_DIRECTORY_INVENTORY_ENABLED',
+        'APP_API_V2_PROJECTS_READ_ENABLED',
+        'APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED',
+        'APP_API_V2_PROJECTS_INVENTORY_ENABLED',
+    ], true);
 }
 
 /**
