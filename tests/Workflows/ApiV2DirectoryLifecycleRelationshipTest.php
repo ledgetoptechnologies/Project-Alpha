@@ -115,7 +115,8 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
         $scopes=['directory.clients.archive','directory.clients.restore','directory.organizations.archive','directory.organizations.restore',
             'directory.clients.organization.assign','directory.clients.organization.remove','directory.clients.organization.move','directory.clients.unbind','directory.organizations.unbind','directory.inventory.read'];
         foreach($scopes as$scope){self::assertArrayHasKey($scope,api_scope_catalog());self::assertFalse(api_key_has_scope('full',$scope,false));}
-        $example=(string)file_get_contents($root.'/config/.env.example');foreach(['APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED','APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED','APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED','APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED','APP_API_V2_DIRECTORY_INVENTORY_ENABLED']as$flag)self::assertStringContainsString($flag.'=false',$example);
+        $example=(string)file_get_contents($root.'/config/.env.example');foreach(['APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED','APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED','APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED','APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED']as$flag)self::assertStringContainsString($flag.'=false',$example);
+        self::assertDoesNotMatchRegularExpression('/^APP_API_V2_DIRECTORY_INVENTORY_ENABLED=/m',$example);
         self::assertStringContainsString("'APP_API_V2_DIRECTORY_' . strtoupper",$router);
         $features=['directory_client_archive'=>true,'directory_client_restore'=>true,'directory_organization_archive'=>true,'directory_organization_restore'=>true,'directory_relationship_write'=>true,'directory_binding_revoke'=>true,'directory_inventory'=>true];
         $payload=api_v2_capabilities_payload(['source_instance_id'=>'s','application_id'=>'a','history_epoch'=>'e'],'r',$scopes,$features);

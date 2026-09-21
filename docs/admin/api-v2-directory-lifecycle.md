@@ -1,7 +1,8 @@
 # API v2 directory lifecycle and relationships
 
-This surface is generic, stateless, default-off, and available only to an
-application-bound API key with each route's explicit scope. The legacy `full`
+This surface is generic and stateless. Read-only directory, binding-status, and
+inventory routes are enabled by default; commands are default-off. Every route
+is available only to an application-bound API key with its explicit scope. The legacy `full`
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
@@ -50,7 +51,8 @@ calling application's binding state. Use `type`, `limit`, and the returned
 `nextCursor` for reconciliation. It returns no profile fields, credentials, or
 provider secrets.
 
-All flags in `config/.env.example` remain `false` by default. Complete and retain
-the migration/backfill attestation, enable every required route, and provision
-exactly one non-`full` key with all required scopes before activating external
-directory ownership.
+The six read-only defaults do not require deployment configuration. An
+installation can set their documented environment variables to `false` as an
+emergency override. Complete and retain the migration/backfill attestation,
+enable every required command route, and provision exactly one non-`full` key
+with all required scopes before activating external directory ownership.

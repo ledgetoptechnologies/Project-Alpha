@@ -110,7 +110,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         $root=dirname(__DIR__,2);$router=(string)file_get_contents($root.'/public/index.php');
         self::assertStringNotContainsString('/delete/commands',$router);
         self::assertStringNotContainsString('DELETE FROM projects',(string)file_get_contents($root.'/src/controllers/project/projects_delete.php'));
-        self::assertStringContainsString('APP_API_V2_PROJECTS_READ_ENABLED=false',(string)file_get_contents($root.'/config/.env.example'));
+        self::assertDoesNotMatchRegularExpression('/^APP_API_V2_PROJECTS_READ_ENABLED=/m',(string)file_get_contents($root.'/config/.env.example'));
     }
 
     public function testBackfillDryRunAndApplyUseCanonicalProjector(): void

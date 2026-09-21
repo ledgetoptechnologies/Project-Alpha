@@ -7,7 +7,8 @@ title: API v2 cutover and rollback evidence template
 
 Use one private, instance-specific copy of this template for a proposed API v2
 cutover. It is an evidence record and release gate, not an instruction to enable
-an endpoint or deploy a configuration. Keep all API v2 flags `false` until the
+an endpoint or deploy a configuration. The six read-only directory and Project
+routes are enabled by code default; keep every command flag `false` until the
 responsible operators approve the completed record. Do not put credentials,
 request bodies containing personal data, external IDs, public IDs, hostnames,
 or key material in this template or in source control.
@@ -58,44 +59,46 @@ Required evidence:
 
 ## Exact route flags and least-privilege scopes
 
-List the exact planned flags and scopes in the approval record. Set every
-unlisted flag to `false`; do not use a broad or inherited scope. The following
-is the complete current directory/Project API v2 flag inventory.
+List the exact planned command flags and scopes in the approval record. Set
+every unlisted command flag to `false`; do not use a broad or inherited scope.
+The following is the complete current directory/Project API v2 flag inventory.
+Read-only defaults need no Compose configuration and may be set to `false` only
+to suppress an individual route.
 
-| Flags | Required scopes when the corresponding route is selected |
-| --- | --- |
-| `APP_API_V2_DIRECTORY_READ_ENABLED` | `api.capabilities.read` plus `directory.clients.read` and/or `directory.organizations.read` |
-| `APP_API_V2_BINDING_STATUS_ENABLED` | `api.capabilities.read` plus `directory.clients.binding_status.read` and/or `directory.organizations.binding_status.read` |
-| `APP_API_V2_DIRECTORY_BINDING_ENABLED` | `api.capabilities.read` plus `directory.clients.bind` and/or `directory.organizations.bind` |
-| `APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` | `api.capabilities.read` plus `directory.clients.binding.revision.refresh` and/or `directory.organizations.binding.revision.refresh` |
-| `APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED` | `api.capabilities.read`, `directory.organizations.write` |
-| `APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED` | `api.capabilities.read`, `directory.clients.write` |
-| `APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED` | `api.capabilities.read`, `directory.organizations.create` |
-| `APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED` | `api.capabilities.read`, `directory.clients.create`; an organization assignment additionally requires `directory.clients.organization.assign` |
-| `APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED` | `api.capabilities.read`, `directory.clients.archive` |
-| `APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED` | `api.capabilities.read`, `directory.clients.restore` |
-| `APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED` | `api.capabilities.read`, `directory.organizations.archive` |
-| `APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED` | `api.capabilities.read`, `directory.organizations.restore` |
-| `APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED` | `api.capabilities.read` plus the exact one of `directory.clients.organization.assign`, `directory.clients.organization.remove`, or `directory.clients.organization.move` |
-| `APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED` | `api.capabilities.read` plus `directory.clients.unbind` and/or `directory.organizations.unbind` |
-| `APP_API_V2_DIRECTORY_INVENTORY_ENABLED` | `api.capabilities.read`, `directory.inventory.read` |
-| `APP_API_V2_PROJECTS_READ_ENABLED` | `api.capabilities.read`, `projects.v2.read` |
-| `APP_API_V2_PROJECTS_COMPLETE_ENABLED` | `api.capabilities.read`, `projects.lifecycle.complete` |
-| `APP_API_V2_PROJECTS_CANCEL_ENABLED` | `api.capabilities.read`, `projects.lifecycle.cancel` |
-| `APP_API_V2_PROJECTS_ARCHIVE_ENABLED` | `api.capabilities.read`, `projects.lifecycle.archive` |
-| `APP_API_V2_PROJECTS_RESTORE_ENABLED` | `api.capabilities.read`, `projects.lifecycle.restore` |
-| `APP_API_V2_PROJECTS_CREATE_ENABLED` | `api.capabilities.read`, `projects.create` |
-| `APP_API_V2_PROJECTS_WRITE_ENABLED` | `api.capabilities.read`, `projects.write` |
-| `APP_API_V2_PROJECTS_BINDING_ENABLED` | `api.capabilities.read`, `projects.bind` |
-| `APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED` | `api.capabilities.read`, `projects.binding.revision.refresh` |
-| `APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED` | `api.capabilities.read`, `projects.binding_status.read` |
-| `APP_API_V2_PROJECTS_INVENTORY_ENABLED` | `api.capabilities.read`, `projects.inventory.read` |
+| Flags | Default | Required scopes when the corresponding route is selected |
+| --- | --- | --- |
+| `APP_API_V2_DIRECTORY_READ_ENABLED` | enabled | `api.capabilities.read` plus `directory.clients.read` and/or `directory.organizations.read` |
+| `APP_API_V2_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read` plus `directory.clients.binding_status.read` and/or `directory.organizations.binding_status.read` |
+| `APP_API_V2_DIRECTORY_BINDING_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.bind` and/or `directory.organizations.bind` |
+| `APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.binding.revision.refresh` and/or `directory.organizations.binding.revision.refresh` |
+| `APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.write` |
+| `APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.write` |
+| `APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.create` |
+| `APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.create`; an organization assignment additionally requires `directory.clients.organization.assign` |
+| `APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.archive` |
+| `APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.restore` |
+| `APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.archive` |
+| `APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.restore` |
+| `APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED` | disabled | `api.capabilities.read` plus the exact one of `directory.clients.organization.assign`, `directory.clients.organization.remove`, or `directory.clients.organization.move` |
+| `APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.unbind` and/or `directory.organizations.unbind` |
+| `APP_API_V2_DIRECTORY_INVENTORY_ENABLED` | enabled | `api.capabilities.read`, `directory.inventory.read` |
+| `APP_API_V2_PROJECTS_READ_ENABLED` | enabled | `api.capabilities.read`, `projects.v2.read` |
+| `APP_API_V2_PROJECTS_COMPLETE_ENABLED` | disabled | `api.capabilities.read`, `projects.lifecycle.complete` |
+| `APP_API_V2_PROJECTS_CANCEL_ENABLED` | disabled | `api.capabilities.read`, `projects.lifecycle.cancel` |
+| `APP_API_V2_PROJECTS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `projects.lifecycle.archive` |
+| `APP_API_V2_PROJECTS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `projects.lifecycle.restore` |
+| `APP_API_V2_PROJECTS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `projects.create` |
+| `APP_API_V2_PROJECTS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `projects.write` |
+| `APP_API_V2_PROJECTS_BINDING_ENABLED` | disabled | `api.capabilities.read`, `projects.bind` |
+| `APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read`, `projects.binding.revision.refresh` |
+| `APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read`, `projects.binding_status.read` |
+| `APP_API_V2_PROJECTS_INVENTORY_ENABLED` | enabled | `api.capabilities.read`, `projects.inventory.read` |
 
 For the planned subset, retain:
 
-- [ ] An exact `flag=false/true` review list signed by the approver. It starts
-  with all flags false and changes only the approved subset through the
-  instance's normal configuration process.
+- [ ] An exact command-flag `false/true` review list signed by the approver.
+  It starts with all commands false and changes only the approved subset
+  through the instance's normal configuration process.
 - [ ] A scope-to-route matrix showing that each key has only the listed scopes,
   is bound to the intended application, and is not a `full` key.
 - [ ] A negative-scope result for each adjacent unapproved route.
@@ -151,8 +154,9 @@ route, status class, feature name, command correlation ID, revision/generation
 comparison, and test result only. Do not retain response bodies containing
 personal or financial data.
 
-- [ ] With all flags false, selected routes return the documented unavailable
-  result and capabilities do not advertise them.
+- [ ] With all command flags false and the read-only routes explicitly
+  suppressed, selected routes return the documented unavailable result and
+  capabilities do not advertise them.
 - [ ] With the reviewed subset available, the capabilities handshake validates
   source-instance, application, and history-epoch matching; wrong identities,
   stale revisions/generations, missing scopes, and changed idempotency bodies
@@ -197,7 +201,8 @@ On a failed smoke check, unexpected parity result, stale attestation, or
 duplicate-writer signal, stop further cutover activity and record the trigger.
 
 1. Set every directory and Project API v2 flag to `false` through the approved
-   instance configuration process; retain the configuration revision evidence.
+   instance configuration process, including the six read-only emergency
+   overrides; retain the configuration revision evidence.
 2. Quiesce the external caller and preserve command, receipt, audit, and
    migration evidence. Do not delete receipts, bindings, history, or public
    tokens to make a rollback appear clean.
@@ -216,7 +221,7 @@ Final acceptance:
 
 - [ ] Reviewers accepted migration, flag/scope, backfill/attestation, smoke,
   public-link parity, quiescence, retirement, and rollback/takeover evidence.
-- [ ] The record names the active approved subset, or confirms that all flags
-  remain false.
+- [ ] The record names the active approved command subset and any read-only
+  route overrides.
 - [ ] No credential, personal data, deployment address, or business-specific
   integration detail was added to this repository.

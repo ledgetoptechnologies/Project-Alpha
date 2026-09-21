@@ -8,7 +8,8 @@ title: API v2 Project lifecycle
 Project Alpha keeps the authoritative Project record. The optional API exposes
 exact reads, reversible lifecycle commands, and application-scoped Project
 synchronization to explicitly provisioned API v2 applications. Every route is
-generic and disabled by default. Nothing selects a Project, client, or
+generic. Read, binding-status, and inventory routes are enabled by default;
+every command remains disabled by default. Nothing selects a Project, client, or
 organization by name or email, creates portal membership, publishes documents,
 enables a public link, activates delivery, or inherits access from a legacy
 `full` key.

@@ -38,10 +38,11 @@ through the existing administrator API-key screen, use a reviewed database
 change to insert `api_v2_applications(application_id, name)` with a freshly
 generated lowercase UUID-v4 from a cryptographic random generator
 and update that specific `api_keys.id` to reference the new application row.
-The key must remain unrevoked. By default `/api/v2/capabilities` reports only
-itself; optional directory and binding-status reads are advertised only when
-their installation flags are enabled, and are granted only to keys with their
-explicit scopes. It does not claim snapshot or change-feed support. Its
+The key must remain unrevoked. By default `/api/v2/capabilities` also
+advertises the six read-only directory and Project route groups. Their
+capabilities are granted only when the key has the corresponding explicit
+scopes; an installation can set a documented read-only-route flag to `false`
+to suppress one. It does not claim snapshot or change-feed support. Its
 `sourceInstanceId` and `historyEpoch` are independent, persisted UUID-v4
 values. The history epoch changes only with an explicit operator history reset.
 MySQL `UUID()` alone is version 1 and will fail API v2 preflight validation.
@@ -52,8 +53,8 @@ plus an application-specific authorization generation. Covered client and
 organization create/update, onboarding, import, relationship, archive, restore,
 purge and organization-delete writers record changes in their transactions,
 suppressing unchanged profile hashes. The migration does not backfill existing
-resources or initialize or advance authorization generations. The optional
-directory reads remain disabled by default and fail closed when revision state
+resources or initialize or advance authorization generations. The default-enabled
+directory reads fail closed when revision state
 or authorization generation is absent. The legacy Sync Contract v2 source identity is
 not used; its UUID-v1 value is incompatible with the new v2 handshake. Before
 enabling a directory read, cover every client, organization, address,
@@ -64,9 +65,9 @@ tests. Do not infer a globally commit-ordered feed from auto-increment IDs.
 
 Migration `0090_api_v2_directory_binding_status_foundation.sql` adds exact,
 application-scoped external-ID bindings to client or organization public IDs.
-It creates no binding and performs no backfill. The optional status routes
-remain disabled by default via `APP_API_V2_BINDING_STATUS_ENABLED`; the
-directory reads use `APP_API_V2_DIRECTORY_READ_ENABLED`.
+It creates no binding and performs no backfill. The default-enabled status
+routes and directory reads can each be suppressed with their respective
+environment variable set to `false`.
 
 Migration `0091_api_v2_directory_binding_command_receipts.sql` adds durable,
 application-scoped idempotency receipts for binding an existing resource.

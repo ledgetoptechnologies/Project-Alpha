@@ -72,6 +72,8 @@ their authorization handshake after that change. If any state is missing,
 invalid, exhausted, or concurrently changed, the command rolls back and makes
 no binding or generation change.
 
-Keep all API v2 route flags disabled until the separate Directory/Project
-backfill, release evidence, deployment review, and cutover procedures are
-complete.
+The six read-only API v2 routes are enabled by default and remain protected by
+application binding and exact scopes. Keep every command route disabled until
+the separate Directory/Project backfill, release evidence, deployment review,
+and cutover procedures are complete. Set a read-only route's documented
+environment variable to `false` only when an installation must suppress it.
