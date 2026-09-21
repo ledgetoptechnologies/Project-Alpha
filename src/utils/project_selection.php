@@ -17,7 +17,7 @@ function pa_project_client_org_id(PDO $pdo, int $clientId): ?int
  */
 function pa_active_project_filter_for_client(PDO $pdo, int $clientId): array
 {
-    $statusClause = 'p.status IN ("active","not_started")';
+    $statusClause = 'p.status IN ("active","not_started") AND p.archived_at IS NULL';
     $orgId = pa_project_client_org_id($pdo, $clientId);
     if ($orgId !== null) {
         return [['p.organization_id = ?', $statusClause], [$orgId]];

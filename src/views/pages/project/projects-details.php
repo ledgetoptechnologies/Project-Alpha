@@ -372,7 +372,10 @@ $statusColors = [
     'cancelled' => ['bg' => '#f3f4f6', 'color' => '#6b7280', 'text' => 'Cancelled']
 ];
 
-$currentStatus = $statusColors[$project['status']] ?? $statusColors['not_started'];
+$projectDisplayStatus = in_array((string)$project['status'], ['not_started','active'], true)
+    && !empty($project['estimated_end']) && (string)$project['estimated_end'] < date('Y-m-d')
+    ? 'overdue' : (string)$project['status'];
+$currentStatus = $statusColors[$projectDisplayStatus] ?? $statusColors['not_started'];
 $contractSettlementEnabled = (string)($appConfig['contract_settlement_enabled'] ?? '0') === '1';
 $projectIsTerminal = in_array((string)$project['status'], ['completed', 'cancelled'], true);
 $closeoutTarget = in_array((string)($_GET['closeout_target'] ?? ''), ['completed', 'cancelled'], true)
@@ -1021,7 +1024,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                 <?php endif; ?>
                 <div class="grid">
                     <?php foreach ($statusColors as $statusKey => $statusInfo): ?>
-                        <?php if ($statusKey !== $project['status']): ?>
+                        <?php if ($statusKey !== 'overdue' && $statusKey !== $project['status']): ?>
                         <?php
                         $statusConfirmation = $statusKey === 'completed'
                             ? 'Complete this Project? Collectible receivables remain due and continue after completion.'

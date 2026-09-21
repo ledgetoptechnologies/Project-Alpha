@@ -121,6 +121,43 @@ final class PortalProjectionService
         return['snapshot'=>null,'events'=>$events];
     }
 
+    /**
+     * Queue only non-authority changes for an already-published workspace.
+     *
+     * This deliberately cannot bootstrap a snapshot and filters both sides of
+     * the diff so a directory create cannot publish or tombstone principals,
+     * entitlements, or contact assignments as incidental authorization drift.
+     */
+    public function queueWorkspaceNeutralChanges(PDO$pdo,array$profile,string$workspacePublicId,?string$onlyAction=null):array
+    {
+        if($onlyAction!==null&&!in_array($onlyAction,['upsert','tombstone'],true))throw new DomainException('portal-change-action-invalid');
+        $profileId=(int)($profile['id']??0);if($profileId<1)throw new DomainException('portal-profile-workspace-denied');
+        $profile=self::lockProfileContract($pdo,$profileId);if(empty($profile['enabled'])||empty($profile['portal_projection_enabled']))throw new DomainException('portal-profile-disabled');
+        $workspace=(new PortalWorkspaceAuthorizationService())->requireWorkspace($pdo,$profileId,$workspacePublicId);$state=$this->stateForUpdate($pdo,$profileId,$workspacePublicId);
+        if(!$state||empty($state['last_snapshot_hash']))return['snapshot'=>null,'events'=>[]];
+        $schemaVersion=$this->portalSchemaVersion($profile);
+        // Schema 4 contact assignments carry separately governed visibility
+        // choices. Build the generic relationship view only.
+        $neutralSchemaVersion=min($schemaVersion,3);
+        $projection=$this->workspaceProjection($pdo,$workspace,$neutralSchemaVersion);
+        $allowed=['workspace','entity','relation','project_lifecycle'];
+        $current=array_filter(
+            $this->portalResourceRecords($workspace,$projection,$neutralSchemaVersion),
+            static fn(array$entry):bool=>in_array((string)$entry['resource'],$allowed,true)
+        );
+        $events=[];
+        foreach($this->resourceChanges($pdo,$profileId,$workspacePublicId,'portal',$current,$allowed)as$change){
+            if($onlyAction!==null&&$change['action']!==$onlyAction)continue;
+            if($change['action']==='upsert')$event=$this->portalUpsertEvent($change['resource'],$change['record']);
+            elseif($change['resource']==='project_lifecycle'){ $this->deleteResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId']);continue; }
+            else$event=['resource'=>$change['resource'],'action'=>'tombstone','publicId'=>$change['publicId'],'sourceVersion'=>$change['sourceVersion']];
+            $events[]=$this->queueEvent($pdo,$profile,$workspacePublicId,$event,false);
+            if($change['action']==='upsert')$this->saveResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId'],$change['sourceVersion'],$change['record']);
+            else$this->deleteResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId']);
+        }
+        return['snapshot'=>null,'events'=>$events];
+    }
+
     /** Queue strict Service Library upsert/tombstone events after a complete snapshot. */
     public function queueCatalogChanges(PDO$pdo,array$profile):array
     {
@@ -213,6 +250,7 @@ final class PortalProjectionService
     private function workspaceProjection(PDO $pdo, array $workspace, int $schemaVersion): array
     {
         $rootType=(string)$workspace['root_type']; $rootId=(string)$workspace['root_public_id'];
+        $projectVisibility=ProjectLifecycleSchema::visibility($pdo,'p',true);
         $entities=[]; $relations=[]; $lifecycles=[]; $contactAssignments=[]; $scopeIds=['workspace'=>[(string)$workspace['public_id']]];
         if ($rootType==='organization') {
             $org=$this->one($pdo,'SELECT public_id,name,source_version FROM organizations WHERE public_id=?',[$rootId]);
@@ -231,12 +269,12 @@ final class PortalProjectionService
                 $contacts=$this->all($pdo,'SELECT pc.public_id,pc.display_name,pc.source_version,pc.active,MIN(d.public_id) parent_public_id,MAX(dc.is_primary) primary_contact FROM portal_v2_contacts pc JOIN organization_department_contacts dc ON dc.client_id=pc.client_id JOIN organization_departments d ON d.id=dc.department_id JOIN organizations o ON o.id=d.organization_id WHERE o.public_id=? AND pc.active=1 GROUP BY pc.public_id,pc.display_name,pc.source_version,pc.active ORDER BY pc.public_id',[$rootId]);
                 foreach($contacts as$row){$contact=['type'=>'contact','publicId'=>(string)$row['public_id'],'parentPublicId'=>(string)$row['parent_public_id'],'displayName'=>(string)$row['display_name'],'active'=>(bool)$row['active'],'primaryContact'=>(bool)$row['primary_contact']];$entities[]=['type'=>$contact['type'],'publicId'=>$contact['publicId'],'parentPublicId'=>$contact['parentPublicId'],'displayName'=>$contact['displayName'],'sourceVersion'=>PortalSourceVersion::from($contact),'active'=>$contact['active'],'primaryContact'=>$contact['primaryContact']];}
             }
-            $projects=$this->all($pdo,"SELECT p.public_id,p.name,p.source_version,p.status,p.completed_at,p.department_id,p.client_id,d.public_id department_public_id,c.public_id client_public_id FROM projects p LEFT JOIN organization_departments d ON d.id=p.department_id LEFT JOIN clients c ON c.id=p.client_id WHERE p.organization_id=(SELECT id FROM organizations WHERE public_id=?) AND p.status<>'cancelled' ORDER BY p.public_id",[$rootId]);
+            $projects=$this->all($pdo,"SELECT p.public_id,p.name,p.source_version,p.status,p.completed_at,p.department_id,p.client_id,d.public_id department_public_id,c.public_id client_public_id FROM projects p LEFT JOIN organization_departments d ON d.id=p.department_id LEFT JOIN clients c ON c.id=p.client_id WHERE p.organization_id=(SELECT id FROM organizations WHERE public_id=?) AND p.status<>'cancelled' AND {$projectVisibility} ORDER BY p.public_id",[$rootId]);
         } else {
             $client=$this->one($pdo,'SELECT public_id,name,source_version,id FROM clients WHERE public_id=? AND organization_id IS NULL AND archived=0 AND deleted_at IS NULL',[$rootId]);
             if(!$client) throw new DomainException('portal-workspace-root-missing');
             $entities[]=$this->entity('standalone_client',$client,null,false);$scopeIds['standalone_client']=[$rootId];$scopeIds['client']=[$rootId];
-            $clients=[$client];$projects=$this->all($pdo,"SELECT p.public_id,p.name,p.source_version,p.status,p.completed_at,p.department_id,p.client_id,NULL department_public_id,? client_public_id FROM projects p WHERE p.client_id=? AND p.status<>'cancelled' ORDER BY p.public_id",[$rootId,(int)$client['id']]);
+            $clients=[$client];$projects=$this->all($pdo,"SELECT p.public_id,p.name,p.source_version,p.status,p.completed_at,p.department_id,p.client_id,NULL department_public_id,? client_public_id FROM projects p WHERE p.client_id=? AND p.status<>'cancelled' AND {$projectVisibility} ORDER BY p.public_id",[$rootId,(int)$client['id']]);
         }
         foreach($projects as $row){
             $parent=(string)($row['department_public_id']?:($row['client_public_id']?:$rootId));
@@ -269,25 +307,25 @@ final class PortalProjectionService
      */
     private function contactAssignmentProjection(PDO $pdo,string $rootType,string $rootId):array
     {
-        $rows=[];
+        $rows=[];$projectVisibility=ProjectLifecycleSchema::visibility($pdo,'p',true);
         if($rootType==='organization'){
             $organization=$this->one($pdo,'SELECT id FROM organizations WHERE public_id=?',[$rootId]);
             if(!$organization)throw new DomainException('portal-workspace-root-missing');
             $organizationId=(int)$organization['id'];
             $invalidDepartment=$this->one($pdo,'SELECT COUNT(*) total FROM organization_department_contacts dc JOIN organization_departments d ON d.id=dc.department_id JOIN clients c ON c.id=dc.client_id WHERE d.organization_id=? AND (c.organization_id IS NULL OR c.organization_id<>?)',[$organizationId,$organizationId]);
-            $invalidProject=$this->one($pdo,"SELECT COUNT(*) total FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.organization_id=? AND p.status<>'cancelled' AND (c.organization_id IS NULL OR c.organization_id<>?)",[$organizationId,$organizationId]);
+            $invalidProject=$this->one($pdo,"SELECT COUNT(*) total FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.organization_id=? AND p.status<>'cancelled' AND {$projectVisibility} AND (c.organization_id IS NULL OR c.organization_id<>?)",[$organizationId,$organizationId]);
             if((int)($invalidDepartment['total']??0)>0||(int)($invalidProject['total']??0)>0)throw new DomainException('portal-contact-assignment-root-mismatch');
             $rows=array_merge(
                 $this->all($pdo,"SELECT 'department' scope_type,d.public_id scope_public_id,dc.role,dc.is_primary primary_contact,0 primary_billing,0 send_project_invoices,0 can_view_invoice_links,c.id client_id,c.public_id client_public_id,c.name display_name FROM organization_department_contacts dc JOIN organization_departments d ON d.id=dc.department_id JOIN clients c ON c.id=dc.client_id WHERE d.organization_id=? AND c.organization_id=? AND c.archived=0 AND c.deleted_at IS NULL ORDER BY d.public_id,c.public_id",[$organizationId,$organizationId]),
-                $this->all($pdo,"SELECT 'project' scope_type,p.public_id scope_public_id,pc.role,0 primary_contact,pc.is_primary_billing primary_billing,pc.send_project_invoices,pc.can_view_invoice_links,c.id client_id,c.public_id client_public_id,c.name display_name FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.organization_id=? AND p.status<>'cancelled' AND c.organization_id=? AND c.archived=0 AND c.deleted_at IS NULL ORDER BY p.public_id,c.public_id",[$organizationId,$organizationId])
+                $this->all($pdo,"SELECT 'project' scope_type,p.public_id scope_public_id,pc.role,0 primary_contact,pc.is_primary_billing primary_billing,pc.send_project_invoices,pc.can_view_invoice_links,c.id client_id,c.public_id client_public_id,c.name display_name FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.organization_id=? AND p.status<>'cancelled' AND {$projectVisibility} AND c.organization_id=? AND c.archived=0 AND c.deleted_at IS NULL ORDER BY p.public_id,c.public_id",[$organizationId,$organizationId])
             );
         }else{
             $client=$this->one($pdo,'SELECT id FROM clients WHERE public_id=? AND organization_id IS NULL AND archived=0 AND deleted_at IS NULL',[$rootId]);
             if(!$client)throw new DomainException('portal-workspace-root-missing');
             $clientId=(int)$client['id'];
-            $invalid=$this->one($pdo,"SELECT COUNT(*) total FROM project_clients pc JOIN projects p ON p.id=pc.project_id WHERE p.client_id=? AND p.status<>'cancelled' AND (p.organization_id IS NOT NULL OR pc.client_id<>?)",[$clientId,$clientId]);
+            $invalid=$this->one($pdo,"SELECT COUNT(*) total FROM project_clients pc JOIN projects p ON p.id=pc.project_id WHERE p.client_id=? AND p.status<>'cancelled' AND {$projectVisibility} AND (p.organization_id IS NOT NULL OR pc.client_id<>?)",[$clientId,$clientId]);
             if((int)($invalid['total']??0)>0)throw new DomainException('portal-contact-assignment-root-mismatch');
-            $rows=$this->all($pdo,"SELECT 'project' scope_type,p.public_id scope_public_id,pc.role,0 primary_contact,pc.is_primary_billing primary_billing,pc.send_project_invoices,pc.can_view_invoice_links,c.id client_id,c.public_id client_public_id,c.name display_name FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.client_id=? AND p.organization_id IS NULL AND p.status<>'cancelled' AND pc.client_id=? AND c.organization_id IS NULL AND c.archived=0 AND c.deleted_at IS NULL ORDER BY p.public_id,c.public_id",[$clientId,$clientId]);
+            $rows=$this->all($pdo,"SELECT 'project' scope_type,p.public_id scope_public_id,pc.role,0 primary_contact,pc.is_primary_billing primary_billing,pc.send_project_invoices,pc.can_view_invoice_links,c.id client_id,c.public_id client_public_id,c.name display_name FROM project_clients pc JOIN projects p ON p.id=pc.project_id JOIN clients c ON c.id=pc.client_id WHERE p.client_id=? AND p.organization_id IS NULL AND p.status<>'cancelled' AND {$projectVisibility} AND pc.client_id=? AND c.organization_id IS NULL AND c.archived=0 AND c.deleted_at IS NULL ORDER BY p.public_id,c.public_id",[$clientId,$clientId]);
         }
 
         usort($rows,static fn(array$a,array$b):int=>[(string)$a['scope_type'],(string)$a['scope_public_id'],(string)$a['client_public_id']]<=>[(string)$b['scope_type'],(string)$b['scope_public_id'],(string)$b['client_public_id']]);
@@ -360,9 +398,11 @@ final class PortalProjectionService
      * @param array<string,array{resource:string,publicId:string,sourceVersion:string,record:array<string,mixed>}> $current
      * @return list<array{action:string,resource:string,publicId:string,sourceVersion:string,record:array<string,mixed>,existed:bool}>
      */
-    private function resourceChanges(PDO$pdo,int$profileId,string$workspaceId,string$route,array$current):array
+    private function resourceChanges(PDO$pdo,int$profileId,string$workspaceId,string$route,array$current,?array$allowedResourceTypes=null):array
     {
-        $statement=$pdo->prepare('SELECT resource_type,resource_public_id,source_version,payload_hash,record_json FROM portal_projection_resource_state WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=?');$statement->execute([$profileId,$workspaceId,$route]);$existing=[];
+        $sql='SELECT resource_type,resource_public_id,source_version,payload_hash,record_json FROM portal_projection_resource_state WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=?';$parameters=[$profileId,$workspaceId,$route];
+        if($allowedResourceTypes!==null){$allowedResourceTypes=array_values(array_unique(array_filter(array_map('strval',$allowedResourceTypes))));if($allowedResourceTypes===[])return[];$sql.=' AND resource_type IN ('.implode(',',array_fill(0,count($allowedResourceTypes),'?')).')';$parameters=array_merge($parameters,$allowedResourceTypes);}
+        $statement=$pdo->prepare($sql);$statement->execute($parameters);$existing=[];
         foreach($statement->fetchAll(PDO::FETCH_ASSOC)as$row)$existing[(string)$row['resource_type'].'|'.(string)$row['resource_public_id']]=$row;
         $changes=[];foreach($current as$key=>$entry){$hash=hash('sha256',self::canonicalJson($entry['record']));$prior=$existing[$key]??null;if($prior&&hash_equals((string)$prior['payload_hash'],$hash)){unset($existing[$key]);continue;}if($prior&&hash_equals((string)$prior['source_version'],$entry['sourceVersion']))throw new DomainException('portal-source-version-reuse');$changes[]=['action'=>'upsert','existed'=>$prior!==null]+$entry;unset($existing[$key]);}
         foreach($existing as$row){$resource=(string)$row['resource_type'];$publicId=(string)$row['resource_public_id'];$version=PortalSourceVersion::from(['resource'=>$resource,'publicId'=>$publicId,'active'=>false,'previousSourceVersion'=>(string)$row['source_version']]);$changes[]=['action'=>'tombstone','resource'=>$resource,'publicId'=>$publicId,'sourceVersion'=>$version,'record'=>[],'existed'=>true];}

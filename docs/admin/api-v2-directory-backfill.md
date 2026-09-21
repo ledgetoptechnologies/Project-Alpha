@@ -1,0 +1,118 @@
+# API v2 directory backfill
+
+`bin/backfill-api-v2-directory.php` is a local database-only operator tool for seeding the API v2 directory revision foundation from existing clients and organizations. It makes no network calls and never reads or emits credentials, names, addresses, emails, phone numbers, or public IDs.
+
+It defaults to dry-run. Run bounded batches (at most 500 records), retain the returned non-secret local resume cursor, and inspect aggregate counts before applying the same cursor/batch. Start with an explicit dry run:
+
+```sh
+php bin/backfill-api-v2-directory.php --type=all --limit=100 --dry-run
+```
+
+Apply requires all three flags:
+
+```sh
+php bin/backfill-api-v2-directory.php --type=all --limit=100 --apply --confirm-api-v2-directory-backfill --maintenance-window-confirmed
+```
+
+Run it only in an approved maintenance window with ordinary client and organization mutations paused. The tool locks each selected source row and directory-state row, then rechecks state in its transaction, so a concurrent writer wins rather than being overwritten; the maintenance window is still required to give a complete, reviewable historical baseline.
+
+The tool validates migrations `0088_api_v2_application_identity.sql` and `0089_api_v2_directory_revision_foundation.sql`, all required tables/columns, cursor syntax, and every selected source identity before it writes. It fails closed on malformed local/public IDs, malformed existing state, missing matching change history, or a live row that conflicts with divergent, higher-revision, or tombstoned state. Existing current state is idempotently skipped only when its matching `upsert` change is present. No conflicting state is ever changed; investigate it separately.
+
+After all resume cursors are exhausted, perform a coverage audit: compare the count of valid existing clients and organizations with present directory-state rows and matching `upsert` change rows, and resolve every refusal before enabling any directory route or capability.
+
+In staging, after the final apply batch and coverage audit, run the explicit
+attestation command below. The backfill remains a dry run; the command persists one immutable receipt only if
+the complete directory state is valid and emits only the safe SHA-256 digest;
+retain that digest with the cutover evidence. A missing receipt migration,
+incomplete coverage, or any drift fails closed:
+
+```sh
+php bin/backfill-api-v2-directory.php --type=all --limit=100 --dry-run --attest
+```
+
+The command is safe to repeat for the same state. A changed source or schema
+state produces a different digest and requires fresh review; do not enable a
+directory route from a partial or refused attestation.
+
+## Generic external-binding lifecycle release gate
+
+Migration `0095_api_v2_directory_binding_lifecycle.sql` repairs any binding
+that was active while its resource already had a deletion tombstone. It
+permanently marks that binding `tombstoned` and advances each affected
+application's authorization generation. The same operation is performed
+inside every client or organization delete/purge transaction (including an
+organization delete and its child-resource mutations).
+
+The migration uses a retry-safe repair ledger because the migration runner
+executes SQL statements individually. Verify no affected application is at
+`9223372036854775807` (the API v2 generation ceiling) before applying it; an
+exhausted generation is an operator-blocking condition and must be resolved
+without reusing or resetting the application identity.
+
+Deletion and archive tests must prove that every active binding is tombstoned
+atomically, exact status reads fail closed (`410` for a known tombstone), and
+rollback leaves both the resource revision and bindings unchanged. Restore
+must preserve the same public ID and revision history but must not reactivate
+external authority. A later bind is an explicit command: old external IDs
+remain permanently reserved by their tombstone and cannot be silently reused.
+Before enabling any generic binding or status route, pass these checks with
+SQLite and a disposable MySQL 8.4 database, including concurrent delete/bind
+mutation, generation advancement, and failed-generation rollback.
+
+## Organization profile command release gate
+
+`POST /api/v2/directory/organizations/{publicId}/profile/commands` is a
+generic, installation-local API v2 command contract. It is not part of the
+portal or any deployment-specific integration profile. The route stays
+unroutable by default: set neither an application-wide default nor a
+deployment override that changes
+`APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED=false` until every release
+gate below is accepted.
+
+The command requires a bound API v2 application key with both
+`api.capabilities.read` and `directory.organizations.write`; a legacy `full`
+key is refused. It conditionally updates only the public organization profile
+fields, preserves private notes and address-provider metadata, and uses a
+UUID-v4 `commandId` for an immutable idempotency result. Callers must send the
+current resource revision, authorization generation, source instance ID,
+application ID, and history epoch from the capability/directory handshake.
+Stale state, a mismatched identity, or reuse of a command ID with a different
+request fails closed.
+
+Before an operator may enable this route, require all of the following:
+
+- Complete and audit the existing-row directory backfill above.
+- Inventory and verify every organization, address, relationship, deletion,
+  restoration, and authorization-changing writer against the directory state.
+- Pass the isolated real-MySQL command integration checks, including lock
+  contention, stale-command rejection, exact replay, and transaction rollback.
+- Review the external-management handoff and its least-privilege key scope for
+  this installation; do not reuse an unrelated integration key.
+
+This document records a release gate, not enablement instructions. Keep the
+flag false through rollout review; changing the flag, provisioning a key, or
+deploying a receiver is a separate operator-controlled action.
+
+## Client profile command release gate
+
+`POST /api/v2/directory/clients/{publicId}/profile/commands` is a generic,
+installation-local API v2 command contract. It is not a portal command or an
+integration-profile setting. It remains unroutable while
+`APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED=false`.
+
+The command requires a bound API v2 application key with both
+`api.capabilities.read` and `directory.clients.write`; a legacy `full` key is
+refused. UUID-v4 `commandId` receipts make exact retries return the immutable
+first result. Callers must use the current resource revision, authorization
+generation, source instance ID, application ID, and history epoch. The only
+writable values are the shared client profile fields; membership, portal
+access, billing identifiers, private notes, credentials, and address-provider
+metadata are retained from the locked row.
+
+Before enabling it, complete the directory backfill and writer inventory, then
+pass isolated SQLite and disposable MySQL checks for lock contention, stale
+revision and authorization rejection, source/application/epoch rejection,
+exact replay, no-op revision stability, and receipt-failure rollback. Review
+the external-management handoff and provision one least-privilege key only as
+a separate approved action. This is a release gate, not enablement guidance:
+leave the flag false through rollout review.

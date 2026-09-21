@@ -7,6 +7,7 @@ namespace Tests\Workflows;
 use App\Services\ManagedDeliveryIntentSender;
 use App\Services\ManagedDeliveryIntentSigner;
 use App\Services\ManagedDeliveryService;
+use App\Services\ProjectPresentationService;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -168,6 +169,19 @@ final class ManagedDeliveryIntegrationTest extends TestCase
         self::assertSame('revoke',$seen[1]['outer']['intent_kind']);
         self::assertSame(['schemaVersion','applicationKey','deliveryId','occurredAt','receiptId','reasonCode'],array_keys($seen[1]['outer']['intent']));
         self::assertNotNull($pdo->query("SELECT revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn());
+    }
+
+    public function testProjectArchiveStopsPendingAndQueuesAcceptedPresentationRevocation(): void
+    {
+        $pdo=$this->database();$service=new ManagedDeliveryService();$sender=new ManagedDeliveryIntentSender();
+        $acceptedId='10101010-1010-4010-8010-101010101010';$pendingId='20202020-2020-4020-8020-202020202020';
+        foreach([$acceptedId,$pendingId]as$id)$service->queue($pdo,['delivery_id'=>$id,'scope_type'=>'project','scope_public_id'=>str_repeat('a',32),'audience_type'=>'principal','audience_public_id'=>str_repeat('b',32)],7);
+        $sender->deliverDeliveryId($pdo,$acceptedId,static function(string$url,array$headers,string$body):array{$event=json_decode($body,true,16,JSON_THROW_ON_ERROR);return['status'=>200,'body'=>json_encode(['ok'=>true,'event_id'=>$event['event_id'],'status'=>'completed','result'=>['receiptId'=>'archive_receipt','status'=>'accepted']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)];});
+        $pdo->beginTransaction();$result=(new ProjectPresentationService($pdo))->revokeForArchive(['id'=>1,'public_id'=>str_repeat('a',32)],0);$pdo->commit();
+        self::assertTrue($result['changed']);self::assertSame(1,$result['pendingStopped']);self::assertCount(1,$result['managedRevocationIds']);
+        self::assertSame('project_archived_before_delivery',$pdo->query("SELECT last_error_code FROM managed_delivery_intent_outbox WHERE delivery_id='{$pendingId}'")->fetchColumn());
+        $revoke=$pdo->prepare("SELECT target_delivery_id,intent_type,actor_user_id FROM managed_delivery_intent_outbox WHERE delivery_id=?");$revoke->execute([$result['managedRevocationIds'][0]]);
+        self::assertSame(['target_delivery_id'=>$acceptedId,'intent_type'=>'revoke','actor_user_id'=>null],$revoke->fetch(PDO::FETCH_ASSOC));
     }
 
     public function testChangedPayloadConflictAndMalformedSuccessFailClosed(): void

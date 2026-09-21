@@ -315,8 +315,9 @@ final class PortalServiceAssignmentProjectionService
                     'SELECT public_id FROM organization_departments WHERE organization_id=? ORDER BY public_id', [(int)$organizationId]);
                 $this->addAllowedRows($allowed, 'client', $pdo,
                     'SELECT public_id FROM clients WHERE organization_id=? AND archived=0 AND deleted_at IS NULL ORDER BY public_id', [(int)$organizationId]);
+                $projectVisibility = ProjectLifecycleSchema::visibility($pdo, '', true);
                 $this->addAllowedRows($allowed, 'project', $pdo,
-                    "SELECT public_id FROM projects WHERE organization_id=? AND status<>'cancelled' ORDER BY public_id", [(int)$organizationId]);
+                    "SELECT public_id FROM projects WHERE organization_id=? AND status<>'cancelled' AND {$projectVisibility} ORDER BY public_id", [(int)$organizationId]);
                 continue;
             }
             if ($rootType !== 'standalone_client') throw new DomainException('portal-workspace-root-invalid');
@@ -326,8 +327,9 @@ final class PortalServiceAssignmentProjectionService
             if ($clientId === false) throw new DomainException('portal-workspace-root-missing');
             $allowed['standalone_client|' . $rootPublicId] = true;
             $allowed['client|' . $rootPublicId] = true;
+            $projectVisibility = ProjectLifecycleSchema::visibility($pdo, '', true);
             $this->addAllowedRows($allowed, 'project', $pdo,
-                "SELECT public_id FROM projects WHERE client_id=? AND status<>'cancelled' ORDER BY public_id", [(int)$clientId]);
+                "SELECT public_id FROM projects WHERE client_id=? AND status<>'cancelled' AND {$projectVisibility} ORDER BY public_id", [(int)$clientId]);
         }
         return $allowed;
     }

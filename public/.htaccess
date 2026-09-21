@@ -9,6 +9,10 @@
     RewriteRule ^api/v1/ops/snapshot/?$ index.php [QSA,L]
     RewriteRule ^api/v2/ops/snapshot/?$ index.php [QSA,L]
 
+    # API v2 is a front-controller namespace. The controller rejects unknown
+    # paths after resolving the explicitly supported routes.
+    RewriteRule ^api/v2(?:/|$) index.php [QSA,L]
+
     # Reviewed external project-management links use this query-free entry
     # point. The front controller forces the existing project-list route and
     # rejects non-read methods; query parameters remain available only for the

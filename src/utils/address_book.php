@@ -15,10 +15,12 @@ function address_book_public_snapshot(array $address): array
     ];
 }
 
-function address_book_default_for_entity(PDO $pdo, string $type, int $id, string $purpose): ?array
+function address_book_default_for_entity(PDO $pdo, string $type, int $id, string $purpose, bool $lock = false): ?array
 {
     if ($id <= 0 || !in_array($type, ['client','organization','project','job'], true)) return null;
-    $stmt = $pdo->prepare('SELECT a.* FROM address_assignments x JOIN addresses a ON a.id=x.address_id WHERE x.entity_type=? AND x.entity_id=? AND x.purpose=? AND a.archived=0 ORDER BY x.is_default DESC,x.id LIMIT 1');
+    $sql = 'SELECT a.* FROM address_assignments x JOIN addresses a ON a.id=x.address_id WHERE x.entity_type=? AND x.entity_id=? AND x.purpose=? AND a.archived=0 ORDER BY x.is_default DESC,x.id LIMIT 1';
+    if ($lock && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') $sql .= ' FOR UPDATE';
+    $stmt = $pdo->prepare($sql);
     $stmt->execute([$type, $id, $purpose]);
     return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 }
@@ -67,10 +69,10 @@ function address_book_save(
             $pdo->prepare('UPDATE address_assignments SET is_default=0 WHERE entity_type=? AND entity_id=? AND purpose=?')
                 ->execute([$entityType, $entityId, $purpose]);
         }
-        $pdo->prepare(
-            'INSERT INTO address_assignments (address_id,entity_type,entity_id,purpose,is_default) VALUES (?,?,?,?,?)
-             ON DUPLICATE KEY UPDATE is_default=VALUES(is_default),updated_at=NOW()'
-        )->execute([$addressId, $entityType, $entityId, $purpose, $isDefault ? 1 : 0]);
+        $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
+            ? 'INSERT INTO address_assignments (address_id,entity_type,entity_id,purpose,is_default) VALUES (?,?,?,?,?) ON CONFLICT(entity_type,entity_id,purpose,address_id) DO UPDATE SET is_default=excluded.is_default'
+            : 'INSERT INTO address_assignments (address_id,entity_type,entity_id,purpose,is_default) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE is_default=VALUES(is_default),updated_at=NOW()';
+        $pdo->prepare($sql)->execute([$addressId, $entityType, $entityId, $purpose, $isDefault ? 1 : 0]);
     }
     return $addressId;
 }

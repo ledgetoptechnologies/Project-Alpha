@@ -1,6 +1,10 @@
 <?php
 // src/views/pages/clients-create.php
 require_once __DIR__ . '/../../../config/db.php';
+require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+$directoryManagementStatus=api_v2_directory_management_status($pdo);
+if($directoryManagementStatus['effective']){ echo '<div class="alert alert-info">'.htmlspecialchars(API_V2_DIRECTORY_MANAGEMENT_LABEL).'</div>'; return; }
+require_once __DIR__ . '/../../../config/db.php';
 ?>
 <section>
   <h2>Create Client</h2>
