@@ -105,6 +105,30 @@ the current live public ID, revision, projection hash, and generation. It can
 only advance the existing mapping and never changes Project content or
 presentation.
 
+### Sync-command conflicts
+
+Every Project synchronization command `409` has a small no-store JSON envelope
+with `apiVersion`, `requestId`, and `error.code`. Once the application identity
+has been verified, it also includes the same source instance, application, and
+history epoch identifiers as a successful command. An identity conflict does
+not echo any supplied identity fields. Conflict envelopes never include a
+command ID, external ID, Project public ID, revision, projection hash,
+authorization generation, relationship proof, receipt data, SQL state, or
+database message.
+
+Staging and clients may branch only on these stable codes:
+
+- `identity_conflict` — the API key and supplied synchronization identity do not form a current identity.
+- `command_id_conflict` — a previously used command ID has different immutable command content.
+- `authorization_generation_conflict` — the authorization-generation fence is stale or exhausted.
+- `external_binding_conflict` — an external Project binding is absent, already used, or does not match the requested binding state.
+- `relationship_proof_conflict` — create could not verify the required organization/client directory proofs or their relationship.
+- `resource_precondition_conflict` — an existing Project is missing, archived where disallowed, or fails its revision/hash canonical-history fence.
+- `database_constraint_conflict` — a database integrity constraint won a race; no constraint details are disclosed.
+
+These codes identify a recovery class, not a record. Clients must re-read the
+separately authorized synchronization state before retrying a changed command.
+
 Binding status verifies the pinned revision and hash against live canonical
 history. A synchronized binding returns `200`. After a PA/browser edit makes a
 binding stale, the route preserves `409` conflict semantics but returns a

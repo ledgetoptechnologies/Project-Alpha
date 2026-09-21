@@ -125,49 +125,71 @@ function api_v2_project_sync_result(array $identity,string $externalId,string $p
             'authorizationGeneration'=>$generation,'presentation'=>['portalPublished'=>$portalPublished,'publicLinkEnabled'=>$publicLinkEnabled]]];
 }
 
+/**
+ * Return an intentionally small, stable conflict envelope. The caller already
+ * knows the request ID; a verified identity may be echoed for correlation, but
+ * no Project, directory-proof, binding, receipt, or database details are ever
+ * included in a conflict response.
+ *
+ * @return array{status:409,payload:array}
+ */
+function api_v2_project_sync_conflict(string $code,string $requestId,?array $identity=null):array
+{
+    $payload=['apiVersion'=>'2'];
+    if($identity!==null){
+        $payload['sourceInstanceId']=$identity['source_instance_id'];
+        $payload['applicationId']=$identity['application_id'];
+        $payload['historyEpoch']=$identity['history_epoch'];
+    }
+    $payload['requestId']=$requestId;
+    $payload['error']=['code'=>$code];
+    return ['status'=>409,'payload'=>$payload];
+}
+
 /** @return array{status:int,payload?:array} */
 function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $apiKeyId,array $headers,string $requestId):array
 {
     if(!in_array($type,['bind','create','update','refresh'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid Project synchronization command.');
+    $identity=null;
     $pdo->beginTransaction();
     try {
         // Universal writer order: application -> Project authorization ->
         // source Project -> binding. The application lock serializes all keys.
         $identity=api_v2_project_sync_identity($pdo,$apiKeyId,$headers,true);
-        if(!$identity){$pdo->rollBack();return['status'=>409];}
+        if(!$identity){$pdo->rollBack();return api_v2_project_sync_conflict('identity_conflict',$requestId);}
         $appPk=(int)$identity['application_pk'];$generation=(string)$identity['authorization_generation'];
         $requestHash=hash('sha256',json_encode(['type'=>$type,'command'=>$command],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
         $receipt=$pdo->prepare('SELECT command_type,request_sha256,external_id,project_public_id,CAST(result_revision AS CHAR) result_revision,result_projection_sha256,CAST(result_authorization_generation AS CHAR) result_authorization_generation,result_portal_publish_enabled,result_public_project_enabled FROM api_v2_project_command_receipts WHERE application_pk=? AND history_epoch=? AND command_id=?');
         $receipt->execute([$appPk,$identity['history_epoch'],$command['commandId']]);$stored=$receipt->fetch(PDO::FETCH_ASSOC);
         if($stored){
-            if((string)$stored['command_type']!==$type||!hash_equals((string)$stored['request_sha256'],$requestHash)||!hash_equals((string)$stored['external_id'],$command['externalId'])){$pdo->rollBack();return['status'=>409];}
+            if((string)$stored['command_type']!==$type||!hash_equals((string)$stored['request_sha256'],$requestHash)||!hash_equals((string)$stored['external_id'],$command['externalId'])){$pdo->rollBack();return api_v2_project_sync_conflict('command_id_conflict',$requestId,$identity);}
             $payload=api_v2_project_sync_result($identity,$command['externalId'],(string)$stored['project_public_id'],(string)$stored['result_revision'],(string)$stored['result_projection_sha256'],(string)$stored['result_authorization_generation'],$requestId,true,(bool)$stored['result_portal_publish_enabled'],(bool)$stored['result_public_project_enabled']);
             $pdo->commit();return['status'=>$type==='create'?201:200,'payload'=>$payload];
         }
-        if($generation!==$command['expectedAuthorizationGeneration']||$generation===PA_API_V2_PROJECT_GENERATION_MAX){$pdo->rollBack();return['status'=>409];}
+        if($generation!==$command['expectedAuthorizationGeneration']||$generation===PA_API_V2_PROJECT_GENERATION_MAX){$pdo->rollBack();return api_v2_project_sync_conflict('authorization_generation_conflict',$requestId,$identity);}
         $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
         $project=null;$publicId='';
         if(in_array($type,['bind','refresh'],true))$publicId=$command['expectedPublicId'];
         elseif($type==='update'){
             $lookup=$pdo->prepare('SELECT project_public_id FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=?');
             $lookup->execute([$appPk,$command['externalId']]);$publicId=(string)($lookup->fetchColumn()?:'');
-            if($publicId===''){$pdo->rollBack();return['status'=>409];}
+            if($publicId===''){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
         }
         if($type!=='create'){
             $statement=$pdo->prepare('SELECT * FROM projects WHERE public_id=?'.$lock);$statement->execute([$publicId]);$project=$statement->fetch(PDO::FETCH_ASSOC);
             if($project)$project=api_v2_project_hydrate_relations($pdo,$project);
-            if(!$project||($type==='update'&&$project['archived_at']!==null)||(string)$project['revision']!==$command['expectedRevision']||!hash_equals(ProjectRevisionService::projectionHash($project),$command['expectedProjectionSha256'])||!api_v2_project_revision_matches($pdo,$project,$lock)){$pdo->rollBack();return['status'=>409];}
+            if(!$project||($type==='update'&&$project['archived_at']!==null)||(string)$project['revision']!==$command['expectedRevision']||!hash_equals(ProjectRevisionService::projectionHash($project),$command['expectedProjectionSha256'])||!api_v2_project_revision_matches($pdo,$project,$lock)){$pdo->rollBack();return api_v2_project_sync_conflict('resource_precondition_conflict',$requestId,$identity);}
         }
         $bindings=$pdo->prepare('SELECT external_id,project_public_id FROM api_v2_project_external_bindings WHERE application_pk=? AND (external_id=? OR project_public_id=?)'.$lock);
         $bindings->execute([$appPk,$command['externalId'],$publicId?:str_repeat('0',32)]);$bindingRows=$bindings->fetchAll(PDO::FETCH_ASSOC);
-        if($type==='bind'&&$bindingRows!==[]){$pdo->rollBack();return['status'=>409];}
-        if(in_array($type,['update','refresh'],true)&&(count($bindingRows)!==1||!hash_equals((string)$bindingRows[0]['external_id'],$command['externalId'])||(string)$bindingRows[0]['project_public_id']!==$publicId)){$pdo->rollBack();return['status'=>409];}
-        if($type==='refresh'){$currentBinding=$pdo->prepare('SELECT CAST(project_revision AS CHAR) project_revision FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=? AND project_public_id=?'.$lock);$currentBinding->execute([$appPk,$command['externalId'],$publicId]);if((string)$currentBinding->fetchColumn()!==$command['expectedPriorRevision']){$pdo->rollBack();return['status'=>409];}}
+        if($type==='bind'&&$bindingRows!==[]){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
+        if(in_array($type,['update','refresh'],true)&&(count($bindingRows)!==1||!hash_equals((string)$bindingRows[0]['external_id'],$command['externalId'])||(string)$bindingRows[0]['project_public_id']!==$publicId)){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
+        if($type==='refresh'){$currentBinding=$pdo->prepare('SELECT CAST(project_revision AS CHAR) project_revision FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=? AND project_public_id=?'.$lock);$currentBinding->execute([$appPk,$command['externalId'],$publicId]);if((string)$currentBinding->fetchColumn()!==$command['expectedPriorRevision']){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}}
         if($type==='create'){
             $existing=$pdo->prepare('SELECT 1 FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=?'.$lock);$existing->execute([$appPk,$command['externalId']]);
-            if($existing->fetchColumn()!==false){$pdo->rollBack();return['status'=>409];}
+            if($existing->fetchColumn()!==false){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
             $organization=api_v2_project_resolve_directory_binding($pdo,$appPk,'organization',$command['organization'],$lock);$client=$command['client']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'client',$command['client'],$lock);
-            if(!$organization||($command['client']!==null&&!$client)||($client&&((int)($client['organization_id']??0)!==(int)$organization['id']))){$pdo->rollBack();return['status'=>409];}
+            if(!$organization||($command['client']!==null&&!$client)||($client&&((int)($client['organization_id']??0)!==(int)$organization['id']))){$pdo->rollBack();return api_v2_project_sync_conflict('relationship_proof_conflict',$requestId,$identity);}
             $publicId=bin2hex(random_bytes(16));$profile=$command['project'];
             $insert=$pdo->prepare("INSERT INTO projects(public_id,name,description,status,organization_id,client_id,invoice_billing_period,project_invoice_auto_email,portal_publish_enabled,public_project_enabled,estimated_start,estimated_end,source_version,created_by) VALUES(?,?,?,'not_started',?,?,'per_invoice',0,0,0,?,?,?,NULL)");
             $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id'],$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
@@ -199,7 +221,7 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
             ->execute([$appPk,$identity['history_epoch'],$command['commandId'],$type,$requestHash,$command['externalId'],$publicId,$command['expectedRevision']??null,$command['expectedPriorRevision']??null,$command['expectedProjectionSha256']??null,$command['expectedAuthorizationGeneration'],$revision,$hash,$generation,$portalPublished?1:0,$publicLinkEnabled?1:0]);
         $payload=api_v2_project_sync_result($identity,$command['externalId'],$publicId,$revision,$hash,$generation,$requestId,false,$portalPublished,$publicLinkEnabled);
         $pdo->commit();return['status'=>$type==='create'?201:200,'payload'=>$payload];
-    } catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();if($error instanceof PDOException&&$error->getCode()==='23000')return['status'=>409];throw$error;}
+    } catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();if($error instanceof PDOException&&$error->getCode()==='23000')return api_v2_project_sync_conflict('database_constraint_conflict',$requestId,$identity);throw$error;}
 }
 
 function api_v2_project_binding_evidence_payload(PDO $pdo,array $identity,string $externalId,string $publicId,array $binding,array $project,string $requestId,string $lock=''):?array
