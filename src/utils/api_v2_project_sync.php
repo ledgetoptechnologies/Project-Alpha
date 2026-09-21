@@ -202,19 +202,36 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
     } catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();if($error instanceof PDOException&&$error->getCode()==='23000')return['status'=>409];throw$error;}
 }
 
+function api_v2_project_binding_evidence_payload(PDO $pdo,array $identity,string $externalId,string $publicId,array $binding,array $project,string $requestId,string $lock=''):?array
+{
+    $bindingRevision=(string)($binding['project_revision']??'');$bindingHash=(string)($binding['project_projection_sha256']??'');$liveRevision=(string)($project['revision']??'');$liveHash=ProjectRevisionService::projectionHash($project);
+    if(!ProjectRevisionService::positiveInteger($bindingRevision)||!api_v2_project_hash_valid($bindingHash)||!ProjectRevisionService::positiveInteger($liveRevision)||!api_v2_project_hash_valid($liveHash))return null;
+    // Refresh only fences the pinned prior revision. Hash-only drift at the same
+    // revision, or a binding ahead of canonical history, is corruption rather
+    // than a recoverable stale binding and must remain a bare conflict.
+    $bindingIsOlder=strlen($bindingRevision)<strlen($liveRevision)||(strlen($bindingRevision)===strlen($liveRevision)&&strcmp($bindingRevision,$liveRevision)<0);
+    if(!$bindingIsOlder)return null;
+    // The old pin must itself be authentic immutable history. Refresh does not
+    // fence the old hash, so accepting a merely well-formed tampered hash here
+    // would let refresh silently overwrite evidence of binding corruption.
+    $history=$pdo->prepare('SELECT projection_sha256 FROM project_changes WHERE project_public_id=? AND revision=?'.$lock);$history->execute([$publicId,$bindingRevision]);$historyHash=$history->fetchColumn();
+    if(!is_string($historyHash)||!api_v2_project_hash_valid($historyHash)||!hash_equals($historyHash,$bindingHash))return null;
+    return['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'error'=>['code'=>'binding_stale'],'authorizationGeneration'=>$identity['authorization_generation'],'binding'=>['externalId'=>$externalId,'publicId'=>$publicId,'revision'=>$bindingRevision],'resource'=>['revision'=>$liveRevision,'projectionSha256'=>$liveHash]];
+}
+
 /** Application-scoped inventory: unbound PA/browser Projects are not listed. */
-function api_v2_project_inventory_read(PDO $pdo,?string $cursor,int $limit,int $apiKeyId,array $headers,string $requestId):?array
+function api_v2_project_inventory_read(PDO $pdo,?string $cursor,int $limit,int $apiKeyId,array $headers,string $requestId):array
 {
     if($limit<1||$limit>200||($cursor!==null&&!api_v2_project_external_id_valid($cursor))||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid Project inventory request.');
     $pdo->beginTransaction();
-    try{$identity=api_v2_project_sync_identity($pdo,$apiKeyId,$headers,false);if(!$identity){$pdo->rollBack();return null;}
+    try{$identity=api_v2_project_sync_identity($pdo,$apiKeyId,$headers,false);if(!$identity){$pdo->rollBack();return['status'=>409];}
         $params=[(int)$identity['application_pk']];$where=' WHERE binding.application_pk=?';if($cursor!==null){$where.=' AND binding.external_id>?';$params[]=$cursor;}
         $statement=$pdo->prepare('SELECT binding.external_id,binding.project_public_id,CAST(binding.project_revision AS CHAR) project_revision,binding.project_projection_sha256,project.archived_at,project.status FROM api_v2_project_external_bindings binding JOIN projects project ON project.public_id=binding.project_public_id'.$where.' ORDER BY binding.external_id LIMIT '.($limit+1));
         $statement->execute($params);$rows=$statement->fetchAll(PDO::FETCH_ASSOC);$more=count($rows)>$limit;if($more)array_pop($rows);$resources=[];
-        foreach($rows as$row){$live=$pdo->prepare('SELECT * FROM projects WHERE public_id=?');$live->execute([$row['project_public_id']]);$project=$live->fetch(PDO::FETCH_ASSOC);if($project)$project=api_v2_project_hydrate_relations($pdo,$project);if(!$project||(string)$project['revision']!==(string)$row['project_revision']||!api_v2_project_revision_matches($pdo,$project)||!hash_equals(ProjectRevisionService::projectionHash($project),(string)$row['project_projection_sha256'])){$pdo->rollBack();return null;}$resources[]=['externalId'=>(string)$row['external_id'],'publicId'=>(string)$row['project_public_id'],'revision'=>(string)$row['project_revision'],'projectionSha256'=>(string)$row['project_projection_sha256'],'status'=>(string)$row['status'],'archived'=>$row['archived_at']!==null];}
+        foreach($rows as$row){$live=$pdo->prepare('SELECT * FROM projects WHERE public_id=?');$live->execute([$row['project_public_id']]);$project=$live->fetch(PDO::FETCH_ASSOC);if($project)$project=api_v2_project_hydrate_relations($pdo,$project);if(!$project||!api_v2_project_revision_matches($pdo,$project)){$pdo->rollBack();return['status'=>409];}$bindingRevision=(string)$row['project_revision'];$bindingHash=(string)$row['project_projection_sha256'];$liveRevision=(string)$project['revision'];$liveHash=ProjectRevisionService::projectionHash($project);if($bindingRevision!==$liveRevision||!hash_equals($bindingHash,$liveHash)){$evidence=api_v2_project_binding_evidence_payload($pdo,$identity,(string)$row['external_id'],(string)$row['project_public_id'],$row,$project,$requestId);if($evidence===null){$pdo->rollBack();return['status'=>409];}$payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'error'=>['code'=>'binding_stale','externalId'=>(string)$row['external_id']]];$pdo->commit();return['status'=>409,'payload'=>$payload];}$resources[]=['externalId'=>(string)$row['external_id'],'publicId'=>(string)$row['project_public_id'],'revision'=>$bindingRevision,'projectionSha256'=>$bindingHash,'status'=>(string)$row['status'],'archived'=>$row['archived_at']!==null];}
         $next=$more&&$rows!==[]?(string)$rows[count($rows)-1]['external_id']:null;
         $payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'authorizationGeneration'=>$identity['authorization_generation'],'projects'=>$resources,'nextCursor'=>$next];
-        $pdo->commit();return$payload;
+        $pdo->commit();return['status'=>200,'payload'=>$payload];
     }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
 }
 
@@ -226,8 +243,18 @@ function api_v2_project_binding_status_read(PDO $pdo,string $externalId,int $api
         $lookup=$pdo->prepare('SELECT project_public_id FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=?');$lookup->execute([$identity['application_pk'],$externalId]);$publicId=$lookup->fetchColumn();if($publicId===false){$pdo->commit();return['status'=>404];}
         $projectStatement=$pdo->prepare('SELECT * FROM projects WHERE public_id=?'.$lock);$projectStatement->execute([$publicId]);$project=$projectStatement->fetch(PDO::FETCH_ASSOC);if($project)$project=api_v2_project_hydrate_relations($pdo,$project);
         $binding=$pdo->prepare('SELECT CAST(project_revision AS CHAR) project_revision,project_projection_sha256,created_at,updated_at FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=? AND project_public_id=?'.$lock);$binding->execute([$identity['application_pk'],$externalId,$publicId]);$row=$binding->fetch(PDO::FETCH_ASSOC);
-        if(!$project||!$row||!api_v2_project_revision_matches($pdo,$project,$lock)||(string)$row['project_revision']!==(string)$project['revision']||!hash_equals((string)$row['project_projection_sha256'],ProjectRevisionService::projectionHash($project))){$pdo->rollBack();return['status'=>409];}
-        $payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'authorizationGeneration'=>$identity['authorization_generation'],'binding'=>['externalId'=>$externalId,'publicId'=>(string)$publicId,'createdAt'=>(string)$row['created_at'],'updatedAt'=>(string)$row['updated_at']],'resource'=>['revision'=>(string)$project['revision'],'projectionSha256'=>ProjectRevisionService::projectionHash($project),'status'=>$project['status'],'archived'=>$project['archived_at']!==null]];
+        // Only a fully verified live Project may be disclosed. This keeps a
+        // missing/corrupt canonical row as a bare conflict rather than turning
+        // binding status into a resource-discovery or repair oracle.
+        if(!$project||!$row||!api_v2_project_revision_matches($pdo,$project,$lock)){$pdo->rollBack();return['status'=>409];}
+        $liveRevision=(string)$project['revision'];$liveHash=ProjectRevisionService::projectionHash($project);$bindingRevision=(string)$row['project_revision'];$bindingHash=(string)$row['project_projection_sha256'];
+        if($bindingRevision!==$liveRevision||!hash_equals($bindingHash,$liveHash)){
+            // The recovery evidence uses the exact field names required by the
+            // refresh command and is returned only for strictly older pins.
+            $payload=api_v2_project_binding_evidence_payload($pdo,$identity,$externalId,(string)$publicId,$row,$project,$requestId,$lock);if($payload===null){$pdo->rollBack();return['status'=>409];}$pdo->commit();return['status'=>409,'payload'=>$payload];
+        }
+        // Preserve the established synchronized response contract exactly.
+        $payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'authorizationGeneration'=>$identity['authorization_generation'],'binding'=>['externalId'=>$externalId,'publicId'=>(string)$publicId,'createdAt'=>(string)$row['created_at'],'updatedAt'=>(string)$row['updated_at']],'resource'=>['revision'=>$liveRevision,'projectionSha256'=>$liveHash,'status'=>$project['status'],'archived'=>$project['archived_at']!==null]];
         $pdo->commit();return['status'=>200,'payload'=>$payload];
     }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
 }

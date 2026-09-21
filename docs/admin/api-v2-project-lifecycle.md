@@ -106,10 +106,39 @@ only advance the existing mapping and never changes Project content or
 presentation.
 
 Binding status verifies the pinned revision and hash against live canonical
-history. Inventory is capped at 200 entries and lists only the calling
-application's bindings; unbound browser-created Projects are invisible. These
-responses contain no billing, budget, invoice, payment, document, portal URL,
-public action link, or other financial/publishing content.
+history. A synchronized binding returns `200`. After a PA/browser edit makes a
+binding stale, the route preserves `409` conflict semantics but returns a
+no-store recovery envelope with `error.code` set to `binding_stale` for that
+exact application binding. The top-level
+`authorizationGeneration` is the current Project authorization generation;
+`binding.publicId` and `binding.revision` are the pinned evidence; and
+`resource.revision` and `resource.projectionSha256` are the verified live
+evidence. Those values map directly to the binding-revision
+refresh command's `expectedPublicId`, `expectedPriorRevision`,
+`expectedRevision`, `expectedProjectionSha256`, and
+`expectedAuthorizationGeneration` fields. A missing binding returns `404`, and
+an identity mismatch or missing/corrupt canonical history remains a bare `409`.
+Recovery evidence is returned only when the pinned revision is strictly older
+than verified live canonical history and its pinned hash matches the immutable
+`project_changes` hash for that exact historical revision. Equal-revision hash
+drift, an older revision with a mismatched historical hash, or a binding
+revision ahead of live history is treated as corruption and remains a bare
+`409`; the refresh command's prior-revision fence is not sufficient to repair
+those cases. The established synchronized `200` response shape is unchanged.
+
+Inventory is capped at 200 entries and lists only the calling application's
+bindings; unbound browser-created Projects are invisible. Inventory remains an
+all-or-nothing current snapshot. If a binding in the requested page is stale,
+it returns `409` with only the identity envelope and
+`error: {"code":"binding_stale","externalId":"..."}` instead of returning a
+partial `projects` array. The inventory capability does not disclose live
+revision, hash, public ID, or authorization generation on conflict. A fresh
+client uses the discovered external ID with the separately scoped binding-status
+route, refreshes that binding, retries the same page, and repeats until the page
+is current. At most one external ID is returned per request. Missing or corrupt
+canonical history still produces a bare `409`. These responses contain no
+billing, budget, invoice, payment, document, portal URL, public action link, or
+other financial/publishing content.
 
 ## Release gate
 
