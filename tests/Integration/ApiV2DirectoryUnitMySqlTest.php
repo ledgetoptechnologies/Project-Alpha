@@ -94,7 +94,7 @@ final class ApiV2DirectoryUnitMySqlTest extends TestCase
         $this->first->prepare('UPDATE organization_department_contacts SET is_primary=0 WHERE department_id=? AND client_id=?')
             ->execute([$legacyDepartment, $legacyTwo]);
         \migration_preflight($this->first, 104);
-        $this->applyMigrations(104, 105);
+        $this->applyMigrations(104, 106);
         $this->assertUnitSchemaContract($legacyDepartment, $legacyTwo);
         $this->seedApplication();
 
@@ -211,6 +211,7 @@ final class ApiV2DirectoryUnitMySqlTest extends TestCase
         self::assertSame(1, $this->columnCount('organization_departments', 'deleted_at'));
         self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM schema_migrations WHERE version=104')->fetchColumn());
         self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM schema_migrations WHERE version=105')->fetchColumn());
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM schema_migrations WHERE version=106')->fetchColumn());
         foreach ([
             'api_v2_directory_resource_state',
             'api_v2_directory_resource_changes',

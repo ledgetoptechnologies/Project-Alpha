@@ -230,6 +230,8 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
             CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER, resource_type TEXT, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, external_id TEXT, public_id TEXT, resource_revision INTEGER);
             CREATE TABLE api_v2_directory_binding_revision_refresh_receipts(application_pk INTEGER, resource_type TEXT, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, external_id TEXT, public_id TEXT, expected_prior_revision INTEGER, result_revision INTEGER, result_projection_sha256 TEXT, expected_authorization_generation INTEGER, result_authorization_generation INTEGER);
             CREATE TABLE api_v2_directory_create_command_receipts(application_pk INTEGER, resource_type TEXT, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, external_id TEXT, public_id TEXT, expected_authorization_generation INTEGER, result_revision INTEGER, result_projection_sha256 TEXT, result_authorization_generation INTEGER);
+            CREATE TABLE api_v2_directory_organization_profile_command_receipts(application_pk INTEGER, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, public_id TEXT, expected_revision INTEGER, result_revision INTEGER);
+            CREATE TABLE api_v2_directory_client_profile_command_receipts(application_pk INTEGER, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, public_id TEXT, expected_revision INTEGER, result_revision INTEGER);
             CREATE TABLE api_v2_directory_unit_profile_command_receipts(application_pk INTEGER, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, public_id TEXT, expected_revision INTEGER, result_revision INTEGER);
             CREATE TABLE api_v2_directory_unit_contact_command_receipts(application_pk INTEGER, history_epoch TEXT, command_id TEXT, request_sha256 TEXT, action_name TEXT, unit_public_id TEXT, client_public_id TEXT, result_unit_revision INTEGER);
             CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY, application_id TEXT, name TEXT);
@@ -237,7 +239,7 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
             CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY, authorization_generation INTEGER);
             CREATE TABLE api_keys(id INTEGER PRIMARY KEY, api_v2_application_id INTEGER, scopes TEXT, revoked_at TEXT);'
         );
-        foreach (range(88, 105) as $version) {
+        foreach (range(88, 106) as $version) {
             $pdo->prepare('INSERT INTO schema_migrations(version,filename) VALUES(?,?)')
                 ->execute([$version, sprintf('%04d_', $version) . match ($version) {
                     88 => 'api_v2_application_identity.sql', 89 => 'api_v2_directory_revision_foundation.sql',
@@ -249,6 +251,7 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
                     100 => 'project_lifecycle_api_foundation.sql', 101 => 'project_archive_presentation_revocation.sql',
                     102 => 'api_v2_project_synchronization.sql', 103 => 'external_directory_management_sentinel.sql',
                     104 => 'api_v2_directory_units.sql', 105 => 'api_v2_directory_receipt_history_epochs.sql',
+                    106 => 'api_v2_directory_profile_receipt_history_epochs.sql',
                 }]);
         }
         $pdo->prepare('INSERT INTO api_v2_directory_management_policy VALUES(1,1,1,?,?,?,?,?,1,?,NULL,NULL,NULL)')

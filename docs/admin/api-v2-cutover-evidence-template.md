@@ -43,7 +43,7 @@ other flags remain false.
 
 | Surface | Required migrations |
 | --- | --- |
-| Directory identity, revisions, bindings, commands, management evidence, and customer units | `0088_api_v2_application_identity.sql` through `0099_api_v2_directory_lifecycle_relationships.sql`, `0103_external_directory_management_sentinel.sql` through `0105_api_v2_directory_receipt_history_epochs.sql` |
+| Directory identity, revisions, bindings, commands, management evidence, and customer units | `0088_api_v2_application_identity.sql` through `0099_api_v2_directory_lifecycle_relationships.sql`, `0103_external_directory_management_sentinel.sql` through `0106_api_v2_directory_profile_receipt_history_epochs.sql` |
 | Project lifecycle, presentation revocation, and synchronization | `0100_project_lifecycle_api_foundation.sql`, `0101_project_archive_presentation_revocation.sql`, `0102_api_v2_project_synchronization.sql` |
 
 Required evidence:

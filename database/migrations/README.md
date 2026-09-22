@@ -292,3 +292,9 @@ generic bind, binding-refresh, and create receipts to the current API v2
 history epoch and makes that epoch part of each receipt primary key. This keeps
 old receipts immutable while preventing a command ID from replaying across an
 explicit history-epoch rotation. It enables no route or scope.
+
+Migration `0106_api_v2_directory_profile_receipt_history_epochs.sql` applies
+the same epoch boundary to organization and client profile-command receipts.
+Existing receipts are assigned to the current history epoch during upgrade;
+new epochs can reuse a command ID without replaying a prior epoch's result.
+It enables no route or scope.

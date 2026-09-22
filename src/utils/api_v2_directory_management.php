@@ -210,7 +210,7 @@ function api_v2_directory_management_attestation_ready(PDO $pdo, array $policy):
     $proof=is_string($json)?json_decode($json,true):null;
     return is_array($proof)
         && hash_equals((string)($policy['release_attestation_sha256']??''),hash('sha256',(string)$json))
-        && (int)($proof['schemaVersion']??0)===105
+        && (int)($proof['schemaVersion']??0)===106
         && hash_equals((string)($proof['writerDigest']??''),api_v2_directory_management_code_digest());
 }
 
@@ -268,6 +268,8 @@ function api_v2_directory_management_schema_ready(PDO $pdo): bool
         $pdo->query('SELECT application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,resource_revision FROM api_v2_directory_binding_command_receipts WHERE 1=0');
         $pdo->query('SELECT application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,result_revision FROM api_v2_directory_binding_revision_refresh_receipts WHERE 1=0');
         $pdo->query('SELECT application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,result_revision FROM api_v2_directory_create_command_receipts WHERE 1=0');
+        $pdo->query('SELECT application_pk,history_epoch,command_id,request_sha256,public_id,expected_revision,result_revision FROM api_v2_directory_organization_profile_command_receipts WHERE 1=0');
+        $pdo->query('SELECT application_pk,history_epoch,command_id,request_sha256,public_id,expected_revision,result_revision FROM api_v2_directory_client_profile_command_receipts WHERE 1=0');
         $pdo->query('SELECT archived,deleted_at FROM organizations WHERE 1=0');
         $pdo->query('SELECT archived,deleted_at FROM organization_departments WHERE 1=0');
         $pdo->query('SELECT application_pk,history_epoch,command_id,request_sha256,public_id,expected_revision,result_revision FROM api_v2_directory_unit_profile_command_receipts WHERE 1=0');
@@ -282,6 +284,7 @@ function api_v2_directory_management_schema_ready(PDO $pdo): bool
             103=>'0103_external_directory_management_sentinel.sql',
             104=>'0104_api_v2_directory_units.sql',
             105=>'0105_api_v2_directory_receipt_history_epochs.sql',
+            106=>'0106_api_v2_directory_profile_receipt_history_epochs.sql',
         ];
         $migration = $pdo->prepare('SELECT filename FROM schema_migrations WHERE version=?');
         foreach($expected as $version=>$filename){$migration->execute([$version]);if($migration->fetchColumn()!==$filename)return false;}
@@ -307,7 +310,7 @@ function api_v2_directory_management_code_digest(): string
          'src/utils/api_v2_directory_unit_contact_command.php','src/utils/api_v2_directory_backfill.php',
          'src/utils/api_v2_directory_release_safety.php']
     )));
-    foreach(range(88,105) as $version){$match=glob($root.'/database/migrations/'.str_pad((string)$version,4,'0',STR_PAD_LEFT).'_*.sql');if(count($match)!==1)return '';$paths[]=str_replace('\\','/',substr($match[0],strlen($root)+1));}
+    foreach(range(88,106) as $version){$match=glob($root.'/database/migrations/'.str_pad((string)$version,4,'0',STR_PAD_LEFT).'_*.sql');if(count($match)!==1)return '';$paths[]=str_replace('\\','/',substr($match[0],strlen($root)+1));}
     $paths=array_values(array_unique($paths));
     sort($paths, SORT_STRING);
     $evidence = [];
@@ -332,7 +335,7 @@ function api_v2_directory_management_release_attestation(PDO $pdo): array
     if (!api_v2_directory_backfill_attestation_receipt_is_current($pdo, $backfillDigest)) {
         return ['complete'=>false,'reason'=>'backfill_receipt_stale','json'=>'','digest'=>''];
     }
-    $payload = ['version'=>1,'schemaVersion'=>105,'writerDigest'=>$codeDigest,'backfillDigest'=>$backfillDigest];
+    $payload = ['version'=>1,'schemaVersion'=>106,'writerDigest'=>$codeDigest,'backfillDigest'=>$backfillDigest];
     $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
     return ['complete'=>true,'reason'=>'ready','json'=>$json,'digest'=>hash('sha256', $json)];
 }
