@@ -173,6 +173,7 @@ function api_v2_directory_backfill(PDO $pdo, string $type, ?string $cursor, int 
     if ($dryRun || $rows === []) return $counts;
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo);
         // Re-check under locks: a concurrent writer wins; this tool never replaces it.
         $counts['inserted'] = $counts['skippedCurrent'] = 0;
         foreach ($rows as $candidate) {

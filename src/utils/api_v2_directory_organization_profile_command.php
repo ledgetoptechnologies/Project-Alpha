@@ -58,6 +58,7 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
     if (count($addressColumns) !== count(pa_organization_address_definitions())) throw new RuntimeException('Organization address schema unavailable');
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL' . $lock);
         $identityStatement->execute([$apiKeyId]); $identity = $identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -95,7 +96,7 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
             if ((string)($live[$field] ?? '') !== $value) { $hasProfileChange = true; break; }
         }
         if ($hasProfileChange) {
-            (new OrganizationProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'general_email'=>$profile['generalEmail'], 'general_phone'=>$profile['generalPhone'], 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'actor_id'=>0], $addressColumns);
+            (new OrganizationProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'general_email'=>$profile['generalEmail'], 'general_phone'=>$profile['generalPhone'], 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'actor_id'=>0], $addressColumns, false);
         }
         $resultStateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'organization\' AND public_id=?' . $lock); $resultStateStatement->execute([$publicId]); $result = $resultStateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$result || (int)$result['present'] !== 1 || !api_v2_directory_organization_profile_positive((string)$result['revision'])) throw new RuntimeException('Organization directory result unavailable');

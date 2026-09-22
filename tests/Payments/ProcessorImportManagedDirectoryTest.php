@@ -95,6 +95,27 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
         self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_resource_changes')->fetchColumn());
     }
 
+    public function testInactiveSentinelWithPolicyHealthFailureFailsClosedForClientIdentity(): void
+    {
+        $pdo = $this->clientDatabase();
+        $this->activateDirectoryOwnership($pdo);
+        $pdo->prepare('UPDATE app_config SET config_value=? WHERE organization_id=0 AND config_key=?')
+            ->execute(['0', API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY]);
+        // schema_ready deliberately does not depend on this runtime identity
+        // table; status must classify its failed health query as unavailable.
+        $pdo->exec('DROP TABLE api_v2_applications');
+
+        [$clientId, $manualReview] = $this->clientIdentity(
+            $pdo,
+            ['processor_import_standalone_income' => true, 'processor_import_auto_create_clients' => true],
+            $this->transaction('health-failure@example.test', 'Health failure payer')
+        );
+
+        self::assertNull($clientId);
+        self::assertTrue($manualReview);
+        self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+    }
+
     public function testManagedImportCanRetainAnUnassignedFinancialRecordForManualReview(): void
     {
         $pdo = $this->clientDatabase();

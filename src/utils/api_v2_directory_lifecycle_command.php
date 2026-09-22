@@ -38,6 +38,7 @@ function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$pub
         ||preg_match('/^[0-9a-f]{32}$/D',$publicId)!==1||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory lifecycle command');
     $pdo->beginTransaction();
     try{
+        api_v2_directory_management_acquire_shared_gate($pdo,false);
         $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
         $identityStatement=$pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL'.$lock);
         $identityStatement->execute([$apiKeyId]);$identity=$identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -79,11 +80,11 @@ function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$pub
         if($action==='archive'){
             $update=$pdo->prepare("UPDATE {$table} SET archived=1,deleted_at=CURRENT_TIMESTAMP WHERE id=? AND archived=0 AND deleted_at IS NULL");
             $update->execute([$localId]);if($update->rowCount()!==1)throw new DomainException('Directory resource changed while archiving.');
-            api_v2_directory_record_delete($pdo,$type,$publicId);
+            api_v2_directory_record_delete($pdo,$type,$publicId,false);
         }else{
             $update=$pdo->prepare("UPDATE {$table} SET archived=0,deleted_at=NULL WHERE id=? AND archived=1 AND deleted_at IS NOT NULL");
             $update->execute([$localId]);if($update->rowCount()!==1)throw new DomainException('Directory resource changed while restoring.');
-            if(!api_v2_directory_record($pdo,$type,$localId))throw new RuntimeException('Directory restore revision unavailable');
+            if(!api_v2_directory_record($pdo,$type,$localId,false))throw new RuntimeException('Directory restore revision unavailable');
         }
         $after=$type==='client'?$projection->clientScopes($pdo,$localId):$projection->organizationScopes($pdo,$localId);
         $projection->afterMutationProjectionOnly($pdo,array_merge($before,$after));

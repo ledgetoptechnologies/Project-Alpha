@@ -42,6 +42,7 @@ try {
     }
 
     $pdo->beginTransaction();
+    api_v2_directory_management_acquire_shared_gate($pdo);
     $ins = $pdo->prepare('INSERT INTO organizations (name, source_version, created_at) VALUES (?, ?, NOW())');
     $ins->execute([$name,portal_projection_source_version()]);
     $id = (int)$pdo->lastInsertId();

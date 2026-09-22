@@ -24,7 +24,7 @@ final class ClientProfileMutationService
     /**
      * @param array{name:string,email?:?string,phone?:?string,organization_id?:?int,notes?:?string,address?:array<string,mixed>,google_place_id?:?string,address_label?:?string,address_id?:?int,actor_id?:?int} $profile
      */
-    public function mutate(PDO $pdo, int $clientId, array $profile): void
+    public function mutate(PDO $pdo, int $clientId, array $profile, bool $localDirectoryAuthority = true): void
     {
         if ($clientId < 1 || trim((string) ($profile['name'] ?? '')) === '') {
             throw new \InvalidArgumentException('A valid client profile is required.');
@@ -45,7 +45,7 @@ final class ClientProfileMutationService
         portal_projection_mutate(
             $pdo,
             static fn(): array => $projection->lockedClientScopes($pdo, $clientId, $organizationId > 0 ? $organizationId : null),
-            static function () use ($pdo, $clientId, $name, $email, $phone, $organizationId, $notes, $address, $googlePlaceId, $addressLabel, $addressId, $actorId): void {
+            static function () use ($pdo, $clientId, $name, $email, $phone, $organizationId, $notes, $address, $googlePlaceId, $addressLabel, $addressId, $actorId, $localDirectoryAuthority): void {
                 $stmt = $pdo->prepare('UPDATE clients SET name=?, email=?, phone=?, organization_id=?, notes=?, address_line1=?, address_line2=?, city=?, state=?, postal_code=?, country=?, source_version=? WHERE id=?');
                 $stmt->execute([
                     $name,
@@ -69,10 +69,11 @@ final class ClientProfileMutationService
                     'label' => $addressLabel,
                     'google_place_id' => $googlePlaceId,
                 ] + $address, 'client', $clientId, 'billing', true, $actorId, $addressId ?: null);
-                \api_v2_directory_record($pdo, 'client', $clientId);
+                \api_v2_directory_record($pdo, 'client', $clientId, $localDirectoryAuthority);
             },
             static fn(): array => $projection->clientScopes($pdo, $clientId),
-            true
+            true,
+            static fn() => \api_v2_directory_management_acquire_shared_gate($pdo, $localDirectoryAuthority)
         );
     }
 }

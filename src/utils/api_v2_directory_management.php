@@ -34,6 +34,64 @@ function api_v2_directory_management_save_sentinel(PDO $pdo, bool $active): void
     $pdo->prepare($sql)->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY, $active ? '1' : '0']);
 }
 
+/**
+ * The sentinel is the transaction-scoped Directory cutover gate. Every
+ * canonical source writer takes it shared before a source-row lock; ownership
+ * transitions take it exclusively before the policy row. This fixed order
+ * prevents a cutover from racing a committed source projection.
+ */
+function api_v2_directory_management_lock_sentinel(PDO $pdo, bool $exclusive): bool
+{
+    if (!$pdo->inTransaction()) throw new LogicException('Directory cutover gate requires an active transaction.');
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql'
+        ? ($exclusive ? ' FOR UPDATE' : ' FOR SHARE')
+        : '';
+    try {
+        $statement = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=? LIMIT 1' . $lock);
+        $statement->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY]);
+        $value = $statement->fetchColumn();
+    } catch (PDOException $error) {
+        if (!api_v2_directory_management_sentinel_migration_applied($pdo)) return false;
+        throw $error;
+    }
+    // Pre-sentinel test fixtures and installations have no cutover feature to
+    // enforce. Once migration 0103 is recorded, a missing/corrupt row is a
+    // fail-closed configuration fault rather than implicit local authority.
+    if ($value === false && !api_v2_directory_management_sentinel_migration_applied($pdo)) return false;
+    if ($value === false || !in_array((string)$value, ['0', '1'], true)) {
+        throw new RuntimeException('Directory cutover sentinel is unavailable.');
+    }
+    return (string)$value === '1';
+}
+
+function api_v2_directory_management_sentinel_migration_applied(PDO $pdo): bool
+{
+    try {
+        $statement = $pdo->prepare('SELECT filename FROM schema_migrations WHERE version=103');
+        $statement->execute();
+        return $statement->fetchColumn() === '0103_external_directory_management_sentinel.sql';
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/** A local source mutation fails closed while external ownership is active. */
+function api_v2_directory_management_acquire_shared_gate(PDO $pdo, bool $localAuthority = true): void
+{
+    $active = api_v2_directory_management_lock_sentinel($pdo, false);
+    if ($localAuthority && $active) throw new DomainException(API_V2_DIRECTORY_MANAGEMENT_LABEL);
+}
+
+/** @return array<string,mixed> Locked after the sentinel, never before it. */
+function api_v2_directory_management_lock_policy_after_sentinel(PDO $pdo): array
+{
+    api_v2_directory_management_lock_sentinel($pdo, true);
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $policy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1' . $lock)->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($policy)) throw new RuntimeException('Directory policy row is unavailable.');
+    return $policy;
+}
+
 /** These explicit scopes are never satisfied by the legacy `full` scope. */
 function api_v2_directory_management_required_scopes(): array
 {
@@ -306,8 +364,7 @@ function api_v2_directory_management_save(PDO $pdo, bool $enabled, int $applicat
     if (!api_v2_directory_management_schema_ready($pdo)) throw new RuntimeException('Directory policy storage is unavailable.');
     $pdo->beginTransaction();
     try {
-        $current=$pdo->query('SELECT ownership_active,application_pk,last_effective FROM api_v2_directory_management_policy WHERE singleton=1'.($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':''))->fetch(PDO::FETCH_ASSOC);
-        if(!$current)throw new RuntimeException('Directory policy row is unavailable.');
+        $current=api_v2_directory_management_lock_policy_after_sentinel($pdo);
         if($enabled&&(int)$current['ownership_active']===1&&(int)$current['application_pk']!==$applicationPk)throw new DomainException('Take local control before changing the owning application.');
         $ownershipActive=$enabled?(int)$current['ownership_active']:0;
         $lastEffective=$enabled?(int)$current['last_effective']:0;
@@ -319,7 +376,7 @@ function api_v2_directory_management_save(PDO $pdo, bool $enabled, int $applicat
             $pdo->commit(); // Release attestations intentionally run outside a transaction.
             $digest = api_v2_directory_management_persist_attestation($pdo, $actorUserId);
             $pdo->beginTransaction();
-            $fresh=$pdo->query('SELECT ownership_active,application_pk FROM api_v2_directory_management_policy WHERE singleton=1'.($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':''))->fetch(PDO::FETCH_ASSOC);
+            $fresh=api_v2_directory_management_lock_policy_after_sentinel($pdo);
             if(!$fresh||(int)$fresh['ownership_active']!==$ownershipActive||(int)$fresh['application_pk']!==(int)$current['application_pk'])throw new RuntimeException('Directory policy changed while release evidence was prepared.');
         }
         $pdo->prepare('UPDATE api_v2_directory_management_policy SET configured_enabled=?,ownership_active=?,application_pk=?,source_instance_id=?,application_id=?,history_epoch=?,release_attestation_sha256=?,last_effective=?,last_reason=?,configured_by=?,configured_at=CURRENT_TIMESTAMP WHERE singleton=1')
@@ -334,17 +391,15 @@ function api_v2_directory_management_save(PDO $pdo, bool $enabled, int $applicat
 function api_v2_directory_management_activate(PDO $pdo, int $actorUserId, bool $confirmed): array
 {
     if (!$confirmed) throw new DomainException('Explicit activation confirmation is required.');
-    // Backfill proof intentionally performs unlocked consistency reads; do it
-    // before the activation transaction, then pin the policy identity below.
-    $prePolicy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
-    $preStatus = api_v2_directory_management_status($pdo, false);
-    if (!$preStatus['configured'] || $preStatus['eligibility_reason'] !== 'ready') throw new DomainException('Directory ownership cannot be activated: ' . $preStatus['eligibility_reason']);
-    if (!is_array($prePolicy) || !api_v2_directory_management_activation_attestation_ready($pdo, $prePolicy)) throw new DomainException('Directory ownership cannot be activated: backfill_attestation_stale');
     $pdo->beginTransaction();
     try{
-        $pdo->query('SELECT singleton FROM api_v2_directory_management_policy WHERE singleton=1'.($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':''))->fetchColumn();
-        $policy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
-        foreach (['configured_enabled','ownership_active','application_pk','source_instance_id','application_id','history_epoch','release_attestation_sha256'] as $field) if (!is_array($policy) || (string)($policy[$field] ?? '') !== (string)($prePolicy[$field] ?? '')) throw new RuntimeException('Directory policy changed while activation evidence was prepared.');
+        // Retain the exclusive sentinel gate while proving the current policy,
+        // identity, code digest, and mutable backfill attestation.  No source
+        // writer can commit between this proof and ownership activation.
+        $policy = api_v2_directory_management_lock_policy_after_sentinel($pdo);
+        $preStatus = api_v2_directory_management_status($pdo, false);
+        if (!$preStatus['configured'] || $preStatus['eligibility_reason'] !== 'ready') throw new DomainException('Directory ownership cannot be activated: ' . $preStatus['eligibility_reason']);
+        if (!api_v2_directory_management_activation_attestation_ready($pdo, $policy)) throw new DomainException('Directory ownership cannot be activated: backfill_attestation_stale');
         $statement=$pdo->prepare('UPDATE api_v2_directory_management_policy SET ownership_active=1,last_effective=1,last_reason=\'ready\' WHERE singleton=1 AND configured_enabled=1 AND ownership_active=0');
         $statement->execute();
         if($statement->rowCount()!==1) throw new RuntimeException('Directory ownership activation changed concurrently.');

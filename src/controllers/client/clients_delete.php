@@ -22,6 +22,7 @@ if (!$client) {
 }
 
 $projection=new App\Services\PortalProjectionMutationService();$pdo->beginTransaction();
+api_v2_directory_management_acquire_shared_gate($pdo);
 try {
   $beforeScopes=$projection->lockedClientScopes($pdo,$id);
   // Refresh after the locking read so the archived identity and profile fields

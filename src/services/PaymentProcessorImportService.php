@@ -78,16 +78,41 @@ class PaymentProcessorImportService
             return ['status' => 'failed', 'reason' => 'missing_net_or_fee', 'payment_id' => null, 'transaction_id' => $ledgerId];
         }
 
-        [$clientId, $directoryOwnershipBlocksClientIdentity] = self::clientIdentityForStandaloneImport($pdo, $appConfig, $transaction);
-
-        $paymentId = self::insertStandalonePayment(
-            $pdo,
-            $transaction,
-            $ledgerId,
-            $clientId,
-            $directoryOwnershipBlocksClientIdentity
-        );
-        self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
+        // Identity lookup, enrichment, and creation are one local-authority
+        // transaction.  The sentinel shared lock is intentionally first, so
+        // an activation cannot slip between lookup and the source mutation.
+        $clientId = null;
+        $directoryOwnershipBlocksClientIdentity = false;
+        $owns = !$pdo->inTransaction();
+        try {
+            if ($owns) $pdo->beginTransaction();
+            api_v2_directory_management_acquire_shared_gate($pdo);
+            if (self::autoCreateClientsEnabled($appConfig)) {
+                $clientId = self::matchOrCreateClient($pdo, $transaction);
+            }
+            $paymentId = self::insertStandalonePayment($pdo, $transaction, $ledgerId, $clientId);
+            self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
+            if ($owns) $pdo->commit();
+        } catch (DomainException $error) {
+            if ($error->getMessage() !== API_V2_DIRECTORY_MANAGEMENT_LABEL) throw $error;
+            if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+            // A denied Directory mutation must never discard processor money:
+            // retain a clearly unassigned financial record for review.
+            $directoryOwnershipBlocksClientIdentity = true;
+            $owns = !$pdo->inTransaction();
+            try {
+                if ($owns) $pdo->beginTransaction();
+                $paymentId = self::insertStandalonePayment($pdo, $transaction, $ledgerId, null, true);
+                self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
+                if ($owns) $pdo->commit();
+            } catch (Throwable $financialError) {
+                if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+                throw $financialError;
+            }
+        } catch (Throwable $error) {
+            if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
+        }
 
         return ['status' => 'imported', 'reason' => null, 'payment_id' => $paymentId, 'transaction_id' => $ledgerId];
     }
@@ -316,7 +341,11 @@ class PaymentProcessorImportService
                 return true;
             }
 
-            return $status['effective'] || (($status['reason'] ?? null) === 'managed_degraded');
+            // A missing managed-directory schema is a legacy-local install,
+            // but a sentinel=0 plus a failed policy/health query is not proof
+            // that identity writes are safe.
+            return $status['effective']
+                || in_array((string)($status['reason'] ?? ''), ['managed_degraded', 'health_unavailable'], true);
         } catch (Throwable) {
             return true;
         }

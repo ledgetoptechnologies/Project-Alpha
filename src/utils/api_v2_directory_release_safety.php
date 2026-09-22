@@ -13,7 +13,9 @@ require_once __DIR__ . '/api_v2_directory_backfill.php';
  */
 function api_v2_directory_backfill_attestation(PDO $pdo): array
 {
-    if ($pdo->inTransaction()) throw new LogicException('Directory backfill attestation requires no active transaction.');
+    // Activation invokes this while holding the exclusive sentinel gate. In
+    // that context every canonical source writer is blocked, so the current
+    // transaction provides the authoritative cutover snapshot.
     $resources = [
         'client' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
         'organization' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
@@ -120,7 +122,7 @@ function api_v2_directory_backfill_attestation_persist(PDO $pdo): string
 /** A release gate must read this back after retaining the returned digest. */
 function api_v2_directory_backfill_attestation_receipt_is_current(PDO $pdo, string $digest): bool
 {
-    if ($pdo->inTransaction() || preg_match('/^[0-9a-f]{64}$/D', $digest) !== 1 || !api_v2_directory_backfill_attestation_receipt_schema_ready($pdo)) return false;
+    if (preg_match('/^[0-9a-f]{64}$/D', $digest) !== 1 || !api_v2_directory_backfill_attestation_receipt_schema_ready($pdo)) return false;
     $attestation = api_v2_directory_backfill_attestation($pdo);
     if (!$attestation['complete']) return false;
     $json = api_v2_directory_backfill_attestation_json($attestation);

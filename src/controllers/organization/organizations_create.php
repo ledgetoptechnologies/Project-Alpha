@@ -99,6 +99,7 @@ $params[] = portal_projection_source_version();
 
 try {
     $pdo->beginTransaction();
+    api_v2_directory_management_acquire_shared_gate($pdo);
     $stmt = $pdo->prepare('INSERT INTO organizations (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')');
     $stmt->execute($params);
     $id = (int)$pdo->lastInsertId();

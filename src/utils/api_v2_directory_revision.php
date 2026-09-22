@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/api_v2_authorization_generation.php';
+require_once __DIR__ . '/api_v2_directory_management.php';
 
 /** The one canonical profile projection used by writers and live readers. */
 function api_v2_directory_projection_hash(string $type, array $row): string
@@ -16,11 +17,12 @@ function api_v2_directory_projection_hash(string $type, array $row): string
 }
 
 /** Record a committed-profile candidate inside the caller's transaction. */
-function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
+function api_v2_directory_record(PDO $pdo, string $type, int $localId, bool $localAuthority = true): bool
 {
     if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization'], true) || $localId < 1) {
         throw new LogicException('Directory revision requires an active transaction and supported resource');
     }
+    api_v2_directory_management_acquire_shared_gate($pdo, $localAuthority);
     $table = $type === 'client' ? 'clients' : 'organizations';
     $query = 'SELECT * FROM ' . $table . ' WHERE id=?';
     if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') $query .= ' FOR UPDATE';
@@ -57,12 +59,13 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId): bool
 }
 
 /** Record a committed deletion tombstone inside the caller's transaction. */
-function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId): bool
+function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId, bool $localAuthority = true): bool
 {
     if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization'], true)
         || preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1) {
         throw new LogicException('Directory deletion revision requires an active transaction and stable supported identity');
     }
+    api_v2_directory_management_acquire_shared_gate($pdo, $localAuthority);
     $state = $pdo->prepare('SELECT revision,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?'
         . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
     $state->execute([$type, $publicId]);

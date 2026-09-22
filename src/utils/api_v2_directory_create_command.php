@@ -104,6 +104,7 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
     }
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         // The application row is shared by every key for this application. Its
         // lock serializes receipt and authorization decisions across those keys.
@@ -225,7 +226,7 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             ? $projection->clientScopes($pdo, $localId)
             : $projection->organizationScopes($pdo, $localId);
         $projection->afterMutationProjectionOnly($pdo, $projectionScopes);
-        if (!api_v2_directory_record($pdo, $type, $localId)) throw new RuntimeException('Initial directory revision was not created');
+        if (!api_v2_directory_record($pdo, $type, $localId, false)) throw new RuntimeException('Initial directory revision was not created');
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
         $stateStatement->execute([$type, $publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$state || (string)$state['revision'] !== '1' || (int)$state['present'] !== 1) throw new RuntimeException('Initial directory state unavailable');

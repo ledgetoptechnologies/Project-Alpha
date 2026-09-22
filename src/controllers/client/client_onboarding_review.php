@@ -30,6 +30,7 @@ if ($userId <= 0 || $submissionId <= 0 || !in_array($decision, ['approve', 'reje
 
 try {
     $pdo->beginTransaction();
+    if ($decision === 'approve') api_v2_directory_management_acquire_shared_gate($pdo);
     $ownerWhere = $organizationId > 0
         ? '(i.organization_id=? OR (i.organization_id IS NULL AND i.created_by=?))'
         : 'i.organization_id IS NULL AND i.created_by=?';

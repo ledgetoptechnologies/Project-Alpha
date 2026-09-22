@@ -48,6 +48,7 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
     if (preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1 || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid client profile command');
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL' . $lock);
         $identityStatement->execute([$apiKeyId]); $identity = $identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -81,7 +82,7 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         $hasProfileChange = false;
         foreach ($profileFields as $field => $value) if ((string)($live[$field] ?? '') !== $value) { $hasProfileChange = true; break; }
         if ($hasProfileChange) {
-            (new ClientProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'organization_id'=>(int)($live['organization_id'] ?? 0), 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'address_id'=>(int)($currentAddress['id'] ?? 0), 'actor_id'=>0]);
+            (new ClientProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'organization_id'=>(int)($live['organization_id'] ?? 0), 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'address_id'=>(int)($currentAddress['id'] ?? 0), 'actor_id'=>0], false);
         }
         $resultStateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'client\' AND public_id=?' . $lock); $resultStateStatement->execute([$publicId]); $result = $resultStateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$result || (int)$result['present'] !== 1 || !api_v2_directory_client_profile_positive((string)$result['revision'])) throw new RuntimeException('Client directory result unavailable');
