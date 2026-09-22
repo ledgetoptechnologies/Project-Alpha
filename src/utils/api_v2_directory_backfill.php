@@ -173,13 +173,17 @@ function api_v2_directory_backfill(PDO $pdo, string $type, ?string $cursor, int 
     if ($dryRun || $rows === []) return $counts;
     $pdo->beginTransaction();
     try {
-        api_v2_directory_management_acquire_shared_gate($pdo);
+        // Backfill is an explicitly confirmed maintenance/API-authority
+        // operation. It shares the cutover gate but never impersonates a
+        // local browser writer, so it can repair projection state while
+        // ownership is active.
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         // Re-check under locks: a concurrent writer wins; this tool never replaces it.
         $counts['inserted'] = $counts['skippedCurrent'] = 0;
         foreach ($rows as $candidate) {
             $row = api_v2_directory_backfill_source($pdo, $candidate['type'], $candidate['id'], true);
             $action = api_v2_directory_backfill_action($pdo, $candidate['type'], $row, true);
-            if ($action === 'insert') { api_v2_directory_record($pdo, $candidate['type'], $candidate['id']); $counts['inserted']++; }
+            if ($action === 'insert') { api_v2_directory_record($pdo, $candidate['type'], $candidate['id'], false); $counts['inserted']++; }
             elseif ($action === 'skip_current') $counts['skippedCurrent']++;
             else throw new LogicException('Unexpected directory backfill action.');
         }

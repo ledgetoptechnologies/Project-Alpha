@@ -148,6 +148,18 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
         self::assertStringContainsString('$directoryOwnershipBlocksClientIdentity', $service);
     }
 
+    public function testStandaloneImportRejectsCallerOwnedTransactionsBeforeAnyFallbackWrite(): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->beginTransaction();
+        try {
+            $this->expectException(\LogicException::class);
+            \PaymentProcessorImportService::importStandalone($pdo, [], ['provider' => 'example', 'provider_payment_id' => 'nested']);
+        } finally {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+        }
+    }
+
     /** @return array{0:?int,1:bool} */
     private function clientIdentity(PDO $pdo, array $config, array $transaction): array
     {

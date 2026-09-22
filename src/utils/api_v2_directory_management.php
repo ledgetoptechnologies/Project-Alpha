@@ -79,7 +79,38 @@ function api_v2_directory_management_sentinel_migration_applied(PDO $pdo): bool
 function api_v2_directory_management_acquire_shared_gate(PDO $pdo, bool $localAuthority = true): void
 {
     $active = api_v2_directory_management_lock_sentinel($pdo, false);
-    if ($localAuthority && $active) throw new DomainException(API_V2_DIRECTORY_MANAGEMENT_LABEL);
+    if (!$localAuthority) return;
+    if ($active || api_v2_directory_management_local_policy_owns_directory($pdo)) {
+        throw new DomainException(API_V2_DIRECTORY_MANAGEMENT_LABEL);
+    }
+}
+
+/**
+ * A local writer must not trust a stale local sentinel over an active policy.
+ * This read deliberately follows the sentinel in the same transaction and
+ * takes the corresponding shared lock on MySQL. Before migration 0103 there
+ * is no cutover feature to enforce; after it, a missing or malformed policy
+ * is fail-closed.
+ */
+function api_v2_directory_management_local_policy_owns_directory(PDO $pdo): bool
+{
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR SHARE' : '';
+    try {
+        $policy = $pdo->query('SELECT configured_enabled,ownership_active FROM api_v2_directory_management_policy WHERE singleton=1' . $lock)->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $error) {
+        if (!api_v2_directory_management_sentinel_migration_applied($pdo)) return false;
+        throw new RuntimeException('Directory cutover policy is unavailable.', 0, $error);
+    }
+    if (!is_array($policy)) {
+        if (!api_v2_directory_management_sentinel_migration_applied($pdo)) return false;
+        throw new RuntimeException('Directory cutover policy is unavailable.');
+    }
+    $ownership = (string)($policy['ownership_active'] ?? '');
+    $configured = (string)($policy['configured_enabled'] ?? '');
+    if (!in_array($ownership, ['0', '1'], true) || !in_array($configured, ['0', '1'], true)) {
+        throw new RuntimeException('Directory cutover policy is malformed.');
+    }
+    return $ownership === '1';
 }
 
 /** @return array<string,mixed> Locked after the sentinel, never before it. */

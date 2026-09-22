@@ -42,6 +42,10 @@ class PaymentProcessorImportService
 
     public static function importStandalone(PDO $pdo, array $appConfig, array $transaction): array
     {
+        // The denied-identity fallback creates a financial payment in its own
+        // transaction. A caller-owned transaction could not be safely rolled
+        // back and restarted here without corrupting the caller's atomicity.
+        if ($pdo->inTransaction()) throw new LogicException('Standalone processor import requires a top-level transaction.');
         self::ensureSchema($pdo);
         $provider = self::cleanProvider((string)($transaction['provider'] ?? ''));
         $providerPaymentId = trim((string)($transaction['provider_payment_id'] ?? ''));

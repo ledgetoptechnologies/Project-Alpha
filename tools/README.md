@@ -4,11 +4,10 @@ This directory contains operator-run maintenance utilities. Review each script a
 
 ## Directory cutover gate MySQL acceptance
 
-The shared/exclusive cutover gate needs two independent MySQL connections. On
-an isolated disposable database, set `DIRECTORY_CUTOVER_GATE_MYSQL_ALLOW_DESTRUCTIVE=isolated-disposable-only` and run
-`vendor/bin/phpunit tests/Integration/DirectoryCutoverGateMySqlTest.php`.
-The harness must assert that an activation transaction waits for a local source
-writer holding `FOR SHARE` on the sentinel, the first writer commits before
+This is a pending release gate, not an executable acceptance harness: the
+repository has no reusable disposable two-connection MySQL fixture. Before
+claiming MySQL race coverage, add that fixture and prove that activation waits
+for a local source writer holding `FOR SHARE`, the first writer commits before
 activation, the next local writer is rejected after activation, and an API
 source command using explicit external authority still acquires the shared gate.
 
