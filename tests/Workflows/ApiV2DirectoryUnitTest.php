@@ -65,6 +65,21 @@ final class ApiV2DirectoryUnitTest extends TestCase
         self::assertSame(200,api_v2_directory_unit_contact_command_write($pdo,str_repeat('c',32),'set-primary',$primary,7,$this->headers(),'a23e4567-e89b-42d3-a456-426614174000')['status']);
         $read=api_v2_directory_read($pdo,'unit',str_repeat('c',32),7,$this->headers(),'b23e4567-e89b-42d3-a456-426614174000');self::assertSame([['clientPublicId'=>str_repeat('a',32),'role'=>'billing','primary'=>true]],$read['data']['contacts']);
         $stale=array_replace($primary,['commandId'=>'c23e4567-e89b-42d3-a456-426614174000']);self::assertSame(409,api_v2_directory_unit_contact_command_write($pdo,str_repeat('c',32),'remove',$stale,7,$this->headers(),'d23e4567-e89b-42d3-a456-426614174000')['status']);
+        $state=$pdo->query("SELECT revision,projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetch(PDO::FETCH_ASSOC);$pdo->prepare("UPDATE api_v2_directory_external_bindings SET resource_revision=?,resource_projection_sha256=? WHERE resource_type='unit'")->execute([$state['revision'],$state['projection_sha256']]);
+        $remove=['commandId'=>'e23e4567-e89b-42d3-a456-426614174000','expectedUnitRevision'=>'3','expectedAuthorizationGeneration'=>'2','client'=>$assign['client']];
+        self::assertSame(200,api_v2_directory_unit_contact_command_write($pdo,str_repeat('c',32),'remove',$remove,7,$this->headers(),'f23e4567-e89b-42d3-a456-426614174000')['status']);
+        self::assertSame([],api_v2_directory_read($pdo,'unit',str_repeat('c',32),7,$this->headers(),'423e4567-e89b-42d3-a456-426614174001')['data']['contacts']);
+        $state=$pdo->query("SELECT revision,projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetch(PDO::FETCH_ASSOC);$pdo->prepare("UPDATE api_v2_directory_external_bindings SET resource_revision=?,resource_projection_sha256=? WHERE resource_type='unit'")->execute([$state['revision'],$state['projection_sha256']]);
+        $missing=array_replace($remove,['commandId'=>'523e4567-e89b-42d3-a456-426614174001','expectedUnitRevision'=>'4','expectedAuthorizationGeneration'=>'3']);
+        self::assertSame(409,api_v2_directory_unit_contact_command_write($pdo,str_repeat('c',32),'remove',$missing,7,$this->headers(),'623e4567-e89b-42d3-a456-426614174001')['status']);
+        self::assertSame([4,3],array_map('intval',[$pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetchColumn(),$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn()]));
+    }
+
+    public function testSetPrimaryRejectsMissingAssignmentWithoutStateChange():void
+    {
+        $pdo=$this->database();$command=['commandId'=>'523e4567-e89b-42d3-a456-426614174001','expectedUnitRevision'=>'1','expectedAuthorizationGeneration'=>'0','client'=>['externalId'=>'alice-ext','expectedPublicId'=>str_repeat('a',32),'expectedRevision'=>'1']];
+        self::assertSame(409,api_v2_directory_unit_contact_command_write($pdo,str_repeat('c',32),'set-primary',$command,7,$this->headers(),'623e4567-e89b-42d3-a456-426614174001')['status']);
+        self::assertSame([1,0],array_map('intval',[$pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetchColumn(),$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn()]));
     }
 
     public function testCrossOrganizationContactIsRejected():void
