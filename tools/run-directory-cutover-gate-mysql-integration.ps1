@@ -2,8 +2,11 @@ param([string]$Filter = '')
 
 $ErrorActionPreference = 'Stop'
 $runId = [Guid]::NewGuid().ToString('N')
-$containerName = "pa-directory-cutover-gate-mysql-$runId"
-$networkName = "pa-directory-cutover-gate-mysql-$runId"
+# Docker exposes the container name as a DNS label on the disposable network.
+# Keep the UUID-suffixed label at or below the RFC 1123 63-character limit so
+# the PHP test container can resolve the isolated MySQL host.
+$containerName = "pa-dir-cutover-mysql-$runId"
+$networkName = "pa-dir-cutover-mysql-$runId"
 $databaseName = "directory_cutover_gate_test_$runId"
 $databaseUser = 'directory_cutover_gate'
 $rootPassword = [Guid]::NewGuid().ToString('N')

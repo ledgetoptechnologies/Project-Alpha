@@ -123,6 +123,8 @@ final class DirectoryCutoverGateTest extends TestCase
         self::assertStringContainsString('run: ./tools/run-directory-cutover-gate-mysql-integration.ps1', $workflow);
         self::assertStringContainsString("DIRECTORY_CUTOVER_GATE_MYSQL_ALLOW_DESTRUCTIVE=isolated-disposable-only", $runner);
         self::assertStringContainsString('--fail-on-skipped', $runner);
+        self::assertStringContainsString('$containerName = "pa-dir-cutover-mysql-$runId"', $runner);
+        self::assertLessThanOrEqual(63, strlen('pa-dir-cutover-mysql-') + 32);
     }
 
     private function policyGateDatabase(): PDO
