@@ -14,6 +14,7 @@ if ($id <= 0) {
 
 $pdo->beginTransaction();
 try {
+  api_v2_directory_management_acquire_shared_gate($pdo);
   $restored=(new App\Services\ClientArchivePortalStateService())->consumeAndRestore(
     $pdo,
     $id,

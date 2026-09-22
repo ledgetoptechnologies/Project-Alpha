@@ -20,7 +20,7 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
             CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
             CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,tombstoned_at TEXT,PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE(application_pk,resource_type,public_id));
-            CREATE TABLE api_v2_directory_create_command_receipts(application_pk INTEGER,resource_type TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(application_pk,resource_type,command_id));
+            CREATE TABLE api_v2_directory_create_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
             CREATE TABLE organizations(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE,name TEXT UNIQUE,general_email TEXT,general_phone TEXT,notes TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,source_version TEXT,tax_exempt_file TEXT,link_strategy TEXT DEFAULT 'overall_folder');
             CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE,name TEXT,email TEXT,phone TEXT,organization_id INTEGER,client_type TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,source_version TEXT,notes TEXT,archived INTEGER DEFAULT 0,deleted_at TEXT,stripe_customer_id TEXT,stripe_payment_method_id TEXT,auto_pay_enabled INTEGER DEFAULT 0,config TEXT,custom_fields TEXT);
             CREATE TABLE addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,label TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,google_place_id TEXT,source TEXT,created_by INTEGER,archived INTEGER DEFAULT 0);
@@ -112,6 +112,16 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         $stale=$this->clientCommand(null,'0');
         self::assertSame(409,api_v2_directory_create_command_write($pdo,'client',$stale,7,$this->headers(),'four')['status']);
         self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+    }
+
+    public function testPriorEpochCreateReceiptCannotReplayOldResource():void
+    {
+        $pdo=$this->database();$command=$this->organizationCommand();
+        $first=api_v2_directory_create_command_write($pdo,'organization',$command,7,$this->headers(),'first');self::assertSame(201,$first['status']);
+        $next='423e4567-e89b-42d3-a456-426614174001';$pdo->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$next]);$pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=0');$headers=$this->headers();$headers['epoch']=$next;
+        $outcome=api_v2_directory_create_command_write($pdo,'organization',$command,7,$headers,'next');
+        self::assertSame(409,$outcome['status']);self::assertArrayNotHasKey('payload',$outcome);self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM organizations')->fetchColumn());
+        self::assertSame('323e4567-e89b-42d3-a456-426614174000',$pdo->query('SELECT history_epoch FROM api_v2_directory_create_command_receipts')->fetchColumn());
     }
 
     public function testClientAssignmentRequiresExactActiveApplicationBindingRevision(): void
@@ -271,7 +281,7 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         $route=(string)file_get_contents($root.'/public/index.php');
         $controller=(string)file_get_contents($root.'/src/controllers/api/directory_create_command_v2.php');
         $migration=(string)file_get_contents($root.'/database/migrations/0097_api_v2_directory_create_command_receipts.sql');
-        self::assertStringContainsString('/api/v2/directory/(clients|organizations)/commands',$route);
+        self::assertStringContainsString('/api/v2/directory/(clients|organizations|units)/commands',$route);
         self::assertStringContainsString('APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED',$route);
         self::assertStringContainsString('APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED',$route);
         self::assertStringContainsString("api_require_key(['api.capabilities.read', \$scope], false)",$controller);
@@ -289,5 +299,13 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         self::assertSame('/api/v2/directory/organizations/commands',$enabled['implementedEndpoints'][1]['path']);
         self::assertSame('/api/v2/directory/clients/commands',$enabled['implementedEndpoints'][2]['path']);
         self::assertSame([['name'=>'api.capabilities.read'],['name'=>'directory.clients.create'],['name'=>'directory.clients.organization.assign']],$enabled['grantedCapabilities']);
+    }
+
+    public function testCreateLocksRelationshipBeforeAuthorizationAndReceiptsAreEpochScoped():void
+    {
+        $root=dirname(__DIR__,2);$writer=(string)file_get_contents($root.'/src/utils/api_v2_directory_create_command.php');$migration=(string)file_get_contents($root.'/database/migrations/0105_api_v2_directory_receipt_history_epochs.sql');
+        $state=strpos($writer,'$relationshipState =');$binding=strpos($writer,'$relationshipBinding =');$authorization=strpos($writer,'$authorizationStatement =');
+        self::assertIsInt($state);self::assertIsInt($binding);self::assertIsInt($authorization);self::assertTrue($state<$binding&&$binding<$authorization);
+        self::assertStringContainsString('ADD COLUMN history_epoch',$migration);self::assertSame(3,substr_count($migration,'ADD PRIMARY KEY(application_pk,resource_type,history_epoch,command_id)'));
     }
 }

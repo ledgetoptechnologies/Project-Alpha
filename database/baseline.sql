@@ -3983,6 +3983,7 @@ INSERT INTO app_config (config_key, config_value) VALUES
     ('managed_delivery_intent_url', ''),
     ('managed_delivery_profile_id', '0'),
     ('managed_delivery_guest_links_enabled', '0'),
+    ('api_v2_directory_management_ownership_active', '0'),
     ('workforce_allow_non_admin_time_management', '0'),
     ('workforce_allow_non_admin_time_approval', '0'),
     ('default_mileage_rate', '0.670'),

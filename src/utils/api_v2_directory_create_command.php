@@ -7,9 +7,9 @@ require_once __DIR__ . '/portal_projection_hooks.php';
 
 function api_v2_directory_create_command_parse(string $type, string $json): ?array
 {
-    if (!in_array($type, ['client', 'organization'], true) || strlen($json) > 32 * 1024) return null;
+    if (!in_array($type, ['client', 'organization', 'unit'], true) || strlen($json) > 32 * 1024) return null;
     try { $value = json_decode($json, true, 8, JSON_THROW_ON_ERROR); } catch (Throwable) { return null; }
-    $topFields = $type === 'client'
+    $topFields = in_array($type, ['client','unit'], true)
         ? ['commandId', 'externalId', 'expectedAuthorizationGeneration', 'profile', 'organization']
         : ['commandId', 'externalId', 'expectedAuthorizationGeneration', 'profile'];
     if (!is_array($value) || count($value) !== count($topFields)
@@ -22,7 +22,9 @@ function api_v2_directory_create_command_parse(string $type, string $json): ?arr
 
     $fields = $type === 'client'
         ? ['name'=>150, 'email'=>255, 'phone'=>50, 'clientType'=>8, 'addressLine1'=>255, 'addressLine2'=>255, 'city'=>100, 'state'=>2, 'postalCode'=>20, 'country'=>100]
-        : ['name'=>150, 'generalEmail'=>255, 'generalPhone'=>50, 'addressLine1'=>255, 'addressLine2'=>255, 'city'=>100, 'state'=>100, 'postalCode'=>32, 'country'=>100];
+        : ($type === 'organization'
+            ? ['name'=>150, 'generalEmail'=>255, 'generalPhone'=>50, 'addressLine1'=>255, 'addressLine2'=>255, 'city'=>100, 'state'=>100, 'postalCode'=>32, 'country'=>100]
+            : ['name'=>150]);
     if (count($value['profile']) !== count($fields) || array_diff(array_keys($value['profile']), array_keys($fields)) !== []
         || array_diff(array_keys($fields), array_keys($value['profile'])) !== []) return null;
     $profile = [];
@@ -33,13 +35,15 @@ function api_v2_directory_create_command_parse(string $type, string $json): ?arr
         if (mb_strlen($profile[$field]) > $limit) return null;
     }
     if ($profile['name'] === '') return null;
-    $emailField = $type === 'client' ? 'email' : 'generalEmail';
-    $profile[$emailField] = strtolower($profile[$emailField]);
-    if ($profile[$emailField] !== '' && !filter_var($profile[$emailField], FILTER_VALIDATE_EMAIL)) return null;
+    $emailField = $type === 'client' ? 'email' : ($type === 'organization' ? 'generalEmail' : null);
+    if ($emailField !== null) {
+        $profile[$emailField] = strtolower($profile[$emailField]);
+        if ($profile[$emailField] !== '' && !filter_var($profile[$emailField], FILTER_VALIDATE_EMAIL)) return null;
+    }
     if ($type === 'client' && !in_array($profile['clientType'], ['unknown', 'business', 'consumer'], true)) return null;
 
     $organization = null;
-    if ($type === 'client' && $value['organization'] !== null) {
+    if (in_array($type, ['client','unit'], true) && $value['organization'] !== null) {
         $requestedOrganization = $value['organization'];
         if (!is_array($requestedOrganization) || count($requestedOrganization) !== 2
             || array_diff(array_keys($requestedOrganization), ['externalId', 'expectedRevision']) !== []
@@ -52,13 +56,14 @@ function api_v2_directory_create_command_parse(string $type, string $json): ?arr
             'expectedRevision' => $requestedOrganization['expectedRevision'],
         ];
     }
+    if ($type === 'unit' && $organization === null) return null;
     $command = [
         'commandId' => $value['commandId'],
         'externalId' => $value['externalId'],
         'expectedAuthorizationGeneration' => $value['expectedAuthorizationGeneration'],
         'profile' => $profile,
     ];
-    if ($type === 'client') $command['organization'] = $organization;
+    if (in_array($type, ['client','unit'], true)) $command['organization'] = $organization;
     return $command;
 }
 
@@ -99,11 +104,12 @@ function api_v2_directory_create_result(array $identity, string $type, string $e
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_create_command_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
-    if (!in_array($type, ['client', 'organization'], true) || $apiKeyId < 1 || $pdo->inTransaction()) {
+    if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1 || $pdo->inTransaction()) {
         throw new InvalidArgumentException('Invalid directory create command');
     }
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         // The application row is shared by every key for this application. Its
         // lock serializes receipt and authorization decisions across those keys.
@@ -123,8 +129,8 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         $receiptStatement = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(result_revision AS CHAR) result_revision,
             CAST(expected_authorization_generation AS CHAR) expected_authorization_generation,
             CAST(result_authorization_generation AS CHAR) result_authorization_generation
-            FROM api_v2_directory_create_command_receipts WHERE application_pk=? AND resource_type=? AND command_id=?' . $lock);
-        $receiptStatement->execute([$appPk, $type, $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
+            FROM api_v2_directory_create_command_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?' . $lock);
+        $receiptStatement->execute([$appPk, $type, $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash)
             || !hash_equals((string)$receipt['external_id'], $command['externalId'])
             || (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration'])) {
@@ -135,16 +141,8 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             return ['status'=>200, 'payload'=>api_v2_directory_create_result($identity, $type, (string)$receipt['external_id'], (string)$receipt['public_id'], (string)$receipt['result_revision'], (string)$receipt['result_authorization_generation'], $requestId, true)];
         }
 
-        $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
-        $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
-        if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
-            || !api_v2_directory_create_generation_valid((string)$generation)
-            || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
-            $pdo->rollBack(); return ['status'=>409];
-        }
-
         $organizationId = null;
-        if ($type === 'client' && $command['organization'] !== null) {
+        if (in_array($type, ['client','unit'], true) && $command['organization'] !== null) {
             $organization = $command['organization'];
             // Resolve the public ID without taking the binding lock, then use
             // the browser-compatible source -> address -> state -> binding
@@ -195,6 +193,18 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             if ($duplicate->fetchColumn() !== false) { $pdo->rollBack(); return ['status'=>409]; }
         }
 
+        // Keep the cross-application writer order source -> state -> binding ->
+        // authorization. The application row above serializes same-application
+        // receipt decisions, but lifecycle tombstones may lock another
+        // application's authorization row after the shared source/bindings.
+        $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
+        $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
+        if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
+            || !api_v2_directory_create_generation_valid((string)$generation)
+            || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
+            $pdo->rollBack(); return ['status'=>409];
+        }
+
         // Keep neutral relationship and existing-workspace projection state on
         // the authoritative transaction boundary without enrolling the new
         // resource into portal authority. Enrollment remains a separate,
@@ -207,25 +217,29 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             $insert->execute([$publicId,$profile['name'],$profile['email'] ?: null,$profile['phone'] ?: null,$organizationId,$profile['clientType'],
                 $profile['addressLine1'] ?: null,$profile['addressLine2'] ?: null,$profile['city'] ?: null,$profile['state'] ?: null,
                 $profile['postalCode'] ?: null,$profile['country'] ?: null,portal_projection_source_version()]);
-        } else {
+        } elseif ($type === 'organization') {
             $insert = $pdo->prepare('INSERT INTO organizations(public_id,name,general_email,general_phone,address_line1,address_line2,city,state,postal_code,country,source_version)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)');
             $insert->execute([$publicId,$profile['name'],$profile['generalEmail'] ?: null,$profile['generalPhone'] ?: null,
                 $profile['addressLine1'] ?: null,$profile['addressLine2'] ?: null,$profile['city'] ?: null,$profile['state'] ?: null,
                 $profile['postalCode'] ?: null,$profile['country'] ?: null,portal_projection_source_version()]);
+        } else {
+            $insert = $pdo->prepare('INSERT INTO organization_departments(public_id,organization_id,name,source_version,archived,deleted_at)
+                VALUES(?,?,?,?,0,NULL)');
+            $insert->execute([$publicId,$organizationId,$profile['name'],portal_projection_source_version()]);
         }
         $localId = (int)$pdo->lastInsertId();
         if ($localId < 1) throw new RuntimeException('Directory create identity unavailable');
-        address_book_save($pdo, [
+        if ($type !== 'unit') address_book_save($pdo, [
             'label'=>'Billing address','address_line1'=>$profile['addressLine1'],'address_line2'=>$profile['addressLine2'],
             'city'=>$profile['city'],'state'=>$profile['state'],'postal_code'=>$profile['postalCode'],'country'=>$profile['country'],
         ], $type, $localId, 'billing', true, null);
         $projection = new App\Services\PortalProjectionMutationService();
         $projectionScopes = $type === 'client'
             ? $projection->clientScopes($pdo, $localId)
-            : $projection->organizationScopes($pdo, $localId);
+            : $projection->organizationScopes($pdo, $type === 'unit' ? (int)$organizationId : $localId);
         $projection->afterMutationProjectionOnly($pdo, $projectionScopes);
-        if (!api_v2_directory_record($pdo, $type, $localId)) throw new RuntimeException('Initial directory revision was not created');
+        if (!api_v2_directory_record($pdo, $type, $localId, false)) throw new RuntimeException('Initial directory revision was not created');
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
         $stateStatement->execute([$type, $publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$state || (string)$state['revision'] !== '1' || (int)$state['present'] !== 1) throw new RuntimeException('Initial directory state unavailable');
@@ -235,9 +249,9 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         $resultGenerationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?');
         $resultGenerationStatement->execute([$appPk]); $resultGeneration = $resultGenerationStatement->fetchColumn();
         if ($resultGeneration === false) throw new RuntimeException('Result authorization generation unavailable');
-        $pdo->prepare('INSERT INTO api_v2_directory_create_command_receipts(application_pk,resource_type,command_id,request_sha256,external_id,public_id,
-            expected_authorization_generation,result_revision,result_projection_sha256,result_authorization_generation) VALUES(?,?,?,?,?,?,?,?,?,?)')
-            ->execute([$appPk,$type,$command['commandId'],$requestHash,$command['externalId'],$publicId,$command['expectedAuthorizationGeneration'],1,$state['projection_sha256'],$resultGeneration]);
+        $pdo->prepare('INSERT INTO api_v2_directory_create_command_receipts(application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,
+            expected_authorization_generation,result_revision,result_projection_sha256,result_authorization_generation) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+            ->execute([$appPk,$type,$identity['history_epoch'],$command['commandId'],$requestHash,$command['externalId'],$publicId,$command['expectedAuthorizationGeneration'],1,$state['projection_sha256'],$resultGeneration]);
         $pdo->commit();
         return ['status'=>201, 'payload'=>api_v2_directory_create_result($identity, $type, $command['externalId'], $publicId, '1', (string)$resultGeneration, $requestId, false)];
     } catch (Throwable $error) {

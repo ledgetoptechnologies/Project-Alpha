@@ -6,12 +6,39 @@ is available only to an application-bound API key with its explicit scope. The l
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
+Command receipts are scoped to that history epoch. Rotation preserves prior
+receipts as audit history, but a command ID from an earlier epoch can never
+replay its old resource or binding result in the replacement epoch.
+
+External ownership covers shared directory identity and topology: client,
+organization, and customer-unit creation, profile changes, lifecycle changes,
+and relationships
+are blocked in the browser while active.
+PA-internal organization notes and organization document uploads remain local
+metadata; they are intentionally not API v2 directory projections and remain
+editable. A `unit` is backed by `organization_departments`; it is not PA's
+internal `business_units` model. Its canonical projection is its name, parent
+`organizationPublicId`, and ordered contacts (`clientPublicId`, `role`, and
+`primary`). Operations owns those fields. Department notes, folder names,
+resolver modes, aliases, generated links, and organization `link_strategy`
+remain PA-local and are never returned by this contract. Local unit/contact and
+link-strategy forms are nevertheless disabled while managed ownership is
+active so there is one operational writer during cutover.
+
+For this first release, `projects.department_id` remains a PA/project-domain
+field. Assigning a Project to a unit does not mutate the unit projection and is
+not an Operations directory command. Link resolution configuration likewise
+remains PA-owned; Operations owns unit records and contact assignments, not PA's
+resolver configuration.
+
 Lifecycle commands use:
 
 - `POST /api/v2/directory/clients/{publicId}/archive/commands`
 - `POST /api/v2/directory/clients/{publicId}/restore/commands`
 - `POST /api/v2/directory/organizations/{publicId}/archive/commands`
 - `POST /api/v2/directory/organizations/{publicId}/restore/commands`
+- `POST /api/v2/directory/units/{publicId}/archive/commands`
+- `POST /api/v2/directory/units/{publicId}/restore/commands`
 
 The strict JSON body contains `commandId`, `expectedRevision`, and
 `expectedAuthorizationGeneration`, all as strings. Archive is a soft lifecycle
@@ -42,7 +69,7 @@ active application-scoped organization binding plus its public ID and revision.
 Names and email addresses are never matching keys.
 
 Binding authority is explicitly revoked through
-`POST /api/v2/directory/{clients|organizations}/bindings/revoke/commands`.
+`POST /api/v2/directory/{clients|organizations|units}/bindings/revoke/commands`.
 Revoked external IDs remain tombstoned and are not silently reused.
 
 `GET /api/v2/directory/inventory` returns a bounded, snapshot-consistent list of
@@ -51,8 +78,29 @@ calling application's binding state. Use `type`, `limit`, and the returned
 `nextCursor` for reconciliation. It returns no profile fields, credentials, or
 provider secrets.
 
-The six read-only defaults do not require deployment configuration. An
+Read-only routes do not require deployment configuration. An
 installation can set their documented environment variables to `false` as an
 emergency override. Complete and retain the migration/backfill attestation,
 enable every required command route, and provision exactly one non-`full` key
 with all required scopes before activating external directory ownership.
+Configuration and activation recompute the current backfill attestation and
+activation requires its current receipt digest to equal the release
+attestation's `backfillDigest`. Once active, normal synchronized directory
+changes may advance the projection beyond that activation snapshot; active
+health instead requires an intact release proof and a complete current backfill
+projection. A durable application-configuration sentinel keeps browser
+directory writers blocked if the managed-directory policy schema or health read
+is unavailable; only an explicit administrator takeover clears it. The
+activation proof is prepared before its policy-lock transaction and the locked
+policy snapshot is rechecked before ownership changes; this does not eliminate
+the separate local source-write cutover race.
+
+Unit contact changes use dedicated `assign`, `remove`, and `set-primary`
+commands below `/api/v2/directory/units/{publicId}/contacts/`. Every command is
+idempotent and requires the expected unit revision and authorization generation.
+It also supplies an exact client external ID, public ID, and revision. The unit,
+its parent organization, and the client must all have current active bindings
+for the calling application, and the client must be active in the same
+organization. Assignment accepts a non-empty role; set-primary atomically
+clears any previous primary. Contact topology changes advance both the unit
+revision and application authorization generation.

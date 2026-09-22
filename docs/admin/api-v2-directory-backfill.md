@@ -1,11 +1,12 @@
 # API v2 directory backfill
 
-`bin/backfill-api-v2-directory.php` is a local database-only operator tool for seeding the API v2 directory revision foundation from existing clients and organizations. It makes no network calls and never reads or emits credentials, names, addresses, emails, phone numbers, or public IDs.
+`bin/backfill-api-v2-directory.php` is a local database-only operator tool for seeding the API v2 directory revision foundation from existing organizations, clients, and customer units (`organization_departments`), in that dependency order. It makes no network calls and never emits credentials, names, addresses, emails, phone numbers, contact identities, or public IDs.
 
 It defaults to dry-run. Run bounded batches (at most 500 records), retain the returned non-secret local resume cursor, and inspect aggregate counts before applying the same cursor/batch. Start with an explicit dry run:
 
 ```sh
 php bin/backfill-api-v2-directory.php --type=all --limit=100 --dry-run
+php bin/backfill-api-v2-directory.php --type=unit --limit=100 --dry-run
 ```
 
 Apply requires all three flags:

@@ -140,6 +140,12 @@ jobs:
           API_V2_ORG_PROFILE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-api-v2-organization-profile-mysql-integration.ps1
 
+      - name: MySQL API v2 directory cutover gate regressions
+        shell: pwsh
+        env:
+          DIRECTORY_CUTOVER_GATE_MYSQL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-directory-cutover-gate-mysql-integration.ps1
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs

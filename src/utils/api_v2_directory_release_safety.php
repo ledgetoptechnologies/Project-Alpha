@@ -13,18 +13,23 @@ require_once __DIR__ . '/api_v2_directory_backfill.php';
  */
 function api_v2_directory_backfill_attestation(PDO $pdo): array
 {
-    if ($pdo->inTransaction()) throw new LogicException('Directory backfill attestation requires no active transaction.');
+    // Activation invokes this while holding the exclusive sentinel gate. In
+    // that context every canonical source writer is blocked, so the current
+    // transaction provides the authoritative cutover snapshot.
     $resources = [
         'client' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
         'organization' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
+        'unit' => ['source' => 0, 'covered' => 0, 'invalid' => 0, 'missing' => 0, 'drifted' => 0, 'history' => 0, 'orphaned' => 0, 'coverageDigest' => hash('sha256', '[]')],
     ];
     $violations = ['schema' => 0, 'identity' => 0, 'missing_state' => 0, 'projection_drift' => 0, 'history_gap' => 0, 'orphaned_state' => 0];
     if (!api_v2_directory_backfill_schema_ready($pdo)) {
         $violations['schema'] = 1;
-        return ['attestationVersion' => 1, 'schemaReady' => false, 'complete' => false, 'resources' => $resources, 'violations' => $violations];
+        return ['attestationVersion' => 2, 'schemaReady' => false, 'complete' => false, 'resources' => $resources, 'violations' => $violations];
     }
 
-    foreach (['client' => 'clients', 'organization' => 'organizations'] as $type => $table) {
+    $sourceTables=['organization'=>'organizations','client'=>'clients'];
+    if(api_v2_directory_unit_schema_ready($pdo))$sourceTables['unit']='organization_departments';
+    foreach ($sourceTables as $type => $table) {
         $source = $pdo->query('SELECT * FROM ' . $table . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
         $live = []; $seen = [];
         $coverage = [];
@@ -47,7 +52,7 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
             $revision = (string)($state['revision'] ?? '');
             $hash = (string)($state['projection_sha256'] ?? '');
             if (preg_match('/^[1-9][0-9]{0,18}$/D', $revision) !== 1 || (strlen($revision) === 19 && strcmp($revision, '9223372036854775807') > 0)
-                || preg_match('/^[0-9a-f]{64}$/D', $hash) !== 1 || !hash_equals($hash, $archived ? hash('sha256','') : api_v2_directory_projection_hash($type, $row))) {
+                || preg_match('/^[0-9a-f]{64}$/D', $hash) !== 1 || !hash_equals($hash, $archived ? hash('sha256','') : api_v2_directory_canonical_hash($pdo, $type, $row))) {
                 $resources[$type]['drifted']++; $violations['projection_drift']++; continue;
             }
             $change = $pdo->prepare("SELECT action FROM api_v2_directory_resource_changes WHERE resource_type=? AND public_id=? AND revision=?");
@@ -71,7 +76,7 @@ function api_v2_directory_backfill_attestation(PDO $pdo): array
         $resources[$type]['coverageDigest'] = hash('sha256', json_encode($coverage, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
     $complete = array_sum($violations) === 0;
-    return ['attestationVersion' => 1, 'schemaReady' => true, 'complete' => $complete, 'resources' => $resources, 'violations' => $violations];
+    return ['attestationVersion' => 2, 'schemaReady' => true, 'complete' => $complete, 'resources' => $resources, 'violations' => $violations];
 }
 
 /** @param array{attestationVersion:int,schemaReady:bool,complete:bool,resources:array<string,array<string,int|string>>,violations:array<string,int>} $attestation */
@@ -120,7 +125,7 @@ function api_v2_directory_backfill_attestation_persist(PDO $pdo): string
 /** A release gate must read this back after retaining the returned digest. */
 function api_v2_directory_backfill_attestation_receipt_is_current(PDO $pdo, string $digest): bool
 {
-    if ($pdo->inTransaction() || preg_match('/^[0-9a-f]{64}$/D', $digest) !== 1 || !api_v2_directory_backfill_attestation_receipt_schema_ready($pdo)) return false;
+    if (preg_match('/^[0-9a-f]{64}$/D', $digest) !== 1 || !api_v2_directory_backfill_attestation_receipt_schema_ready($pdo)) return false;
     $attestation = api_v2_directory_backfill_attestation($pdo);
     if (!$attestation['complete']) return false;
     $json = api_v2_directory_backfill_attestation_json($attestation);
@@ -158,7 +163,7 @@ function api_v2_directory_writer_inventory(): array
         ['path' => 'src/controllers/organization/organization-update-notes.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET notes', 'mutationCount' => 1],
         ['path' => 'src/controllers/organization/organizations_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET tax_exempt_file', 'mutationCount' => 1],
         ['path' => 'src/controllers/organization/organization_document_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET {$dbFileColumn}', 'mutationCount' => 1],
-        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET link_strategy', 'mutationCount' => 2],
+        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'unit', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 2],
         ['path' => 'src/services/StripeService.php', 'target' => 'client', 'governance' => 'non_projection', 'evidence' => 'UPDATE clients SET stripe_customer_id', 'mutationCount' => 1],
     ];
 }

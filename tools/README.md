@@ -2,6 +2,41 @@
 
 This directory contains operator-run maintenance utilities. Review each script and take a backup before executing it against data you care about.
 
+## Directory unit MySQL acceptance
+
+Run the disposable baseline-to-current unit migration and command acceptance suite with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/run-api-v2-directory-unit-mysql-integration.ps1
+```
+
+The runner creates a random `api_v2_unit_test_<uuid>` database in a local
+`mysql:8.4` container and removes it afterwards. The test refuses to run
+without both the database-name pattern and `isolated-disposable-only`
+sentinel. It proves the 0104 duplicate-primary preflight and retry, 0104/0105
+schema upgrade, enum/FK/generated-column contracts, unit commands and epoch
+receipt isolation, plus application-row serialization for concurrent create
+and bind writers. Set `API_V2_DIRECTORY_UNIT_TEST_IMAGE` to run PHPUnit from
+an already-built test image instead of the local PHP installation.
+
+## Directory cutover gate MySQL acceptance
+
+Run the disposable two-connection MySQL acceptance gate with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/run-directory-cutover-gate-mysql-integration.ps1
+```
+
+The command creates a random `directory_cutover_gate_test_<uuid>` database in
+a local `mysql:8.4` container and removes the container afterwards. The test
+refuses to run unless both that database-name pattern and its
+`isolated-disposable-only` environment sentinel are present. It proves real
+InnoDB shared/exclusive sentinel contention for activation, source-writer
+denial after activation, API shared authority, takeover, concurrent API shared
+gates, and rollback on stale activation evidence. Set
+`DIRECTORY_CUTOVER_GATE_MYSQL_TEST_IMAGE` to run PHPUnit from an already-built
+container image instead of the local PHP installation.
+
 | Tool | Purpose |
 |---|---|
 | `db_backup.sh` | Create a compressed MySQL backup |

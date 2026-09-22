@@ -26,9 +26,10 @@ function api_v2_directory_binding_revoke_result(array$identity,string$type,array
 
 function api_v2_directory_binding_revoke_command_write(PDO$pdo,string$type,array$command,int$apiKeyId,array$headers,string$requestId):array
 {
-    if(!in_array($type,['client','organization'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory binding revoke command');
+    if(!in_array($type,['client','organization','unit'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory binding revoke command');
     $pdo->beginTransaction();
     try{
+        api_v2_directory_management_acquire_shared_gate($pdo,false);
         $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
         $identityStatement=$pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL'.$lock);
         $identityStatement->execute([$apiKeyId]);$identity=$identityStatement->fetch(PDO::FETCH_ASSOC);

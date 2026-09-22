@@ -48,6 +48,7 @@ function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublic
     if(preg_match('/^[0-9a-f]{32}$/D',$clientPublicId)!==1||!in_array($action,['assign','remove','move'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory relationship command');
     $pdo->beginTransaction();
     try{
+        api_v2_directory_management_acquire_shared_gate($pdo,false);
         $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
         $identityStatement=$pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL'.$lock);
         $identityStatement->execute([$apiKeyId]);$identity=$identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -87,7 +88,7 @@ function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublic
         $update=$pdo->prepare('UPDATE clients SET organization_id=?,source_version=? WHERE id=? AND '.($client['organization_id']===null?'organization_id IS NULL':'organization_id=?'));
         $params=[$targetOrganizationId,portal_projection_source_version(),$clientId];if($client['organization_id']!==null)$params[]=(int)$client['organization_id'];$update->execute($params);
         if($update->rowCount()!==1)throw new DomainException('Client organization relationship changed.');
-        if(!api_v2_directory_record($pdo,'client',$clientId))throw new RuntimeException('Client relationship revision unavailable');
+        if(!api_v2_directory_record($pdo,'client',$clientId,false))throw new RuntimeException('Client relationship revision unavailable');
         $after=$projection->clientScopes($pdo,$clientId);$projection->afterMutationProjectionOnly($pdo,array_merge($before,$after));
         api_v2_advance_authorization_generation($pdo,$appPk);
         $resultState=$pdo->prepare("SELECT CAST(revision AS CHAR) FROM api_v2_directory_resource_state WHERE resource_type='client' AND public_id=?");$resultState->execute([$clientPublicId]);$resultRevision=$resultState->fetchColumn();
