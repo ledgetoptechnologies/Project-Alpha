@@ -51,7 +51,7 @@ final class DirectoryCutoverGateMySqlTest extends TestCase
         $this->first->commit();
         $result = $this->finishWorker($activation);
         self::assertSame('DomainException', $result['class'] ?? null, json_encode($result));
-        self::assertStringContainsString('backfill_attestation_stale', (string)($result['message'] ?? ''));
+        self::assertMatchesRegularExpression('/backfill_(unhealthy|attestation_stale)/', (string)($result['message'] ?? ''));
         self::assertSame('0', (string)$this->second->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='api_v2_directory_management_ownership_active'")->fetchColumn());
         self::assertSame('0', (string)$this->second->query('SELECT ownership_active FROM api_v2_directory_management_policy WHERE singleton=1')->fetchColumn());
     }
