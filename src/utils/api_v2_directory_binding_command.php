@@ -39,9 +39,10 @@ function api_v2_directory_binding_command_result(array $identity, array $command
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
-    if (!in_array($type, ['client', 'organization'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding command');
+    if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding command');
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         // Serialize commands for this application before checking receipts or
         // uniqueness, making concurrent retries deterministic on MySQL.
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
@@ -66,7 +67,7 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             || (string)$receipt['resource_revision'] !== $command['expectedRevision'])) {
             $pdo->rollBack(); return ['status' => 409];
         }
-        $table = $type === 'client' ? 'clients' : 'organizations';
+        $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
         $liveStmt = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=?' . $lock);
         $liveStmt->execute([$command['expectedPublicId']]); $live = $liveStmt->fetch(PDO::FETCH_ASSOC);
         if (!$live) {
@@ -78,7 +79,7 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
         $stateStmt = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . $lock);
         $stateStmt->execute([$type, $command['expectedPublicId']]); $state = $stateStmt->fetch(PDO::FETCH_ASSOC);
         if (!$state || (int)$state['present'] !== 1 || (string)$state['revision'] !== $command['expectedRevision']
-            || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash($type, $live))) {
+            || !hash_equals((string)$state['projection_sha256'], api_v2_directory_canonical_hash($pdo, $type, $live))) {
             $pdo->rollBack(); return ['status' => 409];
         }
         $bindingStmt = $pdo->prepare('SELECT external_id,public_id,resource_revision,resource_projection_sha256,status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND (external_id=? OR public_id=?)' . $lock);

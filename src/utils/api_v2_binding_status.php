@@ -6,6 +6,7 @@ function api_v2_binding_status_scope(string $kind): ?string
     return match ($kind) {
         'client' => 'directory.clients.binding_status.read',
         'organization' => 'directory.organizations.binding_status.read',
+        'unit' => 'directory.units.binding_status.read',
         default => null,
     };
 }
@@ -24,7 +25,7 @@ function api_v2_binding_status_decode_external_id(string $encoded): ?string
 
 function api_v2_binding_status_route(string $path): ?array
 {
-    if (preg_match('#^/api/v2/bindings/(client|organization)/status/([A-Za-z0-9_-]{1,1024})$#D', $path, $match) !== 1) return null;
+    if (preg_match('#^/api/v2/bindings/(client|organization|unit)/status/([A-Za-z0-9_-]{1,1024})$#D', $path, $match) !== 1) return null;
     $externalId = api_v2_binding_status_decode_external_id($match[2]);
     return $externalId === null ? null : ['kind' => $match[1], 'externalId' => $externalId];
 }
@@ -40,7 +41,7 @@ function api_v2_binding_status_timestamp(string $value): ?string
 function api_v2_binding_status_payload(array $identity, string $requestId, array $binding): ?array
 {
     if (!api_v2_identity_is_valid($identity) || preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $requestId) !== 1
-        || !in_array($binding['resource_type'] ?? null, ['client', 'organization'], true) || !is_string($binding['external_id'] ?? null)
+        || !in_array($binding['resource_type'] ?? null, ['client', 'organization', 'unit'], true) || !is_string($binding['external_id'] ?? null)
         || !is_string($binding['public_id'] ?? null) || preg_match('/^[0-9a-f]{32}$/D', $binding['public_id']) !== 1
         || !is_string($binding['resource_revision'] ?? null) || preg_match('/^[1-9][0-9]{0,18}$/D', $binding['resource_revision']) !== 1
         || !is_string($binding['authorization_generation'] ?? null) || preg_match('/^(0|[1-9][0-9]{0,18})$/D', $binding['authorization_generation']) !== 1
@@ -55,7 +56,7 @@ function api_v2_binding_status_payload(array $identity, string $requestId, array
 /** Reads one binding and rejects drift against the live canonical profile. */
 function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, int $apiKeyId, array $headers, string $requestId): array
 {
-    if (!in_array($type, ['client', 'organization'], true) || $apiKeyId < 1) return ['status' => 404];
+    if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1) return ['status' => 404];
     $pdo->beginTransaction();
     try {
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
@@ -77,7 +78,7 @@ function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, 
         if (count($bindingRows) === 0) { $pdo->commit(); return ['status' => 404]; }
         if (count($bindingRows) !== 1) throw new RuntimeException('ambiguous binding');
         if ((string)$bindingRows[0]['status'] === 'tombstoned') { $pdo->commit(); return ['status' => 410]; }
-        $table = $type === 'client' ? 'clients' : 'organizations';
+        $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
         $live = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=? LIMIT 2' . $lock); $live->execute([(string)$bindingRows[0]['public_id']]); $liveRows = $live->fetchAll(PDO::FETCH_ASSOC);
         // Directory writers lock the source row before its revision state.
         // A status read must follow that order to avoid a reader/writer cycle.
@@ -94,7 +95,7 @@ function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, 
         if ((string)$row['status'] === 'tombstoned') { $pdo->commit(); return ['status' => 410]; }
         if ((string)$row['public_id'] !== (string)$bindingRows[0]['public_id'] || count($liveRows) !== 1 || !$stateRow || $row['authorization_generation'] === null
             || (string)$stateRow['state_revision'] !== (string)$row['resource_revision']) { $pdo->commit(); return ['status' => 409]; }
-        $liveHash = api_v2_directory_projection_hash($type, $liveRows[0]);
+        $liveHash = api_v2_directory_canonical_hash($pdo, $type, $liveRows[0]);
         if (!hash_equals((string)$stateRow['projection_sha256'], $liveHash) || !hash_equals((string)$row['resource_projection_sha256'], $liveHash)) { $pdo->commit(); return ['status' => 409]; }
         $payload = api_v2_binding_status_payload($identity, $requestId, $row);
         if ($payload === null) throw new RuntimeException('invalid binding');

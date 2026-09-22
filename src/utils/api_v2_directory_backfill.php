@@ -52,11 +52,22 @@ function api_v2_directory_backfill_schema_ready(PDO $pdo): bool
         && ($applied[89] ?? null) === '0089_api_v2_directory_revision_foundation.sql';
 }
 
+function api_v2_directory_unit_schema_ready(PDO $pdo): bool
+{
+    foreach (['organization_departments'=>['id','public_id','organization_id','name','archived','deleted_at'],
+              'organization_department_contacts'=>['department_id','client_id','role','is_primary']] as $table=>$columns) {
+        if(!api_v2_directory_backfill_table_exists($pdo,$table))return false;
+        foreach($columns as$column)if(!api_v2_directory_backfill_column_exists($pdo,$table,$column))return false;
+    }
+    $migration=$pdo->prepare('SELECT filename FROM schema_migrations WHERE version=104');$migration->execute();
+    return $migration->fetchColumn()==='0104_api_v2_directory_units.sql';
+}
+
 /** @return array{type:string,id:int}|null */
 function api_v2_directory_backfill_parse_cursor(?string $cursor): ?array
 {
     if ($cursor === null || $cursor === '') return null;
-    if (preg_match('/^(client|organization):(0|[1-9][0-9]{0,18})$/D', $cursor, $matches) !== 1) {
+    if (preg_match('/^(organization|client|unit):(0|[1-9][0-9]{0,18})$/D', $cursor, $matches) !== 1) {
         throw new InvalidArgumentException('Invalid resume cursor.');
     }
     if (strlen($matches[2]) === 19 && strcmp($matches[2], '9223372036854775807') > 0) throw new InvalidArgumentException('Invalid resume cursor.');
@@ -76,7 +87,7 @@ function api_v2_directory_backfill_local_id(mixed $value): int
 /** @return array<string,mixed> */
 function api_v2_directory_backfill_source(PDO $pdo, string $type, int $id, bool $lock): array
 {
-    $table = $type === 'client' ? 'clients' : 'organizations';
+    $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments', default=>throw new InvalidArgumentException('Unsupported resource type') };
     $lifecycle = api_v2_directory_backfill_column_exists($pdo,$table,'archived')
         && api_v2_directory_backfill_column_exists($pdo,$table,'deleted_at')
         ? ' AND archived=0 AND deleted_at IS NULL' : '';
@@ -109,7 +120,7 @@ function api_v2_directory_backfill_action(PDO $pdo, string $type, array $row, bo
         throw new RuntimeException('Directory backfill refused: existing directory state is malformed.');
     }
     if ($present === '0') throw new RuntimeException('Directory backfill refused: live source conflicts with a tombstone.');
-    if (!hash_equals($hash, api_v2_directory_projection_hash($type, $row))) {
+    if (!hash_equals($hash, api_v2_directory_canonical_hash($pdo, $type, $row))) {
         throw new RuntimeException('Directory backfill refused: live source conflicts with existing directory state.');
     }
     $change = $pdo->prepare("SELECT action FROM api_v2_directory_resource_changes WHERE resource_type=? AND public_id=? AND revision=?");
@@ -129,18 +140,20 @@ function api_v2_directory_backfill_action(PDO $pdo, string $type, array $row, bo
  */
 function api_v2_directory_backfill(PDO $pdo, string $type, ?string $cursor, int $limit, bool $dryRun): array
 {
-    if ($pdo->inTransaction() || !in_array($type, ['all', 'client', 'organization'], true) || $limit < 1 || $limit > 500) {
+    if ($pdo->inTransaction() || !in_array($type, ['all', 'client', 'organization', 'unit'], true) || $limit < 1 || $limit > 500) {
         throw new InvalidArgumentException('Invalid directory backfill request.');
     }
     if (!api_v2_directory_backfill_schema_ready($pdo)) throw new RuntimeException('Required API v2 migrations are missing or incomplete.');
     $parsed = api_v2_directory_backfill_parse_cursor($cursor);
     if ($parsed !== null && $type !== 'all' && $parsed['type'] !== $type) throw new InvalidArgumentException('Resume cursor does not match resource type.');
-    $types = $type === 'all' ? ['client', 'organization'] : [$type];
-    if ($parsed !== null && $type === 'all') $types = $parsed['type'] === 'client' ? ['client', 'organization'] : ['organization'];
+    $allTypes = api_v2_directory_unit_schema_ready($pdo) ? ['organization', 'client', 'unit'] : ['organization', 'client'];
+    if($type==='unit'&&!api_v2_directory_unit_schema_ready($pdo))throw new RuntimeException('Required API v2 unit migration is missing or incomplete.');
+    $types = $type === 'all' ? $allTypes : [$type];
+    if ($parsed !== null && $type === 'all') $types = array_slice($allTypes, (int)array_search($parsed['type'], $allTypes, true));
     $rows = []; $nextCursor = null; $remaining = $limit;
     foreach ($types as $resourceType) {
         $after = ($parsed !== null && $parsed['type'] === $resourceType) ? $parsed['id'] : 0;
-        $table = $resourceType === 'client' ? 'clients' : 'organizations';
+        $table = match ($resourceType) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
         $lifecycle = api_v2_directory_backfill_column_exists($pdo,$table,'archived')
             && api_v2_directory_backfill_column_exists($pdo,$table,'deleted_at')
             ? ' AND archived=0 AND deleted_at IS NULL' : '';

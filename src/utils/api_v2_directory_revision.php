@@ -7,23 +7,60 @@ require_once __DIR__ . '/api_v2_directory_management.php';
 /** The one canonical profile projection used by writers and live readers. */
 function api_v2_directory_projection_hash(string $type, array $row): string
 {
-    if (!in_array($type, ['client', 'organization'], true)) throw new LogicException('Unsupported directory resource');
+    if (!in_array($type, ['client', 'organization', 'unit'], true)) throw new LogicException('Unsupported directory resource');
     $fields = $type === 'client'
         ? ['name', 'email', 'phone', 'client_type', 'organization_id', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country']
-        : ['name', 'general_email', 'general_phone', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country'];
+        : ($type === 'organization'
+            ? ['name', 'general_email', 'general_phone', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country']
+            : ['name', 'organization_public_id', 'contacts']);
     $profile = [];
     foreach ($fields as $field) $profile[$field] = $row[$field] ?? null;
     return hash('sha256', json_encode($profile, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
+/** Materialize stable public relationship data for the unit projection. */
+function api_v2_directory_unit_projection(PDO $pdo, array $row): array
+{
+    $organization = $pdo->prepare('SELECT public_id FROM organizations WHERE id=?');
+    $organization->execute([(int)($row['organization_id'] ?? 0)]);
+    $organizationPublicId = $organization->fetchColumn();
+    if (!is_string($organizationPublicId) || preg_match('/^[0-9a-f]{32}$/D', $organizationPublicId) !== 1) {
+        throw new RuntimeException('Unit parent organization identity unavailable');
+    }
+    $contacts = $pdo->prepare('SELECT client.public_id,client.organization_id,assignment.role,assignment.is_primary
+        FROM organization_department_contacts assignment
+        JOIN clients client ON client.id=assignment.client_id
+        WHERE assignment.department_id=? ORDER BY client.public_id');
+    $contacts->execute([(int)($row['id'] ?? 0)]);
+    $result = []; $primaryCount = 0;
+    foreach ($contacts->fetchAll(PDO::FETCH_ASSOC) as $contact) {
+        if (preg_match('/^[0-9a-f]{32}$/D', (string)($contact['public_id'] ?? '')) !== 1) {
+            throw new RuntimeException('Unit contact identity unavailable');
+        }
+        if ((int)$contact['organization_id'] !== (int)($row['organization_id'] ?? 0)
+            || trim((string)$contact['role']) === '' || mb_strlen((string)$contact['role']) > 50
+            || !in_array((int)$contact['is_primary'], [0,1], true)) {
+            throw new RuntimeException('Unit contact relationship is invalid');
+        }
+        if ((int)$contact['is_primary'] === 1 && ++$primaryCount > 1) throw new RuntimeException('Unit has multiple primary contacts');
+        $result[] = ['clientPublicId'=>(string)$contact['public_id'], 'role'=>(string)$contact['role'], 'primary'=>(int)$contact['is_primary'] === 1];
+    }
+    return ['name'=>(string)($row['name'] ?? ''), 'organization_public_id'=>$organizationPublicId, 'contacts'=>$result];
+}
+
+function api_v2_directory_canonical_hash(PDO $pdo, string $type, array $row): string
+{
+    return api_v2_directory_projection_hash($type, $type === 'unit' ? api_v2_directory_unit_projection($pdo, $row) : $row);
+}
+
 /** Record a committed-profile candidate inside the caller's transaction. */
 function api_v2_directory_record(PDO $pdo, string $type, int $localId, bool $localAuthority = true): bool
 {
-    if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization'], true) || $localId < 1) {
+    if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization', 'unit'], true) || $localId < 1) {
         throw new LogicException('Directory revision requires an active transaction and supported resource');
     }
     api_v2_directory_management_acquire_shared_gate($pdo, $localAuthority);
-    $table = $type === 'client' ? 'clients' : 'organizations';
+    $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
     $query = 'SELECT * FROM ' . $table . ' WHERE id=?';
     if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') $query .= ' FOR UPDATE';
     $stmt = $pdo->prepare($query);
@@ -32,7 +69,7 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId, bool $loc
     if (!$row || preg_match('/^[0-9a-f]{32}$/D', (string)($row['public_id'] ?? '')) !== 1) {
         throw new RuntimeException('Directory resource identity unavailable');
     }
-    $hash = api_v2_directory_projection_hash($type, $row);
+    $hash = api_v2_directory_canonical_hash($pdo, $type, $row);
     $state = $pdo->prepare('SELECT revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?' . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
     $state->execute([$type, $row['public_id']]);
     $current = $state->fetch(PDO::FETCH_ASSOC);
@@ -61,7 +98,7 @@ function api_v2_directory_record(PDO $pdo, string $type, int $localId, bool $loc
 /** Record a committed deletion tombstone inside the caller's transaction. */
 function api_v2_directory_record_delete(PDO $pdo, string $type, string $publicId, bool $localAuthority = true): bool
 {
-    if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization'], true)
+    if (!$pdo->inTransaction() || !in_array($type, ['client', 'organization', 'unit'], true)
         || preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1) {
         throw new LogicException('Directory deletion revision requires an active transaction and stable supported identity');
     }

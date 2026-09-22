@@ -47,9 +47,10 @@ function api_v2_directory_binding_revision_refresh_result(array $identity, array
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
-    if (!in_array($type, ['client', 'organization'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding revision refresh');
+    if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding revision refresh');
     $pdo->beginTransaction();
     try {
+        api_v2_directory_management_acquire_shared_gate($pdo, false);
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id AS application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL' . $lock);
         $identityStatement->execute([$apiKeyId]); $identity = $identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -63,7 +64,7 @@ function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type,
         $bindingStatement->execute([$appPk, $type, $command['externalId']]); $binding = $bindingStatement->fetch(PDO::FETCH_ASSOC);
         if (!$binding || (string)$binding['status'] !== 'active') { $pdo->rollBack(); return ['status' => 409]; }
         if ($bindingStatement->fetch(PDO::FETCH_ASSOC) !== false) { $pdo->rollBack(); return ['status' => 409]; }
-        $table = $type === 'client' ? 'clients' : 'organizations';
+        $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
         // Directory writers lock their source row before revision state; retain
         // that order to avoid a source-row/state deadlock cycle.
         $liveStatement = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=? LIMIT 2' . $lock); $liveStatement->execute([$binding['public_id']]); $liveRows = $liveStatement->fetchAll(PDO::FETCH_ASSOC);
@@ -72,7 +73,7 @@ function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type,
         $stateStatement->execute([$type, $binding['public_id']]); $stateRows = $stateStatement->fetchAll(PDO::FETCH_ASSOC);
         if (count($stateRows) !== 1 || (int)$stateRows[0]['present'] !== 1) { $pdo->rollBack(); return ['status' => 409]; }
         $state = $stateRows[0];
-        if (!hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash($type, $liveRows[0]))) { $pdo->rollBack(); return ['status' => 409]; }
+        if (!hash_equals((string)$state['projection_sha256'], api_v2_directory_canonical_hash($pdo, $type, $liveRows[0]))) { $pdo->rollBack(); return ['status' => 409]; }
         if ($receipt) {
             $authStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
             $authStatement->execute([$appPk]); $currentGeneration = $authStatement->fetchColumn(); $currentGeneration = is_scalar($currentGeneration) ? (string)$currentGeneration : '';

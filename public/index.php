@@ -43,7 +43,7 @@ if (preg_match('#^/api/v2/projects/[0-9a-f]{32}/(complete|cancel|archive|restore
     }
     require __DIR__ . '/../src/controllers/api/project_lifecycle_command_v2.php'; exit;
 }
-if (preg_match('#^/api/v2/directory/(?:clients|organizations)/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
     if (!api_v2_enabled('APP_API_V2_DIRECTORY_READ_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
@@ -53,7 +53,7 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations)/[0-9a-f]{32}$#D', 
     require __DIR__ . '/../src/controllers/api/directory_read_v2.php';
     exit;
 }
-if (preg_match('#^/api/v2/bindings/(?:client|organization)/status(?:/|$)#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/bindings/(?:client|organization|unit)/status(?:/|$)#D', $apiV2Path) === 1) {
     if (!api_v2_enabled('APP_API_V2_BINDING_STATUS_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
@@ -63,7 +63,7 @@ if (preg_match('#^/api/v2/bindings/(?:client|organization)/status(?:/|$)#D', $ap
     require __DIR__ . '/../src/controllers/api/binding_status_v2.php';
     exit;
 }
-if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/commands$#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/commands$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
@@ -73,7 +73,7 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/commands$
     require __DIR__ . '/../src/controllers/api/directory_binding_command_v2.php';
     exit;
 }
-if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revisions/commands$#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/revisions/commands$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
@@ -83,10 +83,8 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revisions
     require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_v2.php';
     exit;
 }
-if (preg_match('#^/api/v2/directory/(clients|organizations)/commands$#D', $apiV2Path, $apiV2CreateMatch) === 1) {
-    $apiV2CreateFlag = $apiV2CreateMatch[1] === 'clients'
-        ? 'APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'
-        : 'APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED';
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/commands$#D', $apiV2Path, $apiV2CreateMatch) === 1) {
+    $apiV2CreateFlag = 'APP_API_V2_DIRECTORY_' . strtoupper($apiV2CreateMatch[1]) . '_CREATE_ENABLED';
     if (!filter_var(getenv($apiV2CreateFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
@@ -105,7 +103,15 @@ if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $
     }
     require __DIR__ . '/../src/controllers/api/directory_client_profile_command_v2.php'; exit;
 }
-if (preg_match('#^/api/v2/directory/(clients|organizations)/[0-9a-f]{32}/(archive|restore)/commands$#D', $apiV2Path, $apiV2LifecycleMatch) === 1) {
+if (preg_match('#^/api/v2/directory/units/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
+    require __DIR__ . '/../src/controllers/api/directory_unit_profile_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/units/[0-9a-f]{32}/contacts/(?:assign|remove|set-primary)/commands$#D', $apiV2Path) === 1) {
+    if (!filter_var(getenv('APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
+    require __DIR__ . '/../src/controllers/api/directory_unit_contact_command_v2.php'; exit;
+}
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/[0-9a-f]{32}/(archive|restore)/commands$#D', $apiV2Path, $apiV2LifecycleMatch) === 1) {
     $apiV2LifecycleFlag = 'APP_API_V2_DIRECTORY_' . strtoupper($apiV2LifecycleMatch[1]) . '_' . strtoupper($apiV2LifecycleMatch[2]) . '_ENABLED';
     if (!filter_var(getenv($apiV2LifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
@@ -118,7 +124,7 @@ if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/organization/(?:assign|
     }
     require __DIR__ . '/../src/controllers/api/directory_relationship_command_v2.php'; exit;
 }
-if (preg_match('#^/api/v2/directory/(?:clients|organizations)/bindings/revoke/commands$#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/revoke/commands$#D', $apiV2Path) === 1) {
     if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }

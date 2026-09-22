@@ -57,18 +57,22 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_read' => [
             ['directory.clients.read', '/api/v2/directory/clients/{publicId}'],
             ['directory.organizations.read', '/api/v2/directory/organizations/{publicId}'],
+            ['directory.units.read', '/api/v2/directory/units/{publicId}'],
         ],
         'binding_status' => [
             ['directory.clients.binding_status.read', '/api/v2/bindings/client/status/{base64urlExternalId}'],
             ['directory.organizations.binding_status.read', '/api/v2/bindings/organization/status/{base64urlExternalId}'],
+            ['directory.units.binding_status.read', '/api/v2/bindings/unit/status/{base64urlExternalId}'],
         ],
         'directory_binding' => [
             ['directory.clients.bind', '/api/v2/directory/clients/bindings/commands', 'POST'],
             ['directory.organizations.bind', '/api/v2/directory/organizations/bindings/commands', 'POST'],
+            ['directory.units.bind', '/api/v2/directory/units/bindings/commands', 'POST'],
         ],
         'directory_binding_refresh' => [
             ['directory.clients.binding.revision.refresh', '/api/v2/directory/clients/bindings/revisions/commands', 'POST'],
             ['directory.organizations.binding.revision.refresh', '/api/v2/directory/organizations/bindings/revisions/commands', 'POST'],
+            ['directory.units.binding.revision.refresh', '/api/v2/directory/units/bindings/revisions/commands', 'POST'],
         ],
         'directory_organization_write' => [
             ['directory.organizations.write', '/api/v2/directory/organizations/{publicId}/profile/commands', 'POST'],
@@ -76,11 +80,17 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_client_write' => [
             ['directory.clients.write', '/api/v2/directory/clients/{publicId}/profile/commands', 'POST'],
         ],
+        'directory_unit_write' => [
+            ['directory.units.write', '/api/v2/directory/units/{publicId}/profile/commands', 'POST'],
+        ],
         'directory_organization_create' => [
             ['directory.organizations.create', '/api/v2/directory/organizations/commands', 'POST'],
         ],
         'directory_client_create' => [
             ['directory.clients.create', '/api/v2/directory/clients/commands', 'POST'],
+        ],
+        'directory_unit_create' => [
+            ['directory.units.create', '/api/v2/directory/units/commands', 'POST'],
         ],
         'directory_client_archive' => [
             ['directory.clients.archive', '/api/v2/directory/clients/{publicId}/archive/commands', 'POST'],
@@ -94,6 +104,17 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_organization_restore' => [
             ['directory.organizations.restore', '/api/v2/directory/organizations/{publicId}/restore/commands', 'POST'],
         ],
+        'directory_unit_archive' => [
+            ['directory.units.archive', '/api/v2/directory/units/{publicId}/archive/commands', 'POST'],
+        ],
+        'directory_unit_restore' => [
+            ['directory.units.restore', '/api/v2/directory/units/{publicId}/restore/commands', 'POST'],
+        ],
+        'directory_unit_contacts_write' => [
+            ['directory.units.contacts.assign', '/api/v2/directory/units/{publicId}/contacts/assign/commands', 'POST'],
+            ['directory.units.contacts.remove', '/api/v2/directory/units/{publicId}/contacts/remove/commands', 'POST'],
+            ['directory.units.contacts.set_primary', '/api/v2/directory/units/{publicId}/contacts/set-primary/commands', 'POST'],
+        ],
         'directory_relationship_write' => [
             ['directory.clients.organization.assign', '/api/v2/directory/clients/{publicId}/organization/assign/commands', 'POST'],
             ['directory.clients.organization.remove', '/api/v2/directory/clients/{publicId}/organization/remove/commands', 'POST'],
@@ -102,6 +123,7 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_binding_revoke' => [
             ['directory.clients.unbind', '/api/v2/directory/clients/bindings/revoke/commands', 'POST'],
             ['directory.organizations.unbind', '/api/v2/directory/organizations/bindings/revoke/commands', 'POST'],
+            ['directory.units.unbind', '/api/v2/directory/units/bindings/revoke/commands', 'POST'],
         ],
         'directory_inventory' => [
             ['directory.inventory.read', '/api/v2/directory/inventory'],
@@ -158,6 +180,10 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         && in_array('directory.clients.organization.assign', $keyScopes, true)
         && !in_array(['name'=>'directory.clients.organization.assign'], $granted, true)) {
         $granted[] = ['name'=>'directory.clients.organization.assign'];
+    }
+    if (($features['directory_unit_create'] ?? false) === true
+        && in_array('directory.units.organization.assign', $keyScopes, true)) {
+        $granted[] = ['name'=>'directory.units.organization.assign'];
     }
     return [
         'apiVersion' => '2',

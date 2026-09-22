@@ -34,7 +34,7 @@ function api_v2_directory_lifecycle_result(array$identity,string$type,string$pub
 /** Safe directory lifecycle. It never physically deletes a source or dependent row. */
 function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$publicId,string$action,array$command,int$apiKeyId,array$headers,string$requestId):array
 {
-    if(!in_array($type,['client','organization'],true)||!in_array($action,['archive','restore'],true)
+    if(!in_array($type,['client','organization','unit'],true)||!in_array($action,['archive','restore'],true)
         ||preg_match('/^[0-9a-f]{32}$/D',$publicId)!==1||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory lifecycle command');
     $pdo->beginTransaction();
     try{
@@ -52,18 +52,20 @@ function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$pub
             ||(string)$receipt['expected_authorization_generation']!==$command['expectedAuthorizationGeneration'])){$pdo->rollBack();return['status'=>409];}
         if($receipt){$pdo->commit();return['status'=>200,'payload'=>api_v2_directory_lifecycle_result($identity,$type,$publicId,$action,(string)$receipt['result_revision'],(string)$receipt['result_authorization_generation'],$requestId,true)];}
 
-        $table=$type==='client'?'clients':'organizations';
+        $table=match($type){'client'=>'clients','organization'=>'organizations','unit'=>'organization_departments'};
         $candidate=$pdo->prepare("SELECT id FROM {$table} WHERE public_id=?");$candidate->execute([$publicId]);$localId=(int)($candidate->fetchColumn()?:0);
         if($localId<1){$pdo->rollBack();return['status'=>409];}
         $projection=new App\Services\PortalProjectionMutationService();
-        $before=$type==='client'?$projection->lockedClientScopes($pdo,$localId):$projection->organizationScopes($pdo,$localId);
+        if($type==='client')$before=$projection->lockedClientScopes($pdo,$localId);
+        elseif($type==='organization')$before=$projection->organizationScopes($pdo,$localId);
+        else{$organizationId=(int)$pdo->query('SELECT organization_id FROM organization_departments WHERE id='.(int)$localId)->fetchColumn();$before=$projection->organizationScopes($pdo,$organizationId);}
         $source=$pdo->prepare("SELECT * FROM {$table} WHERE id=? AND public_id=?".$lock);$source->execute([$localId,$publicId]);$row=$source->fetch(PDO::FETCH_ASSOC);
         if(!$row){$pdo->rollBack();return['status'=>409];}
         $stateStatement=$pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?'.$lock);
         $stateStatement->execute([$type,$publicId]);$state=$stateStatement->fetch(PDO::FETCH_ASSOC);
         $expectedPresent=$action==='archive'?1:0;
         if(!$state||(int)$state['present']!==$expectedPresent||(string)$state['revision']!==$command['expectedRevision']){$pdo->rollBack();return['status'=>409];}
-        if($expectedPresent===1&&!hash_equals((string)$state['projection_sha256'],api_v2_directory_projection_hash($type,$row))){$pdo->rollBack();return['status'=>409];}
+        if($expectedPresent===1&&!hash_equals((string)$state['projection_sha256'],api_v2_directory_canonical_hash($pdo,$type,$row))){$pdo->rollBack();return['status'=>409];}
         $active=(int)($row['archived']??0)===0&&($row['deleted_at']??null)===null;
         if(($action==='archive'&&!$active)||($action==='restore'&&$active)){$pdo->rollBack();return['status'=>409];}
         if($action==='archive'&&!api_v2_directory_lifecycle_neutral_archive_safe($pdo,$type,$localId,$publicId)){$pdo->rollBack();return['status'=>409];}
@@ -86,7 +88,9 @@ function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$pub
             $update->execute([$localId]);if($update->rowCount()!==1)throw new DomainException('Directory resource changed while restoring.');
             if(!api_v2_directory_record($pdo,$type,$localId,false))throw new RuntimeException('Directory restore revision unavailable');
         }
-        $after=$type==='client'?$projection->clientScopes($pdo,$localId):$projection->organizationScopes($pdo,$localId);
+        if($type==='client')$after=$projection->clientScopes($pdo,$localId);
+        elseif($type==='organization')$after=$projection->organizationScopes($pdo,$localId);
+        else$after=$projection->organizationScopes($pdo,$organizationId);
         $projection->afterMutationProjectionOnly($pdo,array_merge($before,$after));
         $resultState=$pdo->prepare('SELECT CAST(revision AS CHAR) FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?');$resultState->execute([$type,$publicId]);$resultRevision=$resultState->fetchColumn();
         $resultGeneration=$pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?');$resultGeneration->execute([$appPk]);$resultGeneration=$resultGeneration->fetchColumn();
@@ -105,10 +109,10 @@ function api_v2_directory_lifecycle_command_write(PDO$pdo,string$type,string$pub
 function api_v2_directory_lifecycle_neutral_archive_safe(PDO$pdo,string$type,int$localId,string$publicId):bool
 {
     if(api_v2_directory_lifecycle_table_exists($pdo,'portal_v2_workspaces')){
-        $rootType=$type==='client'?'standalone_client':'organization';$workspace=$pdo->prepare('SELECT 1 FROM portal_v2_workspaces WHERE root_type=? AND root_public_id=? AND active=1 LIMIT 1');$workspace->execute([$rootType,$publicId]);if($workspace->fetchColumn()!==false)return false;
+        if($type!=='unit'){$rootType=$type==='client'?'standalone_client':'organization';$workspace=$pdo->prepare('SELECT 1 FROM portal_v2_workspaces WHERE root_type=? AND root_public_id=? AND active=1 LIMIT 1');$workspace->execute([$rootType,$publicId]);if($workspace->fetchColumn()!==false)return false;}
     }
     if(api_v2_directory_lifecycle_table_exists($pdo,'portal_v2_entitlements')){
-        $scopeTypes=$type==='client'?['client','standalone_client']:['organization'];$marks=implode(',',array_fill(0,count($scopeTypes),'?'));
+        $scopeTypes=match($type){'client'=>['client','standalone_client'],'organization'=>['organization'],'unit'=>['department']};$marks=implode(',',array_fill(0,count($scopeTypes),'?'));
         $entitlement=$pdo->prepare("SELECT 1 FROM portal_v2_entitlements WHERE scope_type IN ({$marks}) AND scope_public_id=? AND active=1 LIMIT 1");$entitlement->execute(array_merge($scopeTypes,[$publicId]));if($entitlement->fetchColumn()!==false)return false;
     }
     if($type==='client'&&api_v2_directory_lifecycle_table_exists($pdo,'portal_principal_clients')&&api_v2_directory_lifecycle_table_exists($pdo,'portal_principals')){
