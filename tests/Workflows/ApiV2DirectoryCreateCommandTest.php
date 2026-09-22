@@ -271,7 +271,7 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         $route=(string)file_get_contents($root.'/public/index.php');
         $controller=(string)file_get_contents($root.'/src/controllers/api/directory_create_command_v2.php');
         $migration=(string)file_get_contents($root.'/database/migrations/0097_api_v2_directory_create_command_receipts.sql');
-        self::assertStringContainsString('/api/v2/directory/(clients|organizations)/commands',$route);
+        self::assertStringContainsString('/api/v2/directory/(clients|organizations|units)/commands',$route);
         self::assertStringContainsString('APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED',$route);
         self::assertStringContainsString('APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED',$route);
         self::assertStringContainsString("api_require_key(['api.capabilities.read', \$scope], false)",$controller);

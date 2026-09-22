@@ -120,7 +120,7 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
         self::assertStringContainsString("'APP_API_V2_DIRECTORY_' . strtoupper",$router);
         $features=['directory_client_archive'=>true,'directory_client_restore'=>true,'directory_organization_archive'=>true,'directory_organization_restore'=>true,'directory_relationship_write'=>true,'directory_binding_revoke'=>true,'directory_inventory'=>true];
         $payload=api_v2_capabilities_payload(['source_instance_id'=>'s','application_id'=>'a','history_epoch'=>'e'],'r',$scopes,$features);
-        self::assertCount(11,$payload['implementedEndpoints']);self::assertCount(11,$payload['grantedCapabilities']);
+        self::assertCount(12,$payload['implementedEndpoints']);self::assertCount(11,$payload['grantedCapabilities']);
         self::assertStringNotContainsString('delete/commands',json_encode($payload,JSON_THROW_ON_ERROR));
         $migration=(string)file_get_contents($root.'/database/migrations/0099_api_v2_directory_lifecycle_relationships.sql');self::assertStringContainsString('ADD COLUMN archived',$migration);self::assertStringContainsString('ON DELETE RESTRICT',$migration);
     }

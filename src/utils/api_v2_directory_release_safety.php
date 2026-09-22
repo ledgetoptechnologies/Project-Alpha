@@ -163,7 +163,7 @@ function api_v2_directory_writer_inventory(): array
         ['path' => 'src/controllers/organization/organization-update-notes.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET notes', 'mutationCount' => 1],
         ['path' => 'src/controllers/organization/organizations_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET tax_exempt_file', 'mutationCount' => 1],
         ['path' => 'src/controllers/organization/organization_document_upload.php', 'target' => 'organization', 'governance' => 'non_projection', 'evidence' => 'UPDATE organizations SET {$dbFileColumn}', 'mutationCount' => 1],
-        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'unit', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 11],
+        ['path' => 'src/controllers/organization/organization_departments.php', 'target' => 'unit', 'governance' => 'revision', 'evidence' => 'api_v2_directory_record', 'mutationCount' => 2],
         ['path' => 'src/services/StripeService.php', 'target' => 'client', 'governance' => 'non_projection', 'evidence' => 'UPDATE clients SET stripe_customer_id', 'mutationCount' => 1],
     ];
 }

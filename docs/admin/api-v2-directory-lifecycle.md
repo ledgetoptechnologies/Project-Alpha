@@ -6,18 +6,26 @@ is available only to an application-bound API key with its explicit scope. The l
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
-External ownership covers shared directory identity and topology: client and
-organization creation, profile changes, lifecycle changes, and relationships
+External ownership covers shared directory identity and topology: client,
+organization, and customer-unit creation, profile changes, lifecycle changes,
+and relationships
 are blocked in the browser while active.
 PA-internal organization notes and organization document uploads remain local
 metadata; they are intentionally not API v2 directory projections and remain
-editable. Customer departments, department-contact assignments, and link
-strategy are Operations-owned in the intended end state, but API v2 currently
-has no department resource, revision, binding, inventory, or command contract
-for them. They are an explicit replacement/cutover gap: do not activate
-external directory ownership for that end state until the complete replacement
-contract exists. This distinction must not be expanded to client/organization
-identity or relationship fields without a new API contract.
+editable. A `unit` is backed by `organization_departments`; it is not PA's
+internal `business_units` model. Its canonical projection is its name, parent
+`organizationPublicId`, and ordered contacts (`clientPublicId`, `role`, and
+`primary`). Operations owns those fields. Department notes, folder names,
+resolver modes, aliases, generated links, and organization `link_strategy`
+remain PA-local and are never returned by this contract. Local unit/contact and
+link-strategy forms are nevertheless disabled while managed ownership is
+active so there is one operational writer during cutover.
+
+For this first release, `projects.department_id` remains a PA/project-domain
+field. Assigning a Project to a unit does not mutate the unit projection and is
+not an Operations directory command. Link resolution configuration likewise
+remains PA-owned; Operations owns unit records and contact assignments, not PA's
+resolver configuration.
 
 Lifecycle commands use:
 
@@ -25,6 +33,8 @@ Lifecycle commands use:
 - `POST /api/v2/directory/clients/{publicId}/restore/commands`
 - `POST /api/v2/directory/organizations/{publicId}/archive/commands`
 - `POST /api/v2/directory/organizations/{publicId}/restore/commands`
+- `POST /api/v2/directory/units/{publicId}/archive/commands`
+- `POST /api/v2/directory/units/{publicId}/restore/commands`
 
 The strict JSON body contains `commandId`, `expectedRevision`, and
 `expectedAuthorizationGeneration`, all as strings. Archive is a soft lifecycle
@@ -55,7 +65,7 @@ active application-scoped organization binding plus its public ID and revision.
 Names and email addresses are never matching keys.
 
 Binding authority is explicitly revoked through
-`POST /api/v2/directory/{clients|organizations}/bindings/revoke/commands`.
+`POST /api/v2/directory/{clients|organizations|units}/bindings/revoke/commands`.
 Revoked external IDs remain tombstoned and are not silently reused.
 
 `GET /api/v2/directory/inventory` returns a bounded, snapshot-consistent list of
@@ -64,7 +74,7 @@ calling application's binding state. Use `type`, `limit`, and the returned
 `nextCursor` for reconciliation. It returns no profile fields, credentials, or
 provider secrets.
 
-The six read-only defaults do not require deployment configuration. An
+Read-only routes do not require deployment configuration. An
 installation can set their documented environment variables to `false` as an
 emergency override. Complete and retain the migration/backfill attestation,
 enable every required command route, and provision exactly one non-`full` key
@@ -80,3 +90,13 @@ is unavailable; only an explicit administrator takeover clears it. The
 activation proof is prepared before its policy-lock transaction and the locked
 policy snapshot is rechecked before ownership changes; this does not eliminate
 the separate local source-write cutover race.
+
+Unit contact changes use dedicated `assign`, `remove`, and `set-primary`
+commands below `/api/v2/directory/units/{publicId}/contacts/`. Every command is
+idempotent and requires the expected unit revision and authorization generation.
+It also supplies an exact client external ID, public ID, and revision. The unit,
+its parent organization, and the client must all have current active bindings
+for the calling application, and the client must be active in the same
+organization. Assignment accepts a non-empty role; set-primary atomically
+clears any previous primary. Contact topology changes advance both the unit
+revision and application authorization generation.

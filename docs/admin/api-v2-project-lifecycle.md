@@ -5,6 +5,11 @@ title: API v2 Project lifecycle
 
 # API v2 Project lifecycle
 
+`projects.department_id` remains owned by Project Alpha's Project domain in the
+first generic unit release. The directory `unit` contract governs unit identity
+and contact assignments; it does not make Project-to-unit assignment an
+Operations-owned directory relationship.
+
 Project Alpha keeps the authoritative Project record. The optional API exposes
 exact reads, reversible lifecycle commands, and application-scoped Project
 synchronization to explicitly provisioned API v2 applications. Every route is

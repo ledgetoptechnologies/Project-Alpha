@@ -280,6 +280,8 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_project_external_bindings' => 102,
         'api_v2_project_command_receipts' => 102,
         'api_v2_project_backfill_attestations' => 102,
+        'api_v2_directory_unit_profile_command_receipts' => 104,
+        'api_v2_directory_unit_contact_command_receipts' => 104,
     ];
 
     return array_values(array_filter(
@@ -296,6 +298,8 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
 {
     $introduced = [
         'organizations' => ['archived' => 99, 'deleted_at' => 99],
+        'organization_departments' => ['archived'=>104,'deleted_at'=>104],
+        'organization_department_contacts' => ['primary_department_id'=>104],
         'projects' => ['archived_at' => 100, 'revision' => 100, 'portal_publish_enabled' => 100],
         'project_invoices' => ['revision_number' => 72],
         'pricing_adjustment_definitions' => [
@@ -486,6 +490,8 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
         'api_v2_project_external_bindings' => ['application_pk'=>102,'external_id'=>102,'project_public_id'=>102,'project_revision'=>102,'project_projection_sha256'=>102,'created_at'=>102,'updated_at'=>102],
         'api_v2_project_command_receipts' => ['application_pk'=>102,'history_epoch'=>102,'command_id'=>102,'command_type'=>102,'request_sha256'=>102,'external_id'=>102,'project_public_id'=>102,'expected_revision'=>102,'expected_prior_revision'=>102,'expected_projection_sha256'=>102,'expected_authorization_generation'=>102,'result_revision'=>102,'result_projection_sha256'=>102,'result_authorization_generation'=>102,'result_portal_publish_enabled'=>102,'result_public_project_enabled'=>102,'created_at'=>102],
         'api_v2_project_backfill_attestations' => ['attestation_sha256'=>102,'attestation_json'=>102,'created_at'=>102],
+        'api_v2_directory_unit_profile_command_receipts' => ['application_pk'=>104,'history_epoch'=>104,'command_id'=>104,'request_sha256'=>104,'public_id'=>104,'expected_revision'=>104,'expected_authorization_generation'=>104,'result_revision'=>104,'result_projection_sha256'=>104,'result_authorization_generation'=>104,'created_at'=>104],
+        'api_v2_directory_unit_contact_command_receipts' => ['application_pk'=>104,'history_epoch'=>104,'command_id'=>104,'request_sha256'=>104,'action_name'=>104,'unit_public_id'=>104,'client_public_id'=>104,'expected_unit_revision'=>104,'expected_authorization_generation'=>104,'result_unit_revision'=>104,'result_projection_sha256'=>104,'result_authorization_generation'=>104,'created_at'=>104],
         'archived_clients' => [
             'public_id' => 85, 'client_type' => 85, 'portal_principal_id' => 85,
             'portal_manual_state' => 85, 'portal_canonical_email' => 85,
@@ -584,6 +590,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_lifecycle_command_receipts',
         'api_v2_directory_relationship_command_receipts',
         'api_v2_directory_binding_revoke_command_receipts',
+        'api_v2_directory_unit_profile_command_receipts','api_v2_directory_unit_contact_command_receipts',
         'project_retention_guards', 'project_changes', 'api_v2_project_lifecycle_command_receipts',
         'api_v2_project_authorization_state','api_v2_project_external_bindings','api_v2_project_command_receipts','api_v2_project_backfill_attestations',
     ];
@@ -614,7 +621,8 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
     $requiredColumns = [
         'users' => ['email', 'password_hash', 'role', 'force_password_reset', 'auth_version', 'totp_reenroll_required'],
         'organizations' => ['public_id', 'source_version', 'general_email', 'general_phone', 'archived', 'deleted_at'],
-        'organization_departments' => ['public_id', 'source_version'],
+        'organization_departments' => ['public_id', 'source_version', 'archived', 'deleted_at'],
+        'organization_department_contacts' => ['department_id','client_id','role','is_primary','primary_department_id'],
         'clients' => ['public_id', 'source_version', 'organization_id', 'created_by'],
         'archived_clients' => ['public_id', 'client_type', 'portal_principal_id', 'portal_manual_state', 'portal_canonical_email', 'portal_identity_binding_ids_json', 'portal_principal_authorization_version', 'portal_principal_disabled_for_archive', 'portal_principal_was_present', 'portal_entitlement_ids_json', 'portal_affected_workspace_ids_json'],
         'projects' => ['public_id', 'source_version', 'completed_at', 'archived_at', 'revision', 'portal_publish_enabled', 'organization_id', 'department_id', 'business_unit_id', 'manager_user_id', 'created_by'],
@@ -644,6 +652,8 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_lifecycle_command_receipts' => ['application_pk','resource_type','history_epoch','command_id','request_sha256','action_name','public_id','expected_revision','expected_authorization_generation','result_revision','result_authorization_generation','created_at'],
         'api_v2_directory_relationship_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','client_public_id','expected_client_revision','expected_authorization_generation','result_client_revision','result_authorization_generation','created_at'],
         'api_v2_directory_binding_revoke_command_receipts' => ['application_pk','resource_type','history_epoch','command_id','request_sha256','external_id','public_id','expected_resource_revision','expected_authorization_generation','result_authorization_generation','created_at'],
+        'api_v2_directory_unit_profile_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','public_id','expected_revision','expected_authorization_generation','result_revision','result_projection_sha256','result_authorization_generation','created_at'],
+        'api_v2_directory_unit_contact_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','unit_public_id','client_public_id','expected_unit_revision','expected_authorization_generation','result_unit_revision','result_projection_sha256','result_authorization_generation','created_at'],
         'project_changes' => ['project_public_id','revision','action_name','projection_sha256','application_pk','command_id','actor_user_id','changed_at'],
         'project_retention_guards' => ['project_public_id','established_at'],
         'api_v2_project_lifecycle_command_receipts' => ['application_pk','history_epoch','command_id','request_sha256','action_name','project_public_id','expected_revision','result_revision','result_status','result_completed_at','result_archived_at','result_portal_publish_enabled','result_public_project_enabled','outcome','created_at'],

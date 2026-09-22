@@ -417,12 +417,12 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                 'shared_folder' => ['_shared folder', 'PA resolves a folder named _shared inside the organization folder and shares it with department recipients.'],
               ] as $value => [$label, $help]): ?>
                 <label class="org-link-strategy__option">
-                  <input type="radio" name="link_strategy" value="<?php echo e($value); ?>" <?php echo $linkStrategy === $value ? 'checked' : ''; ?> style="margin-top:3px">
+                  <input type="radio" name="link_strategy" value="<?php echo e($value); ?>" <?php echo $linkStrategy === $value ? 'checked' : ''; ?> <?php echo $directoryManagementStatus['effective']?'disabled':''; ?> style="margin-top:3px">
                   <span><strong><?php echo e($label); ?></strong><span><?php echo e($help); ?></span></span>
                 </label>
               <?php endforeach; ?>
             </div>
-            <button type="submit" class="org-view__button org-view__button--primary">Save Link Strategy</button>
+            <?php if(!$directoryManagementStatus['effective']):?><button type="submit" class="org-view__button org-view__button--primary">Save Link Strategy</button><?php endif;?>
           </form>
         </div>
       </div>
@@ -439,7 +439,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
         <h3 style="margin:0 0 4px">Departments</h3>
         <p style="margin:0;color:var(--muted);font-size:13px">Optional groups inside this organization for teams, locations, or departments.</p>
       </div>
-      <button type="button" class="org-view__button org-view__button--primary" onclick="openDepartmentModal()">Add Department</button>
+      <?php if(!$directoryManagementStatus['effective']):?><button type="button" class="org-view__button org-view__button--primary" onclick="openDepartmentModal()">Add Department</button><?php endif;?>
     </div>
 
     <?php if (empty($departments)): ?>
@@ -491,12 +491,12 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                 <?php endif; ?>
               </div>
               <div class="org-dept-card__actions">
-                <button type="button"
+                <?php if(!$directoryManagementStatus['effective']):?><button type="button"
                         class="org-view__button"
                         data-department="<?php echo e(json_encode($departmentPayload, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT)); ?>"
                         onclick="openDepartmentModal(this)">
                   Edit
-                </button>
+                </button><?php endif;?>
                 <button type="button" class="org-view__button" onclick="showAddManualLinkModal('department', <?php echo $deptId; ?>)">Add Link</button>
               </div>
             </div>
@@ -516,7 +516,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                           <?php if (!empty($contact['email'])): ?><span class="org-dept-contact-row__email"> <?php echo e((string)$contact['email']); ?></span><?php endif; ?>
                         </span>
                         <div class="org-dept-contact-row__actions">
-                          <?php if (empty($contact['is_primary'])): ?>
+                          <?php if (!$directoryManagementStatus['effective'] && empty($contact['is_primary'])): ?>
                             <form method="post" action="/?page=organization/organization-departments" style="margin:0">
                               <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
                               <input type="hidden" name="action" value="set_primary_contact">
@@ -526,20 +526,20 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                               <button type="submit" style="padding:4px 8px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4;color:#166534;font-size:12px">Make Primary</button>
                             </form>
                           <?php endif; ?>
-                          <form method="post" action="/?page=organization/organization-departments" style="margin:0">
+                          <?php if(!$directoryManagementStatus['effective']):?><form method="post" action="/?page=organization/organization-departments" style="margin:0">
                             <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
                             <input type="hidden" name="action" value="remove_contact">
                             <input type="hidden" name="organization_id" value="<?php echo (int)$id; ?>">
                             <input type="hidden" name="department_id" value="<?php echo $deptId; ?>">
                             <input type="hidden" name="client_id" value="<?php echo (int)$contact['id']; ?>">
                             <button type="submit" style="padding:4px 8px;border:1px solid #fca5a5;border-radius:8px;background:#fff;color:#b91c1c;font-size:12px">Remove</button>
-                          </form>
+                          </form><?php endif;?>
                         </div>
                       </div>
                     <?php endforeach; ?>
                   </div>
                 <?php endif; ?>
-                <form method="post" action="/?page=organization/organization-departments" class="org-dept-contact-assignment">
+                <?php if(!$directoryManagementStatus['effective']):?><form method="post" action="/?page=organization/organization-departments" class="org-dept-contact-assignment">
                   <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
                   <input type="hidden" name="action" value="assign_contact">
                   <input type="hidden" name="organization_id" value="<?php echo (int)$id; ?>">
@@ -555,7 +555,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
                     Primary
                   </label>
                   <button type="submit" class="btn btn-sm">Assign</button>
-                </form>
+                </form><?php endif;?>
               </div>
               <div>
                 <div class="org-dept-card__section-title">Department Links</div>
@@ -587,13 +587,13 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
               </div>
             </details>
 
-            <form method="post" action="/?page=organization/organization-departments" onsubmit="return confirm('Delete this department? Contacts and clients will not be deleted.')" style="padding:0 16px 14px">
+            <?php if(!$directoryManagementStatus['effective']):?><form method="post" action="/?page=organization/organization-departments" onsubmit="return confirm('Delete this department? Contacts and clients will not be deleted.')" style="padding:0 16px 14px">
               <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
               <input type="hidden" name="action" value="delete_department">
               <input type="hidden" name="organization_id" value="<?php echo (int)$id; ?>">
               <input type="hidden" name="department_id" value="<?php echo $deptId; ?>">
               <button type="submit" style="padding:6px 10px;border:1px solid #fca5a5;border-radius:8px;background:#fff;color:#b91c1c;font-size:small">Delete Department</button>
-            </form>
+            </form><?php endif;?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -621,7 +621,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
   <?php endif;?>
 </section>
 
-<div id="departmentModal" class="org-department-modal" role="dialog" aria-modal="true" aria-labelledby="departmentModalTitle" aria-hidden="true">
+<?php if(!$directoryManagementStatus['effective']):?><div id="departmentModal" class="org-department-modal" role="dialog" aria-modal="true" aria-labelledby="departmentModalTitle" aria-hidden="true">
   <div class="org-department-modal__dialog" tabindex="-1">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px">
       <h3 id="departmentModalTitle" style="margin:0">Add Department</h3>
@@ -663,7 +663,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
       </div>
     </form>
   </div>
-</div>
+</div><?php endif;?>
 
 <div id="organizationViewData"
      data-org-id="<?php echo $id; ?>"

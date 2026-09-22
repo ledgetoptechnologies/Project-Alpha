@@ -43,7 +43,7 @@ other flags remain false.
 
 | Surface | Required migrations |
 | --- | --- |
-| Directory identity, revisions, bindings, commands, and management evidence | `0088_api_v2_application_identity.sql` through `0099_api_v2_directory_lifecycle_relationships.sql` |
+| Directory identity, revisions, bindings, commands, management evidence, and customer units | `0088_api_v2_application_identity.sql` through `0099_api_v2_directory_lifecycle_relationships.sql`, `0103_external_directory_management_sentinel.sql`, `0104_api_v2_directory_units.sql` |
 | Project lifecycle, presentation revocation, and synchronization | `0100_project_lifecycle_api_foundation.sql`, `0101_project_archive_presentation_revocation.sql`, `0102_api_v2_project_synchronization.sql` |
 
 Required evidence:
@@ -67,20 +67,25 @@ to suppress an individual route.
 
 | Flags | Default | Required scopes when the corresponding route is selected |
 | --- | --- | --- |
-| `APP_API_V2_DIRECTORY_READ_ENABLED` | enabled | `api.capabilities.read` plus `directory.clients.read` and/or `directory.organizations.read` |
-| `APP_API_V2_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read` plus `directory.clients.binding_status.read` and/or `directory.organizations.binding_status.read` |
-| `APP_API_V2_DIRECTORY_BINDING_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.bind` and/or `directory.organizations.bind` |
-| `APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.binding.revision.refresh` and/or `directory.organizations.binding.revision.refresh` |
+| `APP_API_V2_DIRECTORY_READ_ENABLED` | enabled | `api.capabilities.read` plus the selected `directory.clients.read`, `directory.organizations.read`, and/or `directory.units.read` scopes |
+| `APP_API_V2_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read` plus the selected `directory.clients.binding_status.read`, `directory.organizations.binding_status.read`, and/or `directory.units.binding_status.read` scopes |
+| `APP_API_V2_DIRECTORY_BINDING_ENABLED` | disabled | `api.capabilities.read` plus the selected `directory.clients.bind`, `directory.organizations.bind`, and/or `directory.units.bind` scopes |
+| `APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read` plus the selected `directory.clients.binding.revision.refresh`, `directory.organizations.binding.revision.refresh`, and/or `directory.units.binding.revision.refresh` scopes |
 | `APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.write` |
 | `APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.write` |
+| `APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.units.write` |
 | `APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.create` |
 | `APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.create`; an organization assignment additionally requires `directory.clients.organization.assign` |
+| `APP_API_V2_DIRECTORY_UNITS_CREATE_ENABLED` | disabled | `api.capabilities.read`, `directory.units.create`, `directory.units.organization.assign` |
 | `APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.archive` |
 | `APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.restore` |
 | `APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.archive` |
 | `APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.restore` |
+| `APP_API_V2_DIRECTORY_UNITS_ARCHIVE_ENABLED` | disabled | `api.capabilities.read`, `directory.units.archive` |
+| `APP_API_V2_DIRECTORY_UNITS_RESTORE_ENABLED` | disabled | `api.capabilities.read`, `directory.units.restore` |
+| `APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED` | disabled | `api.capabilities.read` plus the exact selected `directory.units.contacts.assign`, `directory.units.contacts.remove`, and/or `directory.units.contacts.set_primary` scope |
 | `APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED` | disabled | `api.capabilities.read` plus the exact one of `directory.clients.organization.assign`, `directory.clients.organization.remove`, or `directory.clients.organization.move` |
-| `APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED` | disabled | `api.capabilities.read` plus `directory.clients.unbind` and/or `directory.organizations.unbind` |
+| `APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED` | disabled | `api.capabilities.read` plus the selected `directory.clients.unbind`, `directory.organizations.unbind`, and/or `directory.units.unbind` scopes |
 | `APP_API_V2_DIRECTORY_INVENTORY_ENABLED` | enabled | `api.capabilities.read`, `directory.inventory.read` |
 | `APP_API_V2_PROJECTS_READ_ENABLED` | enabled | `api.capabilities.read`, `projects.v2.read` |
 | `APP_API_V2_PROJECTS_COMPLETE_ENABLED` | disabled | `api.capabilities.read`, `projects.lifecycle.complete` |
@@ -118,7 +123,7 @@ php bin/backfill-api-v2-directory.php --type=all --limit=100 --dry-run --attest
 ```
 
 Continue from the returned cursor until exhausted. Retain the coverage audit:
-every valid existing client and organization has present directory state and a
+every valid existing organization, client, and unit has present directory state and a
 matching `upsert` change; every refusal is resolved or the cutover is aborted.
 Retain the safe `Attestation: <64 lowercase hex digest>.` line from the final
 staging command as the directory backfill receipt. The command refuses to

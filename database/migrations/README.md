@@ -279,3 +279,10 @@ external bindings, immutable bind/create/update/refresh command receipts, and
 local Project backfill attestation storage. It grants no scope, creates no
 binding, and enables no route. Apply it before enabling any Project
 synchronization flag.
+
+Migration `0104_api_v2_directory_units.sql` adds reversible lifecycle state to
+customer departments, widens the generic API v2 directory resource and receipt
+discriminators for `unit`, enforces at most one primary department contact, and
+adds immutable unit profile/contact command receipts. A unit is backed by
+`organization_departments`, never by internal `business_units`; the migration
+enables no route or scope.

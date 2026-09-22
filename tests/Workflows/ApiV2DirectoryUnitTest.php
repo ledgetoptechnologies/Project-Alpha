@@ -11,6 +11,7 @@ final class ApiV2DirectoryUnitTest extends TestCase
         require_once dirname(__DIR__,2).'/src/utils/api_v2_capabilities.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_directory_read.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_directory_create_command.php';
+        require_once dirname(__DIR__,2).'/src/utils/api_v2_directory_lifecycle_command.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_directory_unit_profile_command.php';
         require_once dirname(__DIR__,2).'/src/utils/api_v2_directory_unit_contact_command.php';
         $pdo=new PDO('sqlite::memory:');$pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
@@ -24,6 +25,7 @@ final class ApiV2DirectoryUnitTest extends TestCase
           CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
           CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,tombstoned_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE(application_pk,resource_type,public_id));
           CREATE TABLE api_v2_directory_create_command_receipts(application_pk INTEGER,resource_type TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,resource_type,command_id));
+          CREATE TABLE api_v2_directory_lifecycle_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
           CREATE TABLE api_v2_directory_unit_profile_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,history_epoch,command_id));
           CREATE TABLE api_v2_directory_unit_contact_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,unit_public_id TEXT,client_public_id TEXT,expected_unit_revision INTEGER,expected_authorization_generation INTEGER,result_unit_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,history_epoch,command_id));
           CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,name TEXT,general_email TEXT,general_phone TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,archived INTEGER DEFAULT 0,deleted_at TEXT,source_version TEXT);
@@ -77,6 +79,30 @@ final class ApiV2DirectoryUnitTest extends TestCase
         $pdo=$this->database();$command=['commandId'=>'523e4567-e89b-42d3-a456-426614174000','externalId'=>'new-unit-ext','expectedAuthorizationGeneration'=>'0','profile'=>['name'=>'Survey'],'organization'=>['externalId'=>'org-ext','expectedRevision'=>'1']];
         self::assertSame($command,api_v2_directory_create_command_parse('unit',json_encode($command,JSON_THROW_ON_ERROR)));
         $result=api_v2_directory_create_command_write($pdo,'unit',$command,7,$this->headers(),'623e4567-e89b-42d3-a456-426614174000');self::assertSame(201,$result['status']);self::assertSame('unit',$result['payload']['result']['resource']['type']);self::assertSame(2,(int)$pdo->query("SELECT COUNT(*) FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetchColumn());
+    }
+
+    public function testUnitArchiveRestoreIsSoftIdempotentAndDoesNotReviveBinding():void
+    {
+        $pdo=$this->database();$archive=['commandId'=>'523e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'1','expectedAuthorizationGeneration'=>'0'];
+        $first=api_v2_directory_lifecycle_command_write($pdo,'unit',str_repeat('c',32),'archive',$archive,7,$this->headers(),'623e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200,$first['status']);self::assertSame([1,1],array_map('intval',$pdo->query('SELECT archived,deleted_at IS NOT NULL FROM organization_departments WHERE id=1')->fetch(PDO::FETCH_NUM)));
+        self::assertSame('tombstoned',$pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE resource_type='unit'")->fetchColumn());
+        self::assertTrue(api_v2_directory_lifecycle_command_write($pdo,'unit',str_repeat('c',32),'archive',$archive,7,$this->headers(),'723e4567-e89b-42d3-a456-426614174000')['payload']['replayed']);
+        $restore=['commandId'=>'823e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'2','expectedAuthorizationGeneration'=>'1'];
+        self::assertSame(200,api_v2_directory_lifecycle_command_write($pdo,'unit',str_repeat('c',32),'restore',$restore,7,$this->headers(),'923e4567-e89b-42d3-a456-426614174000')['status']);
+        self::assertSame([0,0],array_map('intval',$pdo->query('SELECT archived,deleted_at IS NOT NULL FROM organization_departments WHERE id=1')->fetch(PDO::FETCH_NUM)));
+        self::assertSame([3,1],array_map('intval',$pdo->query("SELECT revision,present FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetch(PDO::FETCH_NUM)));
+        self::assertSame('tombstoned',$pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE resource_type='unit'")->fetchColumn());
+    }
+
+    public function testCapabilitiesAdvertiseOnlyEnabledScopedUnitRoutes():void
+    {
+        $scopes=['directory.units.read','directory.units.binding_status.read','directory.units.bind','directory.units.binding.revision.refresh','directory.units.write','directory.units.create','directory.units.organization.assign','directory.units.archive','directory.units.restore','directory.units.contacts.assign','directory.units.contacts.remove','directory.units.contacts.set_primary','directory.units.unbind','directory.inventory.read'];
+        $features=['directory_read'=>true,'binding_status'=>true,'directory_binding'=>true,'directory_binding_refresh'=>true,'directory_unit_write'=>true,'directory_unit_create'=>true,'directory_unit_archive'=>true,'directory_unit_restore'=>true,'directory_unit_contacts_write'=>true,'directory_binding_revoke'=>true,'directory_inventory'=>true];
+        $payload=api_v2_capabilities_payload(['source_instance_id'=>'s','application_id'=>'a','history_epoch'=>'e'],'r',$scopes,$features);$json=json_encode($payload,JSON_THROW_ON_ERROR);$paths=array_column($payload['implementedEndpoints'],'path');
+        foreach($scopes as$scope)self::assertStringContainsString($scope,$json);
+        self::assertContains('/api/v2/directory/units/{publicId}/contacts/set-primary/commands',$paths);
+        self::assertNotContains('/api/v2/directory/clients/{publicId}/profile/commands',$paths);
     }
 
     public function testStaticContractIsDefaultOffAndKeepsProjectDepartmentOwnershipLocal():void
