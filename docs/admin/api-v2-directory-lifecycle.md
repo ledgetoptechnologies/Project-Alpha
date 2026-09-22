@@ -69,8 +69,14 @@ installation can set their documented environment variables to `false` as an
 emergency override. Complete and retain the migration/backfill attestation,
 enable every required command route, and provision exactly one non-`full` key
 with all required scopes before activating external directory ownership.
-Activation recomputes the current backfill attestation and requires its current
-receipt digest to equal the release attestation's `backfillDigest`. Once active,
-a durable application-configuration sentinel keeps browser directory writers
-blocked if the managed-directory policy schema or health read is unavailable;
-only an explicit administrator takeover clears it.
+Configuration and activation recompute the current backfill attestation and
+activation requires its current receipt digest to equal the release
+attestation's `backfillDigest`. Once active, normal synchronized directory
+changes may advance the projection beyond that activation snapshot; active
+health instead requires an intact release proof and a complete current backfill
+projection. A durable application-configuration sentinel keeps browser
+directory writers blocked if the managed-directory policy schema or health read
+is unavailable; only an explicit administrator takeover clears it. The
+activation proof is prepared before its policy-lock transaction and the locked
+policy snapshot is rechecked before ownership changes; this does not eliminate
+the separate local source-write cutover race.

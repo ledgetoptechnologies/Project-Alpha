@@ -20,7 +20,9 @@ function api_v2_directory_management_sentinel_active(PDO $pdo): ?bool
     try {
         $statement = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=? LIMIT 1');
         $statement->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY]);
-        return (string)$statement->fetchColumn() === '1';
+        $value = $statement->fetchColumn();
+        if ($value === false) return null;
+        return match ((string)$value) { '0' => false, '1' => true, default => null };
     } catch (Throwable) { return null; }
 }
 
@@ -130,6 +132,13 @@ function api_v2_directory_management_activation_attestation_ready(PDO $pdo, arra
         && api_v2_directory_backfill_attestation_receipt_is_current($pdo, $digest);
 }
 
+/** Active ownership requires a healthy current projection, not a frozen snapshot. */
+function api_v2_directory_management_backfill_health_ready(PDO $pdo): bool
+{
+    $backfill = api_v2_directory_backfill_attestation($pdo);
+    return !empty($backfill['complete']);
+}
+
 /** Complete interactive writer inventory. API controllers are intentionally absent. */
 function api_v2_directory_management_browser_writers(): array
 {
@@ -165,6 +174,7 @@ function api_v2_directory_management_schema_ready(PDO $pdo): bool
             94=>'0094_api_v2_directory_client_profile_command_receipts.sql',95=>'0095_api_v2_directory_binding_lifecycle.sql',
             96=>'0096_api_v2_directory_backfill_attestations.sql',97=>'0097_api_v2_directory_create_command_receipts.sql',
             98=>'0098_external_directory_management_policy.sql',99=>'0099_api_v2_directory_lifecycle_relationships.sql',
+            103=>'0103_external_directory_management_sentinel.sql',
         ];
         $migration = $pdo->prepare('SELECT filename FROM schema_migrations WHERE version=?');
         foreach($expected as $version=>$filename){$migration->execute([$version]);if($migration->fetchColumn()!==$filename)return false;}
@@ -188,7 +198,7 @@ function api_v2_directory_management_code_digest(): string
          'src/utils/api_v2_directory_inventory.php','src/utils/api_v2_directory_backfill.php',
          'src/utils/api_v2_directory_release_safety.php']
     )));
-    foreach(range(88,99) as $version){$match=glob($root.'/database/migrations/'.str_pad((string)$version,4,'0',STR_PAD_LEFT).'_*.sql');if(count($match)!==1)return '';$paths[]=str_replace('\\','/',substr($match[0],strlen($root)+1));}
+    foreach(range(88,103) as $version){$match=glob($root.'/database/migrations/'.str_pad((string)$version,4,'0',STR_PAD_LEFT).'_*.sql');if(count($match)!==1)return '';$paths[]=str_replace('\\','/',substr($match[0],strlen($root)+1));}
     $paths=array_values(array_unique($paths));
     sort($paths, SORT_STRING);
     $evidence = [];
@@ -252,7 +262,7 @@ function api_v2_directory_management_status(PDO $pdo, bool $recordTransition = t
     try {
         $policy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
         if (!$policy || (int)$policy['configured_enabled'] !== 1) {
-            if ($wasActive) return ['configured'=>true,'effective'=>true,'reason'=>'managed_degraded','eligibility_reason'=>'policy_disagrees_with_sentinel','application_pk'=>null,'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
+            if ($wasActive || $sentinelUnavailable) return ['configured'=>true,'effective'=>true,'reason'=>'managed_degraded','eligibility_reason'=>'policy_disagrees_with_sentinel','application_pk'=>null,'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
             return $base;
         }
         $wasActive = $wasActive || (int)($policy['ownership_active'] ?? 0) === 1;
@@ -272,7 +282,8 @@ function api_v2_directory_management_status(PDO $pdo, bool $recordTransition = t
         if ($reason === 'ready' && !api_v2_directory_management_replacement_routes_implemented()) $reason = 'replacement_routes_unavailable';
         if($reason==='ready'&&!api_v2_directory_management_flags_ready())$reason='route_disabled';
         if($reason==='ready'&&!api_v2_directory_management_key_ready($pdo,$base['application_pk']))$reason='authorized_key_unavailable';
-        if($reason==='ready'&&!api_v2_directory_management_activation_attestation_ready($pdo,$policy))$reason='attestation_stale';
+        if($reason==='ready'&&!api_v2_directory_management_attestation_ready($pdo,$policy))$reason='attestation_stale';
+        if($reason==='ready'&&!api_v2_directory_management_backfill_health_ready($pdo))$reason='backfill_unhealthy';
         $base['eligibility_reason'] = $reason;
         $base['effective'] = $wasActive;
         $base['reason'] = $base['effective'] && $reason !== 'ready' ? 'managed_degraded' : $reason;
