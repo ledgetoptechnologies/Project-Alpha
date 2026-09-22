@@ -111,4 +111,13 @@ final class ApiV2DirectoryUnitTest extends TestCase
         foreach(['APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED','APP_API_V2_DIRECTORY_UNITS_CREATE_ENABLED','APP_API_V2_DIRECTORY_UNITS_ARCHIVE_ENABLED','APP_API_V2_DIRECTORY_UNITS_RESTORE_ENABLED','APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED']as$flag)self::assertStringContainsString($flag.'=false',$env);
         self::assertStringContainsString('/contacts/(?:assign|remove|set-primary)/commands',$router);self::assertStringContainsString('projects.department_id',$docs);self::assertStringContainsString('Link resolution configuration likewise',$docs);self::assertStringNotContainsString('business_units',api_v2_directory_projection_hash('unit',['name'=>'x','organization_public_id'=>str_repeat('a',32),'contacts'=>[]]));
     }
+
+    public function testFreshInstallRunsUnitMigrationAfterHistoricalBaseline():void
+    {
+        $root=dirname(__DIR__,2);$baseline=(string)file_get_contents($root.'/database/baseline.sql');$runner=(string)file_get_contents($root.'/docker/migrate.sh');$migration=(string)file_get_contents($root.'/database/migrations/0104_api_v2_directory_units.sql');
+        self::assertStringContainsString("VALUES (0, 'baseline.sql', NULL)",$baseline);
+        self::assertTrue(strpos($runner,'< "$BASELINE"')<strpos($runner,'run_migrations.php --verbose'));
+        self::assertStringContainsString('ADD COLUMN archived',$migration);self::assertStringContainsString("ENUM('client','organization','unit')",$migration);
+        self::assertStringContainsString('CREATE TABLE api_v2_directory_unit_profile_command_receipts',$migration);self::assertStringContainsString('CREATE TABLE api_v2_directory_unit_contact_command_receipts',$migration);
+    }
 }
