@@ -129,8 +129,8 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         $receiptStatement = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(result_revision AS CHAR) result_revision,
             CAST(expected_authorization_generation AS CHAR) expected_authorization_generation,
             CAST(result_authorization_generation AS CHAR) result_authorization_generation
-            FROM api_v2_directory_create_command_receipts WHERE application_pk=? AND resource_type=? AND command_id=?' . $lock);
-        $receiptStatement->execute([$appPk, $type, $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
+            FROM api_v2_directory_create_command_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?' . $lock);
+        $receiptStatement->execute([$appPk, $type, $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash)
             || !hash_equals((string)$receipt['external_id'], $command['externalId'])
             || (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration'])) {
@@ -139,14 +139,6 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         if ($receipt) {
             $pdo->commit();
             return ['status'=>200, 'payload'=>api_v2_directory_create_result($identity, $type, (string)$receipt['external_id'], (string)$receipt['public_id'], (string)$receipt['result_revision'], (string)$receipt['result_authorization_generation'], $requestId, true)];
-        }
-
-        $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
-        $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
-        if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
-            || !api_v2_directory_create_generation_valid((string)$generation)
-            || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
-            $pdo->rollBack(); return ['status'=>409];
         }
 
         $organizationId = null;
@@ -201,6 +193,18 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
             if ($duplicate->fetchColumn() !== false) { $pdo->rollBack(); return ['status'=>409]; }
         }
 
+        // Keep the cross-application writer order source -> state -> binding ->
+        // authorization. The application row above serializes same-application
+        // receipt decisions, but lifecycle tombstones may lock another
+        // application's authorization row after the shared source/bindings.
+        $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
+        $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
+        if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
+            || !api_v2_directory_create_generation_valid((string)$generation)
+            || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
+            $pdo->rollBack(); return ['status'=>409];
+        }
+
         // Keep neutral relationship and existing-workspace projection state on
         // the authoritative transaction boundary without enrolling the new
         // resource into portal authority. Enrollment remains a separate,
@@ -245,9 +249,9 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
         $resultGenerationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?');
         $resultGenerationStatement->execute([$appPk]); $resultGeneration = $resultGenerationStatement->fetchColumn();
         if ($resultGeneration === false) throw new RuntimeException('Result authorization generation unavailable');
-        $pdo->prepare('INSERT INTO api_v2_directory_create_command_receipts(application_pk,resource_type,command_id,request_sha256,external_id,public_id,
-            expected_authorization_generation,result_revision,result_projection_sha256,result_authorization_generation) VALUES(?,?,?,?,?,?,?,?,?,?)')
-            ->execute([$appPk,$type,$command['commandId'],$requestHash,$command['externalId'],$publicId,$command['expectedAuthorizationGeneration'],1,$state['projection_sha256'],$resultGeneration]);
+        $pdo->prepare('INSERT INTO api_v2_directory_create_command_receipts(application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,
+            expected_authorization_generation,result_revision,result_projection_sha256,result_authorization_generation) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+            ->execute([$appPk,$type,$identity['history_epoch'],$command['commandId'],$requestHash,$command['externalId'],$publicId,$command['expectedAuthorizationGeneration'],1,$state['projection_sha256'],$resultGeneration]);
         $pdo->commit();
         return ['status'=>201, 'payload'=>api_v2_directory_create_result($identity, $type, $command['externalId'], $publicId, '1', (string)$resultGeneration, $requestId, false)];
     } catch (Throwable $error) {

@@ -286,3 +286,9 @@ discriminators for `unit`, enforces at most one primary department contact, and
 adds immutable unit profile/contact command receipts. A unit is backed by
 `organization_departments`, never by internal `business_units`; the migration
 enables no route or scope.
+
+Migration `0105_api_v2_directory_receipt_history_epochs.sql` assigns existing
+generic bind, binding-refresh, and create receipts to the current API v2
+history epoch and makes that epoch part of each receipt primary key. This keeps
+old receipts immutable while preventing a command ID from replaying across an
+explicit history-epoch rotation. It enables no route or scope.

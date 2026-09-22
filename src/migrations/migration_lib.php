@@ -235,6 +235,29 @@ function migration_connection(): PDO
     ]);
 }
 
+/**
+ * Fail before any DDL for migrations whose legacy-data invariants cannot be
+ * made transactional by MySQL. The runner executes every pending preflight
+ * before taking a backup or applying the first statement.
+ */
+function migration_preflight(PDO $pdo, int $version): void
+{
+    if ($version !== 104) {
+        return;
+    }
+
+    $duplicatePrimary = $pdo->query(
+        'SELECT department_id FROM organization_department_contacts '
+        . 'WHERE is_primary=1 GROUP BY department_id HAVING COUNT(*)>1 LIMIT 1'
+    )->fetchColumn();
+    if ($duplicatePrimary !== false) {
+        throw new RuntimeException(
+            'Migration 0104 refused: a department has multiple primary contacts; '
+            . 'repair the legacy assignments before retrying.'
+        );
+    }
+}
+
 /** @param list<string> $requiredTables @return list<string> */
 function migration_required_tables_for_version(array $requiredTables, int $throughVersion): array
 {
@@ -419,11 +442,13 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
         ],
         'api_v2_directory_binding_command_receipts' => [
             'application_pk' => 91, 'resource_type' => 91, 'command_id' => 91,
+            'history_epoch' => 105,
             'request_sha256' => 91, 'external_id' => 91, 'public_id' => 91,
             'resource_revision' => 91, 'created_at' => 91,
         ],
         'api_v2_directory_binding_revision_refresh_receipts' => [
             'application_pk' => 92, 'resource_type' => 92, 'command_id' => 92,
+            'history_epoch' => 105,
             'request_sha256' => 92, 'external_id' => 92, 'public_id' => 92,
             'expected_prior_revision' => 92, 'result_revision' => 92,
             'result_projection_sha256' => 92, 'expected_authorization_generation' => 92,
@@ -446,6 +471,7 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
         ],
         'api_v2_directory_create_command_receipts' => [
             'application_pk' => 97, 'resource_type' => 97, 'command_id' => 97,
+            'history_epoch' => 105,
             'request_sha256' => 97, 'external_id' => 97, 'public_id' => 97,
             'expected_authorization_generation' => 97, 'result_revision' => 97,
             'result_projection_sha256' => 97, 'result_authorization_generation' => 97,
@@ -640,12 +666,12 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_resource_changes' => ['resource_type', 'public_id', 'revision', 'action'],
         'api_v2_directory_authorization_state' => ['application_pk', 'authorization_generation'],
         'api_v2_directory_external_bindings' => ['application_pk', 'resource_type', 'external_id', 'public_id', 'resource_revision', 'resource_projection_sha256', 'status', 'created_at', 'tombstoned_at'],
-        'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'created_at'],
-        'api_v2_directory_binding_revision_refresh_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_prior_revision', 'result_revision', 'result_projection_sha256', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
+        'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'created_at'],
+        'api_v2_directory_binding_revision_refresh_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_prior_revision', 'result_revision', 'result_projection_sha256', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
         'api_v2_directory_organization_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_client_profile_command_receipts' => ['application_pk', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_backfill_attestations' => ['attestation_sha256', 'attestation_json', 'created_at'],
-        'api_v2_directory_create_command_receipts' => ['application_pk', 'resource_type', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'result_authorization_generation', 'created_at'],
+        'api_v2_directory_create_command_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'result_authorization_generation', 'created_at'],
         'api_v2_directory_management_policy' => ['singleton','configured_enabled','ownership_active','application_pk','source_instance_id','application_id','history_epoch','release_attestation_sha256','last_effective','last_reason','configured_by','configured_at','updated_at'],
         'api_v2_directory_management_attestations' => ['attestation_sha256','attestation_json','created_by','created_at'],
         'api_v2_directory_management_audit' => ['id','event_type','outcome','reason','application_pk','actor_user_id','target_type','action_name','metadata_json','created_at'],

@@ -59,8 +59,8 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
         }
         $appPk = (int)$identity['application_pk'];
         $requestHash = hash('sha256', json_encode($command, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        $receiptStmt = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(resource_revision AS CHAR) resource_revision FROM api_v2_directory_binding_command_receipts WHERE application_pk=? AND resource_type=? AND command_id=?');
-        $receiptStmt->execute([$appPk, $type, $command['commandId']]); $receipt = $receiptStmt->fetch(PDO::FETCH_ASSOC);
+        $receiptStmt = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(resource_revision AS CHAR) resource_revision FROM api_v2_directory_binding_command_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?');
+        $receiptStmt->execute([$appPk, $type, $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStmt->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash)
             || !hash_equals((string)$receipt['external_id'], $command['externalId'])
             || (string)$receipt['public_id'] !== $command['expectedPublicId']
@@ -121,8 +121,8 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             $pdo->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(?,?,?,?,?,?,'active')")
                 ->execute([$appPk, $type, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision'], $state['projection_sha256']]);
         }
-        $pdo->prepare('INSERT INTO api_v2_directory_binding_command_receipts(application_pk,resource_type,command_id,request_sha256,external_id,public_id,resource_revision) VALUES(?,?,?,?,?,?,?)')
-            ->execute([$appPk, $type, $command['commandId'], $requestHash, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision']]);
+        $pdo->prepare('INSERT INTO api_v2_directory_binding_command_receipts(application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,resource_revision) VALUES(?,?,?,?,?,?,?,?)')
+            ->execute([$appPk, $type, $identity['history_epoch'], $command['commandId'], $requestHash, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision']]);
         $pdo->prepare('UPDATE api_v2_directory_authorization_state SET authorization_generation=authorization_generation+1 WHERE application_pk=?')->execute([$appPk]);
         $pdo->commit();
         return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, false)];

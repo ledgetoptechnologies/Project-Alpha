@@ -112,6 +112,17 @@ final class MigrationLibraryTest extends TestCase
         self::assertGreaterThan(10, count(migration_statements($migration)));
     }
 
+    public function testUnitMigrationPreflightRejectsDuplicatePrimariesWithoutSchemaOrLedgerMutation(): void
+    {
+        $pdo=new PDO('sqlite::memory:');$pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
+        $pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT);INSERT INTO schema_migrations VALUES(103,'0103_external_directory_management_sentinel.sql');CREATE TABLE organization_department_contacts(department_id INTEGER,client_id INTEGER,is_primary INTEGER);INSERT INTO organization_department_contacts VALUES(7,1,1),(7,2,1)");
+        try{migration_preflight($pdo,104);self::fail('Expected duplicate primary preflight refusal.');}catch(RuntimeException $error){self::assertStringContainsString('multiple primary contacts',$error->getMessage());}
+        self::assertSame([103],array_map('intval',$pdo->query('SELECT version FROM schema_migrations')->fetchAll(PDO::FETCH_COLUMN)));
+        self::assertSame(['department_id','client_id','is_primary'],array_column($pdo->query("PRAGMA table_info('organization_department_contacts')")->fetchAll(PDO::FETCH_ASSOC),'name'));
+        $runner=(string)file_get_contents(dirname(__DIR__,2).'/src/migrations/run_migrations.php');
+        self::assertLessThan(strpos($runner,'$backup = create_required_migration_backup()'),strpos($runner,'migration_preflight($pdo'));
+    }
+
     public function testSchemaHealthRequirementsFollowTheAppliedMigrationVersion(): void
     {
         $tables = migration_required_tables_for_version([

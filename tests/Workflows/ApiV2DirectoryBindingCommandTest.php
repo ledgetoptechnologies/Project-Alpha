@@ -23,7 +23,7 @@ final class ApiV2DirectoryBindingCommandTest extends TestCase
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
             CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
             CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE(application_pk,resource_type,public_id));
-            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER,resource_type TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,PRIMARY KEY(application_pk,resource_type,command_id));
+            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
             CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
             INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
@@ -88,5 +88,15 @@ final class ApiV2DirectoryBindingCommandTest extends TestCase
         self::assertFalse($pdo->inTransaction());
         self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
         self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+    }
+
+    public function testPriorEpochReceiptCannotReplayAfterEpochRotation(): void
+    {
+        $pdo=$this->database();$command=$this->command();
+        self::assertSame(200,\api_v2_directory_binding_command_write($pdo,'client',$command,7,$this->headers(),'first')['status']);
+        $next='423e4567-e89b-42d3-a456-426614174001';$pdo->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$next]);$headers=$this->headers();$headers['epoch']=$next;
+        $outcome=\api_v2_directory_binding_command_write($pdo,'client',$command,7,$headers,'next');
+        self::assertSame(409,$outcome['status']);self::assertArrayNotHasKey('payload',$outcome);
+        self::assertSame('323e4567-e89b-42d3-a456-426614174000',$pdo->query('SELECT history_epoch FROM api_v2_directory_binding_command_receipts')->fetchColumn());
     }
 }

@@ -13,13 +13,16 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         $this->pdo = new PDO('sqlite::memory:');
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT);
-          INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql'),(90,'0090_api_v2_directory_binding_status_foundation.sql'),(91,'0091_api_v2_directory_binding_command_receipts.sql'),(92,'0092_api_v2_directory_binding_revision_refresh_receipts.sql'),(93,'0093_api_v2_directory_organization_profile_command_receipts.sql'),(94,'0094_api_v2_directory_client_profile_command_receipts.sql'),(95,'0095_api_v2_directory_binding_lifecycle.sql'),(96,'0096_api_v2_directory_backfill_attestations.sql'),(97,'0097_api_v2_directory_create_command_receipts.sql'),(98,'0098_external_directory_management_policy.sql'),(99,'0099_api_v2_directory_lifecycle_relationships.sql'),(103,'0103_external_directory_management_sentinel.sql'),(104,'0104_api_v2_directory_units.sql');
+          INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql'),(90,'0090_api_v2_directory_binding_status_foundation.sql'),(91,'0091_api_v2_directory_binding_command_receipts.sql'),(92,'0092_api_v2_directory_binding_revision_refresh_receipts.sql'),(93,'0093_api_v2_directory_organization_profile_command_receipts.sql'),(94,'0094_api_v2_directory_client_profile_command_receipts.sql'),(95,'0095_api_v2_directory_binding_lifecycle.sql'),(96,'0096_api_v2_directory_backfill_attestations.sql'),(97,'0097_api_v2_directory_create_command_receipts.sql'),(98,'0098_external_directory_management_policy.sql'),(99,'0099_api_v2_directory_lifecycle_relationships.sql'),(103,'0103_external_directory_management_sentinel.sql'),(104,'0104_api_v2_directory_units.sql'),(105,'0105_api_v2_directory_receipt_history_epochs.sql');
           CREATE TABLE api_v2_directory_management_policy(singleton INTEGER PRIMARY KEY,configured_enabled INTEGER,ownership_active INTEGER,application_pk INTEGER,source_instance_id TEXT,application_id TEXT,history_epoch TEXT,release_attestation_sha256 TEXT,last_effective INTEGER,last_reason TEXT,configured_by INTEGER,configured_at TEXT,updated_at TEXT);
           CREATE TABLE api_v2_directory_management_attestations(attestation_sha256 TEXT PRIMARY KEY,attestation_json TEXT,created_by INTEGER,created_at TEXT);
           CREATE TABLE api_v2_directory_management_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT,outcome TEXT,reason TEXT,application_pk INTEGER,actor_user_id INTEGER,target_type TEXT,action_name TEXT,metadata_json TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
           CREATE TABLE api_v2_directory_lifecycle_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_authorization_generation INTEGER);
           CREATE TABLE api_v2_directory_relationship_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,client_public_id TEXT,expected_client_revision INTEGER,expected_authorization_generation INTEGER,result_client_revision INTEGER,result_authorization_generation INTEGER);
           CREATE TABLE api_v2_directory_binding_revoke_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id TEXT,public_id TEXT,expected_resource_revision INTEGER,expected_authorization_generation INTEGER,result_authorization_generation INTEGER);
+          CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id TEXT,public_id TEXT,resource_revision INTEGER);
+          CREATE TABLE api_v2_directory_binding_revision_refresh_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id TEXT,public_id TEXT,result_revision INTEGER);
+          CREATE TABLE api_v2_directory_create_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id TEXT,public_id TEXT,result_revision INTEGER);
           CREATE TABLE api_v2_directory_unit_profile_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER);
           CREATE TABLE api_v2_directory_unit_contact_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,unit_public_id TEXT,client_public_id TEXT,expected_unit_revision INTEGER,expected_authorization_generation INTEGER,result_unit_revision INTEGER,result_projection_sha256 TEXT,result_authorization_generation INTEGER);
           CREATE TABLE organizations(id INTEGER PRIMARY KEY,archived INTEGER,deleted_at TEXT);
@@ -181,7 +184,7 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
             $this->pdo->exec("UPDATE api_keys SET revoked_at='2026-01-01' WHERE id=2");self::assertTrue(api_v2_directory_management_key_ready($this->pdo,7));
             $policy=['release_attestation_sha256'=>''];self::assertFalse(api_v2_directory_management_attestation_ready($this->pdo,$policy));
             $writerDigest=api_v2_directory_management_code_digest();self::assertNotSame('',$writerDigest);
-            $json=json_encode(['version'=>1,'schemaVersion'=>104,'writerDigest'=>$writerDigest,'backfillDigest'=>str_repeat('a',64)],JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);$digest=hash('sha256',$json);
+            $json=json_encode(['version'=>1,'schemaVersion'=>105,'writerDigest'=>$writerDigest,'backfillDigest'=>str_repeat('a',64)],JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);$digest=hash('sha256',$json);
             $this->pdo->prepare('INSERT INTO api_v2_directory_management_attestations(attestation_sha256,attestation_json) VALUES(?,?)')->execute([$digest,$json]);
             self::assertTrue(api_v2_directory_management_attestation_ready($this->pdo,['release_attestation_sha256'=>$digest]));
             $this->pdo->prepare('UPDATE api_v2_directory_management_attestations SET attestation_json=? WHERE attestation_sha256=?')->execute(['{}',$digest]);self::assertFalse(api_v2_directory_management_attestation_ready($this->pdo,['release_attestation_sha256'=>$digest]));
@@ -198,7 +201,7 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         $backfill = api_v2_directory_backfill_attestation($this->pdo);
         self::assertTrue($backfill['complete']);
         $backfillDigest = api_v2_directory_backfill_attestation_persist($this->pdo);
-        $json = json_encode(['version'=>1,'schemaVersion'=>104,'writerDigest'=>api_v2_directory_management_code_digest(),'backfillDigest'=>$backfillDigest], JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);
+        $json = json_encode(['version'=>1,'schemaVersion'=>105,'writerDigest'=>api_v2_directory_management_code_digest(),'backfillDigest'=>$backfillDigest], JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);
         $releaseDigest = hash('sha256', $json);
         $this->pdo->prepare('INSERT INTO api_v2_directory_management_attestations(attestation_sha256,attestation_json) VALUES(?,?)')->execute([$releaseDigest,$json]);
         $policy=['release_attestation_sha256'=>$releaseDigest];
@@ -285,6 +288,9 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         $unitTables=['api_v2_directory_unit_profile_command_receipts','api_v2_directory_unit_contact_command_receipts'];
         self::assertSame([],migration_required_tables_for_version($unitTables,103));
         self::assertSame($unitTables,migration_required_tables_for_version($unitTables,104));
+        $epochColumns=['api_v2_directory_binding_command_receipts'=>['history_epoch'],'api_v2_directory_binding_revision_refresh_receipts'=>['history_epoch'],'api_v2_directory_create_command_receipts'=>['history_epoch']];
+        self::assertSame([],migration_required_columns_for_version($epochColumns,104));
+        self::assertSame($epochColumns,migration_required_columns_for_version($epochColumns,105));
         self::assertStringContainsString("('api_v2_directory_management_ownership_active', '0')",(string)file_get_contents(dirname(__DIR__,2).'/database/baseline.sql'));
     }
 }

@@ -9,7 +9,7 @@ ALTER TABLE organization_departments
 -- A unit has at most one primary contact. NULL values remain non-conflicting,
 -- while duplicate legacy primaries make the migration fail closed for review.
 ALTER TABLE organization_department_contacts
-    ADD COLUMN primary_department_id INT GENERATED ALWAYS AS (IF(is_primary=1,department_id,NULL)) STORED,
+    ADD COLUMN primary_department_id INT GENERATED ALWAYS AS (IF(is_primary=1,department_id,NULL)) VIRTUAL,
     ADD UNIQUE KEY uq_organization_department_primary (primary_department_id);
 
 -- The composite foreign keys require their child constraints to be absent

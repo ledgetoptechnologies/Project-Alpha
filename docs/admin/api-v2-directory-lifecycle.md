@@ -6,6 +6,10 @@ is available only to an application-bound API key with its explicit scope. The l
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
+Command receipts are scoped to that history epoch. Rotation preserves prior
+receipts as audit history, but a command ID from an earlier epoch can never
+replay its old resource or binding result in the replacement epoch.
+
 External ownership covers shared directory identity and topology: client,
 organization, and customer-unit creation, profile changes, lifecycle changes,
 and relationships
