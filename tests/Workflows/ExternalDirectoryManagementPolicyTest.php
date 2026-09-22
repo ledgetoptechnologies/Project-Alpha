@@ -25,6 +25,7 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
           CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT);
           CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER);
           CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,scopes TEXT,revoked_at TEXT);
+          CREATE TABLE app_config(organization_id INTEGER NOT NULL,config_key TEXT NOT NULL,config_value TEXT,PRIMARY KEY(organization_id,config_key));
           INSERT INTO api_v2_directory_management_policy VALUES(1,0,0,NULL,NULL,NULL,NULL,NULL,0,'not_configured',NULL,NULL,CURRENT_TIMESTAMP);");
     }
 
@@ -73,6 +74,48 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM api_v2_directory_management_audit WHERE event_type='browser_write_denied'")->fetchColumn());
     }
 
+    public function testActivatedSentinelFailsClosedWhenPolicySchemaIsMissingBeforeItsRead(): void
+    {
+        $this->pdo->prepare('INSERT INTO app_config VALUES(0,?,?)')->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY, '1']);
+        $this->pdo->exec('DROP TABLE api_v2_directory_management_policy');
+        $status = api_v2_directory_management_status($this->pdo);
+        self::assertTrue($status['effective']);
+        self::assertSame('managed_degraded', $status['reason']);
+        self::assertSame('schema_unavailable', $status['eligibility_reason']);
+        self::assertTrue(api_v2_directory_management_guard($this->pdo, 'client', 'create'));
+    }
+
+    public function testActivatedSentinelFailsClosedWhenHealthThrowsAfterPolicyRead(): void
+    {
+        $source='123e4567-e89b-42d3-a456-426614174000';$application='223e4567-e89b-42d3-a456-426614174000';$epoch='323e4567-e89b-42d3-a456-426614174000';
+        $this->pdo->prepare('INSERT INTO api_v2_applications VALUES(1,?,?)')->execute([$application,'Example application']);
+        $this->pdo->prepare('INSERT INTO api_v2_history_identity VALUES(1,?,?)')->execute([$source,$epoch]);
+        $this->pdo->exec('INSERT INTO api_v2_directory_authorization_state VALUES(1,0)');
+        $this->pdo->prepare("UPDATE api_v2_directory_management_policy SET configured_enabled=1,ownership_active=1,application_pk=1,source_instance_id=?,application_id=?,history_epoch=?,last_effective=1,last_reason='ready' WHERE singleton=1")->execute([$source,$application,$epoch]);
+        $this->pdo->prepare('INSERT INTO app_config VALUES(0,?,?)')->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY, '1']);
+        $flags=api_v2_directory_management_required_flags();foreach($flags as $flag)putenv($flag.'=true');
+        try {
+            $this->pdo->exec('DROP TABLE api_keys');
+            $status = api_v2_directory_management_status($this->pdo);
+            self::assertTrue($status['effective']);
+            self::assertSame('managed_degraded', $status['reason']);
+            self::assertSame('health_unavailable', $status['eligibility_reason']);
+            self::assertTrue(api_v2_directory_management_guard($this->pdo, 'organization', 'profile'));
+        } finally { foreach($flags as $flag)putenv($flag); }
+    }
+
+    public function testSentinelDisagreementAndSentinelReadFailureDoNotReopenWriters(): void
+    {
+        $this->pdo->prepare('INSERT INTO app_config VALUES(0,?,?)')->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY, '1']);
+        $status = api_v2_directory_management_status($this->pdo);
+        self::assertTrue($status['effective']);
+        self::assertSame('policy_disagrees_with_sentinel', $status['eligibility_reason']);
+        $this->pdo->exec('DROP TABLE api_v2_directory_management_policy; DROP TABLE app_config');
+        $status = api_v2_directory_management_status($this->pdo);
+        self::assertTrue($status['effective']);
+        self::assertSame('schema_unavailable', $status['eligibility_reason']);
+    }
+
     public function testExplicitConfirmedAdministratorTakeoverReturnsLocalControlAndAudits(): void
     {
         $this->pdo->exec("UPDATE api_v2_directory_management_policy SET configured_enabled=1,ownership_active=1,last_effective=1,last_reason='managed_degraded' WHERE singleton=1");
@@ -114,6 +157,25 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         }finally{foreach($flags as $flag)putenv($flag);}
     }
 
+    public function testActivationAttestationRequiresCurrentBackfillReceipt(): void
+    {
+        $this->pdo->exec('CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
+            CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
+            CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
+            CREATE TABLE api_v2_directory_backfill_attestations(attestation_sha256 TEXT PRIMARY KEY,attestation_json TEXT NOT NULL,created_at TEXT);');
+        foreach (['public_id','name','general_email','general_phone','address_line1','address_line2','city','state','postal_code','country'] as $column) $this->pdo->exec('ALTER TABLE organizations ADD COLUMN ' . $column . ' TEXT');
+        $backfill = api_v2_directory_backfill_attestation($this->pdo);
+        self::assertTrue($backfill['complete']);
+        $backfillDigest = api_v2_directory_backfill_attestation_persist($this->pdo);
+        $json = json_encode(['version'=>1,'schemaVersion'=>99,'writerDigest'=>api_v2_directory_management_code_digest(),'backfillDigest'=>$backfillDigest], JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);
+        $releaseDigest = hash('sha256', $json);
+        $this->pdo->prepare('INSERT INTO api_v2_directory_management_attestations(attestation_sha256,attestation_json) VALUES(?,?)')->execute([$releaseDigest,$json]);
+        $policy=['release_attestation_sha256'=>$releaseDigest];
+        self::assertTrue(api_v2_directory_management_activation_attestation_ready($this->pdo,$policy));
+        $this->pdo->exec("INSERT INTO clients(id,public_id,name) VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Changed after configuration')");
+        self::assertFalse(api_v2_directory_management_activation_attestation_ready($this->pdo,$policy));
+    }
+
     public function testEveryBrowserWriterHasCentralAndControllerLevelProtection(): void
     {
         $root = dirname(__DIR__, 2);
@@ -134,6 +196,18 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
             self::assertStringContainsString('directoryManagementStatus', (string)file_get_contents($root . '/src/views/pages/' . $view), $view);
         }
         self::assertSame('Directory changes are managed by an authorized external application', API_V2_DIRECTORY_MANAGEMENT_LABEL);
+    }
+
+    public function testInternalOrganizationNotesAndDocumentsRemainOutsideDirectoryProjection(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (['organization-update-notes.php','organizations_upload.php','organization_document_upload.php'] as $controller) {
+            $source = (string)file_get_contents($root . '/src/controllers/organization/' . $controller);
+            self::assertStringNotContainsString('api_v2_directory_management_guard', $source, $controller);
+        }
+        $lifecycleDocs = (string)file_get_contents($root . '/docs/admin/api-v2-directory-lifecycle.md');
+        self::assertStringContainsString('PA-internal organization notes and organization document uploads remain local', $lifecycleDocs);
+        self::assertStringContainsString('explicit replacement/cutover gap', $lifecycleDocs);
     }
 
     public function testAuthorizedStatelessApiCommandsRemainOutsideTheBrowserGuard(): void

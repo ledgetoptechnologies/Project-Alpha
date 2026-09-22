@@ -6,6 +6,31 @@ require_once __DIR__ . '/api_v2_capabilities.php';
 require_once __DIR__ . '/api_v2_directory_release_safety.php';
 
 const API_V2_DIRECTORY_MANAGEMENT_LABEL = 'Directory changes are managed by an authorized external application';
+const API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY = 'api_v2_directory_management_ownership_active';
+
+/**
+ * This lives in the long-established application configuration store rather
+ * than the managed-directory migration.  It is deliberately written only
+ * when ownership is activated/explicitly relinquished, so a partial or
+ * damaged managed-directory migration cannot silently reopen browser writers.
+ */
+/** @return bool|null null means the independent sentinel store could not be read. */
+function api_v2_directory_management_sentinel_active(PDO $pdo): ?bool
+{
+    try {
+        $statement = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=? LIMIT 1');
+        $statement->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY]);
+        return (string)$statement->fetchColumn() === '1';
+    } catch (Throwable) { return null; }
+}
+
+function api_v2_directory_management_save_sentinel(PDO $pdo, bool $active): void
+{
+    $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
+        ? 'INSERT INTO app_config(organization_id,config_key,config_value) VALUES(0,?,?) ON CONFLICT(organization_id,config_key) DO UPDATE SET config_value=excluded.config_value'
+        : 'INSERT INTO app_config(organization_id,config_key,config_value) VALUES(0,?,?) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value)';
+    $pdo->prepare($sql)->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY, $active ? '1' : '0']);
+}
 
 /** These explicit scopes are never satisfied by the legacy `full` scope. */
 function api_v2_directory_management_required_scopes(): array
@@ -87,6 +112,22 @@ function api_v2_directory_management_attestation_ready(PDO $pdo, array $policy):
         && hash_equals((string)($policy['release_attestation_sha256']??''),hash('sha256',(string)$json))
         && (int)($proof['schemaVersion']??0)===99
         && hash_equals((string)($proof['writerDigest']??''),api_v2_directory_management_code_digest());
+}
+
+/** Activation rechecks the mutable backfill proof, not just the code digest. */
+function api_v2_directory_management_activation_attestation_ready(PDO $pdo, array $policy): bool
+{
+    if (!api_v2_directory_management_attestation_ready($pdo, $policy)) return false;
+    $statement = $pdo->prepare('SELECT attestation_json FROM api_v2_directory_management_attestations WHERE attestation_sha256=?');
+    $statement->execute([(string)($policy['release_attestation_sha256'] ?? '')]);
+    $stored = $statement->fetchColumn();
+    $proof = is_string($stored) ? json_decode($stored, true) : null;
+    if (!is_array($proof) || preg_match('/^[0-9a-f]{64}$/D', (string)($proof['backfillDigest'] ?? '')) !== 1) return false;
+    $backfill = api_v2_directory_backfill_attestation($pdo);
+    if (!$backfill['complete']) return false;
+    $digest = hash('sha256', api_v2_directory_backfill_attestation_json($backfill));
+    return hash_equals((string)$proof['backfillDigest'], $digest)
+        && api_v2_directory_backfill_attestation_receipt_is_current($pdo, $digest);
 }
 
 /** Complete interactive writer inventory. API controllers are intentionally absent. */
@@ -201,12 +242,20 @@ function api_v2_directory_management_audit(PDO $pdo, string $event, string $outc
 function api_v2_directory_management_status(PDO $pdo, bool $recordTransition = true): array
 {
     $base = ['configured'=>false,'effective'=>false,'reason'=>'not_configured','eligibility_reason'=>'not_configured','application_pk'=>null,'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
-    if (!api_v2_directory_management_schema_ready($pdo)) { $base['reason'] = 'schema_unavailable'; return $base; }
-    $wasActive = false;
+    $sentinel = api_v2_directory_management_sentinel_active($pdo);
+    $sentinelUnavailable = $sentinel === null;
+    $wasActive = $sentinel === true;
+    if (!api_v2_directory_management_schema_ready($pdo)) {
+        if ($wasActive || $sentinelUnavailable) return ['configured'=>true,'effective'=>true,'reason'=>'managed_degraded','eligibility_reason'=>'schema_unavailable','application_pk'=>null,'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
+        $base['reason'] = 'schema_unavailable'; return $base;
+    }
     try {
         $policy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
-        if (!$policy || (int)$policy['configured_enabled'] !== 1) return $base;
-        $wasActive = (int)($policy['ownership_active'] ?? 0) === 1;
+        if (!$policy || (int)$policy['configured_enabled'] !== 1) {
+            if ($wasActive) return ['configured'=>true,'effective'=>true,'reason'=>'managed_degraded','eligibility_reason'=>'policy_disagrees_with_sentinel','application_pk'=>null,'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
+            return $base;
+        }
+        $wasActive = $wasActive || (int)($policy['ownership_active'] ?? 0) === 1;
         $base['configured'] = true; $base['application_pk'] = (int)$policy['application_pk'];
         $reason = 'ready';
         $identity = $pdo->prepare('SELECT app.application_id,history.source_instance_id,history.history_epoch,auth.authorization_generation
@@ -223,9 +272,9 @@ function api_v2_directory_management_status(PDO $pdo, bool $recordTransition = t
         if ($reason === 'ready' && !api_v2_directory_management_replacement_routes_implemented()) $reason = 'replacement_routes_unavailable';
         if($reason==='ready'&&!api_v2_directory_management_flags_ready())$reason='route_disabled';
         if($reason==='ready'&&!api_v2_directory_management_key_ready($pdo,$base['application_pk']))$reason='authorized_key_unavailable';
-        if($reason==='ready'&&!api_v2_directory_management_attestation_ready($pdo,$policy))$reason='attestation_stale';
+        if($reason==='ready'&&!api_v2_directory_management_activation_attestation_ready($pdo,$policy))$reason='attestation_stale';
         $base['eligibility_reason'] = $reason;
-        $base['effective'] = (int)($policy['ownership_active'] ?? 0) === 1;
+        $base['effective'] = $wasActive;
         $base['reason'] = $base['effective'] && $reason !== 'ready' ? 'managed_degraded' : $reason;
         if ($recordTransition && ((int)$policy['last_effective'] !== (int)$base['effective'] || (string)$policy['last_reason'] !== $base['reason'])) {
             $update = $pdo->prepare('UPDATE api_v2_directory_management_policy SET last_effective=?,last_reason=? WHERE singleton=1 AND (last_effective<>? OR last_reason<>?)');
@@ -235,7 +284,8 @@ function api_v2_directory_management_status(PDO $pdo, bool $recordTransition = t
         return $base;
     } catch (Throwable $error) {
         error_log('[DirectoryManagement] health unavailable ' . get_class($error));
-        return ['configured'=>true,'effective'=>$wasActive,'reason'=>$wasActive?'managed_degraded':'health_unavailable','eligibility_reason'=>'health_unavailable','application_pk'=>$base['application_pk'],'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
+        $mustBlock = $wasActive || $sentinelUnavailable;
+        return ['configured'=>true,'effective'=>$mustBlock,'reason'=>$mustBlock?'managed_degraded':'health_unavailable','eligibility_reason'=>'health_unavailable','application_pk'=>$base['application_pk'],'label'=>API_V2_DIRECTORY_MANAGEMENT_LABEL];
     }
 }
 
@@ -263,6 +313,7 @@ function api_v2_directory_management_save(PDO $pdo, bool $enabled, int $applicat
         }
         $pdo->prepare('UPDATE api_v2_directory_management_policy SET configured_enabled=?,ownership_active=?,application_pk=?,source_instance_id=?,application_id=?,history_epoch=?,release_attestation_sha256=?,last_effective=?,last_reason=?,configured_by=?,configured_at=CURRENT_TIMESTAMP WHERE singleton=1')
             ->execute([(int)$enabled,$ownershipActive,$enabled?$applicationPk:null,$identity['source_instance_id']??null,$identity['application_id']??null,$identity['history_epoch']??null,$digest,$lastEffective,$enabled?'pending_evaluation':'not_configured',$actorUserId ?: null]);
+        if (!$enabled) api_v2_directory_management_save_sentinel($pdo, false);
         api_v2_directory_management_audit($pdo,'policy_saved',$enabled?'configured':'disabled',$enabled?'pending_evaluation':'not_configured',$enabled?$applicationPk:null,$actorUserId);
         $pdo->commit();
     } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }
@@ -272,15 +323,22 @@ function api_v2_directory_management_save(PDO $pdo, bool $enabled, int $applicat
 function api_v2_directory_management_activate(PDO $pdo, int $actorUserId, bool $confirmed): array
 {
     if (!$confirmed) throw new DomainException('Explicit activation confirmation is required.');
+    // Backfill proof intentionally performs unlocked consistency reads; do it
+    // before the activation transaction, then pin the policy identity below.
+    $prePolicy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
+    $preStatus = api_v2_directory_management_status($pdo, false);
+    if (!$preStatus['configured'] || $preStatus['eligibility_reason'] !== 'ready') throw new DomainException('Directory ownership cannot be activated: ' . $preStatus['eligibility_reason']);
+    if (!is_array($prePolicy) || !api_v2_directory_management_activation_attestation_ready($pdo, $prePolicy)) throw new DomainException('Directory ownership cannot be activated: backfill_attestation_stale');
     $pdo->beginTransaction();
     try{
         $pdo->query('SELECT singleton FROM api_v2_directory_management_policy WHERE singleton=1'.($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':''))->fetchColumn();
-        $status = api_v2_directory_management_status($pdo, false);
-        if (!$status['configured'] || $status['eligibility_reason'] !== 'ready') throw new DomainException('Directory ownership cannot be activated: ' . $status['eligibility_reason']);
+        $policy = $pdo->query('SELECT * FROM api_v2_directory_management_policy WHERE singleton=1')->fetch(PDO::FETCH_ASSOC);
+        foreach (['configured_enabled','ownership_active','application_pk','source_instance_id','application_id','history_epoch','release_attestation_sha256'] as $field) if (!is_array($policy) || (string)($policy[$field] ?? '') !== (string)($prePolicy[$field] ?? '')) throw new RuntimeException('Directory policy changed while activation evidence was prepared.');
         $statement=$pdo->prepare('UPDATE api_v2_directory_management_policy SET ownership_active=1,last_effective=1,last_reason=\'ready\' WHERE singleton=1 AND configured_enabled=1 AND ownership_active=0');
         $statement->execute();
         if($statement->rowCount()!==1) throw new RuntimeException('Directory ownership activation changed concurrently.');
-        api_v2_directory_management_audit($pdo,'ownership_activated','effective','ready',$status['application_pk'],$actorUserId);
+        api_v2_directory_management_save_sentinel($pdo, true);
+        api_v2_directory_management_audit($pdo,'ownership_activated','effective','ready',$preStatus['application_pk'],$actorUserId);
         $pdo->commit();
     }catch(Throwable $error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
     return api_v2_directory_management_status($pdo, false);

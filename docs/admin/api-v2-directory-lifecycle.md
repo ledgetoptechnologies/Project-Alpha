@@ -6,6 +6,19 @@ is available only to an application-bound API key with its explicit scope. The l
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
+External ownership covers shared directory identity and topology: client and
+organization creation, profile changes, lifecycle changes, and relationships
+are blocked in the browser while active.
+PA-internal organization notes and organization document uploads remain local
+metadata; they are intentionally not API v2 directory projections and remain
+editable. Customer departments, department-contact assignments, and link
+strategy are Operations-owned in the intended end state, but API v2 currently
+has no department resource, revision, binding, inventory, or command contract
+for them. They are an explicit replacement/cutover gap: do not activate
+external directory ownership for that end state until the complete replacement
+contract exists. This distinction must not be expanded to client/organization
+identity or relationship fields without a new API contract.
+
 Lifecycle commands use:
 
 - `POST /api/v2/directory/clients/{publicId}/archive/commands`
@@ -56,3 +69,8 @@ installation can set their documented environment variables to `false` as an
 emergency override. Complete and retain the migration/backfill attestation,
 enable every required command route, and provision exactly one non-`full` key
 with all required scopes before activating external directory ownership.
+Activation recomputes the current backfill attestation and requires its current
+receipt digest to equal the release attestation's `backfillDigest`. Once active,
+a durable application-configuration sentinel keeps browser directory writers
+blocked if the managed-directory policy schema or health read is unavailable;
+only an explicit administrator takeover clears it.
