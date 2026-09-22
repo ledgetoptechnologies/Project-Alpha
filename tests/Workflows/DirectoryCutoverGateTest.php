@@ -113,6 +113,18 @@ final class DirectoryCutoverGateTest extends TestCase
         self::assertStringContainsString('api_v2_directory_management_acquire_shared_gate($pdo, false);', (string) file_get_contents($root . '/src/utils/api_v2_directory_backfill.php'));
     }
 
+    public function testDisposableMysqlCutoverGateRunnerIsRequiredByCi(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $workflow = (string) file_get_contents($root . '/.github/workflows/ci.yml');
+        $runner = (string) file_get_contents($root . '/tools/run-directory-cutover-gate-mysql-integration.ps1');
+
+        self::assertStringContainsString('DIRECTORY_CUTOVER_GATE_MYSQL_TEST_IMAGE:', $workflow);
+        self::assertStringContainsString('run: ./tools/run-directory-cutover-gate-mysql-integration.ps1', $workflow);
+        self::assertStringContainsString("DIRECTORY_CUTOVER_GATE_MYSQL_ALLOW_DESTRUCTIVE=isolated-disposable-only", $runner);
+        self::assertStringContainsString('--fail-on-skipped', $runner);
+    }
+
     private function policyGateDatabase(): PDO
     {
         $pdo = new PDO('sqlite::memory:');
