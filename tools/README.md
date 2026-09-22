@@ -4,12 +4,21 @@ This directory contains operator-run maintenance utilities. Review each script a
 
 ## Directory cutover gate MySQL acceptance
 
-This is a pending release gate, not an executable acceptance harness: the
-repository has no reusable disposable two-connection MySQL fixture. Before
-claiming MySQL race coverage, add that fixture and prove that activation waits
-for a local source writer holding `FOR SHARE`, the first writer commits before
-activation, the next local writer is rejected after activation, and an API
-source command using explicit external authority still acquires the shared gate.
+Run the disposable two-connection MySQL acceptance gate with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/run-directory-cutover-gate-mysql-integration.ps1
+```
+
+The command creates a random `directory_cutover_gate_test_<uuid>` database in
+a local `mysql:8.4` container and removes the container afterwards. The test
+refuses to run unless both that database-name pattern and its
+`isolated-disposable-only` environment sentinel are present. It proves real
+InnoDB shared/exclusive sentinel contention for activation, source-writer
+denial after activation, API shared authority, takeover, concurrent API shared
+gates, and rollback on stale activation evidence. Set
+`DIRECTORY_CUTOVER_GATE_MYSQL_TEST_IMAGE` to run PHPUnit from an already-built
+container image instead of the local PHP installation.
 
 | Tool | Purpose |
 |---|---|
