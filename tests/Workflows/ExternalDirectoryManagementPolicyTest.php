@@ -129,6 +129,20 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
         self::assertTrue($status['effective'], 'An unreadable sentinel cannot reopen an inactive policy.');
     }
 
+    public function testUpgradeInitializesUnmanagedInstallToExplicitLocalSentinel(): void
+    {
+        $this->pdo->exec("DELETE FROM app_config WHERE config_key='api_v2_directory_management_ownership_active'");
+        self::assertTrue(api_v2_directory_management_status($this->pdo)['effective'], 'A missing upgrade sentinel is fail-closed.');
+        // Migration 0103's INSERT IGNORE default preserves ordinary inactive
+        // upgraded installations as editable without overriding an existing 1.
+        $this->pdo->prepare('INSERT INTO app_config VALUES(0,?,?)')->execute([API_V2_DIRECTORY_MANAGEMENT_SENTINEL_KEY,'0']);
+        self::assertFalse(api_v2_directory_management_status($this->pdo)['effective']);
+        $migration=(string)file_get_contents(dirname(__DIR__,2).'/database/migrations/0103_external_directory_management_sentinel.sql');
+        self::assertStringContainsString('INSERT IGNORE INTO app_config',$migration);
+        self::assertStringContainsString("VALUES (0,'api_v2_directory_management_ownership_active','0')",$migration);
+        self::assertStringContainsString("SET config_value='1'",$migration);
+    }
+
     public function testExplicitConfirmedAdministratorTakeoverReturnsLocalControlAndAudits(): void
     {
         $this->pdo->exec("UPDATE api_v2_directory_management_policy SET configured_enabled=1,ownership_active=1,last_effective=1,last_reason='managed_degraded' WHERE singleton=1");
