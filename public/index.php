@@ -6,6 +6,12 @@ if ($apiV2Path === '/api/v2/capabilities') {
     require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
     exit;
 }
+if ($apiV2Path === '/api/v2/catalog/inventory') {
+    if (!api_v2_enabled('APP_API_V2_CATALOG_INVENTORY_ENABLED')) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/catalog_inventory_v2.php'; exit;
+}
 if (in_array($apiV2Path, ['/api/v2/projects/commands','/api/v2/projects/profile/commands','/api/v2/projects/bindings/commands','/api/v2/projects/bindings/revisions/commands'], true)) {
     $flag = match ($apiV2Path) {
         '/api/v2/projects/commands' => 'APP_API_V2_PROJECTS_CREATE_ENABLED',
