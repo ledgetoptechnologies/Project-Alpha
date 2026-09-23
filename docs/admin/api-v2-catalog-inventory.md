@@ -12,9 +12,11 @@ The endpoint returns current active, externally requestable services in stable
 `publicId` order. Canonical `entry_type=service` is required; products, fees,
 and bundles remain excluded even if legacy data marks them requestable.
 `limit` is 1 through 200; there is no installation-size
-truncation or hidden total-count ceiling. Each item's `version` is the SHA-256 of its emitted canonical
-content. The top-level `snapshotId` is the SHA-256 of the ordered `publicId` and
-`version` pairs, and `totalCount` is pinned in the opaque cursor.
+truncation or hidden total-count ceiling. Each item's `sourceVersion` uses the
+same `sha256-` content version as the existing service catalog, so unchanged
+saved Client selections remain current after cutover. The top-level
+`snapshotId` is the SHA-256 of the ordered `publicId` and `sourceVersion`
+pairs, and `totalCount` is pinned in the opaque cursor.
 Pages are also bounded to 1,048,576 serialized JSON bytes. The server returns up
 to the requested item limit and stops before the next item would cross that byte
 budget, then continues from the last emitted item. One item at every documented
@@ -40,7 +42,7 @@ not claim that an insertion-only watermark protects in-place edits or deletes.
 
 The envelope contains `apiVersion`, the three API-v2 identity values,
 `requestId`, `snapshotId`, `totalCount`, `items`, and `nextCursor`. Items contain
-`publicId`, `version`, `name`, nullable `summary`, `category`, `displayOrder`,
+`publicId`, `sourceVersion`, `name`, nullable `summary`, `category`, `displayOrder`,
 `geometryRequirement`, and `questions`. Consumers must not send this response
 to a legacy portal projection parser. The route is default-off and is exposed
 only when `APP_API_V2_CATALOG_INVENTORY_ENABLED=true` is set for an approved

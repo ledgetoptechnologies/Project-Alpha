@@ -26,7 +26,10 @@ final class ApiV2CatalogInventoryTest extends TestCase
         $first=api_v2_catalog_inventory_read($this->pdo,null,1,7,$this->headers,'request-one');
         self::assertSame(200,$first['status']);$payload=$first['payload'];
         self::assertSame(['apiVersion','sourceInstanceId','applicationId','historyEpoch','requestId','snapshotId','totalCount','items','nextCursor'],array_keys($payload));
-        self::assertSame(2,$payload['totalCount']);self::assertCount(1,$payload['items']);self::assertSame(str_repeat('a',32),$payload['items'][0]['publicId']);self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/',$payload['items'][0]['version']);self::assertNotNull($payload['nextCursor']);
+        self::assertSame(2,$payload['totalCount']);self::assertCount(1,$payload['items']);self::assertSame(str_repeat('a',32),$payload['items'][0]['publicId']);
+        $firstItem=$payload['items'][0];$visible=$firstItem;unset($visible['sourceVersion']);
+        self::assertSame(\App\Services\PortalSourceVersion::from($visible),$firstItem['sourceVersion']);
+        self::assertMatchesRegularExpression('/^sha256-[0-9a-f]{64}$/',$firstItem['sourceVersion']);self::assertNotNull($payload['nextCursor']);
         self::assertNotContains(str_repeat('d',32),array_column($payload['items'],'publicId'));
         $second=api_v2_catalog_inventory_read($this->pdo,$payload['nextCursor'],1,7,$this->headers,'request-two');
         self::assertSame(200,$second['status']);self::assertSame($payload['snapshotId'],$second['payload']['snapshotId']);self::assertSame(str_repeat('b',32),$second['payload']['items'][0]['publicId']);self::assertNull($second['payload']['nextCursor']);

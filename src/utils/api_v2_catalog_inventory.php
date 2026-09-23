@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/api_v2_capabilities.php';
+require_once __DIR__ . '/../services/PortalSourceVersion.php';
 
 const API_V2_CATALOG_RESPONSE_MAX_BYTES = 1048576;
 
@@ -89,11 +90,13 @@ function api_v2_catalog_inventory_read(PDO $pdo, ?string $cursor, int $limit, in
             if(!api_v2_catalog_plain_text($item['name'],1,255,false)||!api_v2_catalog_plain_text($item['summary'],1,1000,true)
                 ||!api_v2_catalog_plain_text($item['category'],1,100,false)||$item['displayOrder']<0||$item['displayOrder']>1000000
                 ||!in_array($item['geometryRequirement'],['none','optional','required'],true))throw new RuntimeException('Catalog item is invalid');
-            $canonical=json_encode($item,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
-            $items[]=['publicId'=>$publicId,'version'=>hash('sha256',$canonical)]+array_slice($item,1,null,true);
+            // Preserve the canonical service version already used by saved
+            // Client drafts. A new hash format would invalidate unchanged
+            // selections during the API-first cutover.
+            $items[]=['publicId'=>$publicId,'sourceVersion'=>\App\Services\PortalSourceVersion::from($item)]+array_slice($item,1,null,true);
         }
         $totalCount=count($items);
-        $fingerprintInput=json_encode(array_map(static fn(array$item):array=>[$item['publicId'],$item['version']],$items),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
+        $fingerprintInput=json_encode(array_map(static fn(array$item):array=>[$item['publicId'],$item['sourceVersion']],$items),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
         $snapshotId=hash('sha256',$fingerprintInput);
         if ($cursor !== null && (!hash_equals($decodedCursor['snapshotId'],$snapshotId) || $decodedCursor['totalCount'] !== $totalCount)) {
             $payload=['apiVersion'=>'2','sourceInstanceId'=>(string)$identity['source_instance_id'],'applicationId'=>(string)$identity['application_id'],'historyEpoch'=>(string)$identity['history_epoch'],'requestId'=>$requestId,'error'=>['code'=>'catalog_snapshot_changed']];
