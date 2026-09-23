@@ -11,10 +11,12 @@ an API v2 application and have the explicit `api.capabilities.read` and
 The endpoint returns current active, externally requestable services in stable
 `publicId` order. Canonical `entry_type=service` is required; products, fees,
 and bundles remain excluded even if legacy data marks them requestable.
-`limit` is 1 through 200; there is no installation-size
-truncation or hidden total-count ceiling. Each item's `sourceVersion` uses the
-same `sha256-` content version as the existing service catalog, so unchanged
-saved Client selections remain current after cutover. The top-level
+`limit` is 1 through 200. The complete eligible catalog is limited to 10,000
+items and 16,777,216 aggregate raw bytes across the fields used by this feed.
+The endpoint fails closed with `503` before loading rows when either bound is
+exceeded; it never silently truncates the inventory. Each item's
+`sourceVersion` uses the same `sha256-` content version as the existing service
+catalog, so unchanged saved Client selections remain current after cutover. The top-level
 `snapshotId` is the SHA-256 of the ordered `publicId` and `sourceVersion`
 pairs, and `totalCount` is pinned in the opaque cursor.
 Pages are also bounded to 1,048,576 serialized JSON bytes. The server returns up
@@ -23,7 +25,8 @@ budget, then continues from the last emitted item. One item at every documented
 maximum, including four-byte Unicode content, fits this absolute cap, so a
 valid item never becomes unenumerable and a non-final page is never empty.
 
-Before enabling the route, audit every active externally requestable item for a
+Before enabling the route, confirm the eligible catalog remains within both
+installation-wide bounds and audit every active externally requestable item for a
 unique 32-character lowercase hexadecimal `publicId` and valid client-safe
 catalog fields. Existing rows without that identity are not synthesized or
 skipped: the endpoint fails closed with `503`, so the operator must repair the

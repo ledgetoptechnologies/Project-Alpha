@@ -5,6 +5,8 @@ require_once __DIR__ . '/api_v2_capabilities.php';
 require_once __DIR__ . '/../services/PortalSourceVersion.php';
 
 const API_V2_CATALOG_RESPONSE_MAX_BYTES = 1048576;
+const API_V2_CATALOG_MAX_ITEMS = 10000;
+const API_V2_CATALOG_MAX_RAW_BYTES = 16777216;
 
 function api_v2_catalog_cursor_encode(string $snapshotId, int $totalCount, string $afterPublicId): string
 {
@@ -78,6 +80,15 @@ function api_v2_catalog_inventory_read(PDO $pdo, ?string $cursor, int $limit, in
             || !hash_equals((string)$identity['history_epoch'],(string)($headers['epoch']??''))) {
             $pdo->rollBack(); return ['status'=>409];
         }
+        $catalogFilter="entry_type='service' AND is_active=1 AND portal_requestable=1";
+        $count=(int)$pdo->query("SELECT COUNT(*) FROM item_library WHERE $catalogFilter")->fetchColumn();
+        if($count>API_V2_CATALOG_MAX_ITEMS)throw new RuntimeException('Catalog item count exceeds inventory limit');
+        $byteLength=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='sqlite'
+            ?static fn(string$column):string=>"LENGTH(CAST(COALESCE($column,'') AS BLOB))"
+            :static fn(string$column):string=>"OCTET_LENGTH(COALESCE($column,''))";
+        $rawColumns=['portal_public_id','item_name','portal_summary','portal_category','portal_geometry_requirement','portal_questions_json'];
+        $rawBytes=(int)$pdo->query('SELECT COALESCE(SUM('.implode('+',array_map($byteLength,$rawColumns))."),0) FROM item_library WHERE $catalogFilter")->fetchColumn();
+        if($rawBytes>API_V2_CATALOG_MAX_RAW_BYTES)throw new RuntimeException('Catalog raw data exceeds inventory limit');
         $statement=$pdo->query("SELECT portal_public_id,item_name,portal_summary,portal_category,portal_display_order,portal_geometry_requirement,portal_questions_json FROM item_library WHERE entry_type='service' AND is_active=1 AND portal_requestable=1 ORDER BY portal_public_id");
         $rows=$statement->fetchAll(PDO::FETCH_ASSOC); $items=[]; $seen=[];
         foreach ($rows as $row) {

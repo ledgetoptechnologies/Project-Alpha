@@ -66,6 +66,21 @@ final class ApiV2CatalogInventoryTest extends TestCase
         self::assertGreaterThan(1,$pages);self::assertSame([str_repeat('a',32),str_repeat('b',32),str_repeat('c',32)],$seen);
     }
 
+    public function testFailsClosedBeforeMaterializingCatalogAboveItemLimit():void
+    {
+        $this->pdo->exec("WITH RECURSIVE numbers(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM numbers WHERE value<10001) INSERT INTO item_library(portal_public_id,item_name,portal_summary,portal_category,portal_display_order,portal_geometry_requirement,portal_questions_json,is_active,portal_requestable,entry_type) SELECT printf('%032x',value+100), 'Service', NULL, 'General', 0, 'none', '[]', 1, 1, 'service' FROM numbers");
+        $this->expectException(RuntimeException::class);$this->expectExceptionMessage('Catalog item count exceeds inventory limit');
+        api_v2_catalog_inventory_read($this->pdo,null,10,7,$this->headers,'over-count');
+    }
+
+    public function testFailsClosedBeforeMaterializingCatalogAboveRawByteLimit():void
+    {
+        $update=$this->pdo->prepare('UPDATE item_library SET portal_questions_json=? WHERE id=1');
+        $update->execute([str_repeat('x',API_V2_CATALOG_MAX_RAW_BYTES+1)]);
+        $this->expectException(RuntimeException::class);$this->expectExceptionMessage('Catalog raw data exceeds inventory limit');
+        api_v2_catalog_inventory_read($this->pdo,null,10,7,$this->headers,'over-bytes');
+    }
+
     public function testRequiresExactIdentityAndValidCursor():void
     {
         self::assertSame(['status'=>409],api_v2_catalog_inventory_read($this->pdo,null,10,7,array_replace($this->headers,['epoch'=>'wrong']),'request'));
