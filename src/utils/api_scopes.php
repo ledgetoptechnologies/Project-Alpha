@@ -173,6 +173,11 @@ function api_scope_catalog(): array
             'description' => 'Read a bounded inventory containing only this application\'s explicit Project bindings. Explicit grant required.',
             'endpoints' => [],
         ],
+        'catalog.inventory.read' => [
+            'label' => 'API v2 catalog inventory',
+            'description' => 'Read a bounded, fenced full snapshot of externally requestable catalog items. Explicit grant required.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',
