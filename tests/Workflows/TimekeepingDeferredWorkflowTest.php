@@ -13,7 +13,7 @@ final class TimekeepingDeferredWorkflowTest extends TestCase
         $this->root = dirname(__DIR__, 2);
     }
 
-    public function testOwnerTimeUsesTheApprovalSnapshotPipelineWithoutOwnerPay(): void
+    public function testOwnerTimeUsesApprovalSnapshotPipelineWithIndependentPayPolicy(): void
     {
         $approval = (string)file_get_contents($this->root . '/src/Modules/Timekeeping/ApprovalService.php');
         $time = (string)file_get_contents($this->root . '/src/Modules/Timekeeping/TimekeepingService.php');
@@ -22,11 +22,12 @@ final class TimekeepingDeferredWorkflowTest extends TestCase
         self::assertStringContainsString('public function selfConfirmOwner', $approval);
         self::assertStringContainsString('public function ensureOwnerProjection', $approval);
         self::assertStringContainsString("['draft','returned','submitted']", $approval);
-        self::assertStringContainsString('$effectivePayable = !$ownerSelfConfirmation', $approval);
-        self::assertStringContainsString('if(!$ownerSelfConfirmation&&!empty($entry[\'work_assignment_id\']))', $approval);
+        self::assertStringNotContainsString('$effectivePayable = !$ownerSelfConfirmation', $approval);
+        self::assertStringContainsString("(string)(\$entry['compensation_policy'] ?? '') === 'rules'", $approval);
+        self::assertStringContainsString('if(!empty($entry[\'work_assignment_id\']))', $approval);
         self::assertStringContainsString("'time_entry.owner_self_confirmed'", $approval);
         self::assertStringContainsString("'duration'", $time);
-        self::assertStringContainsString("'review','draft',?,'owner_no_pay'", $time);
+        self::assertStringContainsString("\$worker['compensation_state']", $time);
         self::assertStringContainsString('workforce_self_confirm_completed($approval, $userId, $entryToSelfConfirm)', $controller);
         self::assertStringContainsString('$entryToSelfConfirm = $time->saveManual', $controller);
         self::assertStringContainsString('$entryToSelfConfirm = $time->saveDuration', $controller);

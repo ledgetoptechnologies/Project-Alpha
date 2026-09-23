@@ -75,17 +75,22 @@ final class JobWorkPlanningService
             if ($assignment['status'] !== 'planned') {
                 throw new DomainException('Only a planned assignment can be offered.');
             }
-            $worker=$this->pdo->prepare("SELECT 1 FROM worker_profiles WHERE id=? AND status='active'");$worker->execute([$workerProfileId]);
-            if(!$worker->fetchColumn()) throw new DomainException('Choose an active worker.');
-            $rule = $override !== null
+            $worker=$this->pdo->prepare("SELECT compensation_policy,relationship_review_required,currency FROM worker_profiles WHERE id=? AND status='active'");$worker->execute([$workerProfileId]);
+            $worker=$worker->fetch(PDO::FETCH_ASSOC);
+            if(!$worker) throw new DomainException('Choose an active worker.');
+            if(!empty($worker['relationship_review_required'])||in_array((string)$worker['compensation_policy'],['needs_setup','needs_review'],true)) throw new DomainException('Configure this worker compensation policy before offering work.');
+            $nonpayablePolicy=in_array((string)$worker['compensation_policy'],['nonpayable','owner_no_pay'],true);
+            $rule = $nonpayablePolicy
+                ? ['method'=>'nonpayable','currency'=>(string)$worker['currency'],'source'=>'worker_policy_nonpayable']
+                : ($override !== null
                 ? $override + ['source' => 'assignment_override']
                 : $this->compensation->resolve(
                     $workerProfileId,
                     (int)$assignment['work_type_id'],
                     $assignment['catalog_work_component_id'] !== null ? (int)$assignment['catalog_work_component_id'] : null,
                     null
-                );
-            if ($override === null && !str_starts_with((string)($rule['source'] ?? ''), 'worker_')) {
+                ));
+            if (!$nonpayablePolicy && $override === null && !str_starts_with((string)($rule['source'] ?? ''), 'worker_')) {
                 $plannedRule = json_decode((string)($assignment['planned_compensation_snapshot'] ?? ''), true);
                 if (is_array($plannedRule)) {
                     $rule = $plannedRule + ['source' => 'job_component_snapshot'];
@@ -162,6 +167,10 @@ final class JobWorkPlanningService
             $assignment = $this->assignmentForUpdate($assignmentId);
             if ($assignment['status'] !== 'completed') {
                 throw new DomainException('Only completed work can become eligible.');
+            }
+            if (!empty($assignment['relationship_review_required'])
+                || in_array((string)($assignment['compensation_policy'] ?? ''), ['needs_setup','needs_review'], true)) {
+                throw new DomainException('Configure this worker compensation policy before releasing work.');
             }
             $rule = json_decode((string)$assignment['compensation_snapshot'], true, 512, JSON_THROW_ON_ERROR);
             $triggerEvent=(string)($context['trigger_event']??'completed_approved');
@@ -419,7 +428,7 @@ final class JobWorkPlanningService
     private function assignmentForUpdate(int $assignmentId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT wa.*,wp.user_id worker_user_id,jwc.work_type_id,jwc.catalog_work_component_id,jwc.expected_duration_minutes,jwc.planned_quantity,
+            'SELECT wa.*,wp.user_id worker_user_id,wp.compensation_policy,wp.relationship_review_required,jwc.work_type_id,jwc.catalog_work_component_id,jwc.expected_duration_minutes,jwc.planned_quantity,
                     jwc.compensation_snapshot planned_compensation_snapshot,
                     COALESCE(JSON_UNQUOTE(JSON_EXTRACT(jwc.compensation_snapshot,"$.source_line_total")),"0") source_line_total
              FROM work_assignments wa JOIN job_work_components jwc ON jwc.id=wa.job_work_component_id

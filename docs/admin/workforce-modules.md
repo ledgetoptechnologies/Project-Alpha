@@ -7,8 +7,8 @@ description: Configure Project Alpha's built-in workforce, timekeeping, approval
 
 Workforce, Timekeeping, Approvals, and Employee Pay run directly inside Project
 Alpha. They share PA's database, login, projects, UI, deployment, and backup.
-There is no second application, connection, synchronization service, or
-compatibility API.
+These modules do not require a second application, connection, or synchronization
+service. Optional API integrations do not change PA's internal financial authority.
 
 ## Module ownership
 
@@ -78,10 +78,12 @@ adjustments. Worker Payment Records preserve the independent fact of what an
 administrator actually paid. All module mutations write to PA's system audit trail.
 
 Verified-Owner self-confirmation is a worker-relationship rule. Marking a Worker
-Profile as a verified business Owner enables automatic confirmation as
-nonpayable owner time. Separately, built-in PA `admin` and `owner` account roles
-may self-confirm their own completed time while retaining the Worker Profile's
-employee or contractor compensation policy. Ordinary time-management and review
+Profile as a verified business Owner permits self-confirmation, but does not
+choose its compensation policy. An explicit `rules` policy can create an eligible
+earning; `nonpayable` and `owner_no_pay` do not. Built-in PA `admin` and `owner`
+account roles may also self-confirm their own completed time without changing
+the Worker Profile's compensation policy. Neither self-confirmation path itself
+approves an earning or records payment. Ordinary time-management and review
 permission grants do not provide this bypass. Historical entries in
 closed periods remain unchanged and require the normal audited exception process.
 

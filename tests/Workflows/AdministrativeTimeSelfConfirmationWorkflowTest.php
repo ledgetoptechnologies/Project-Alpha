@@ -68,7 +68,8 @@ final class AdministrativeTimeSelfConfirmationWorkflowTest extends TestCase
 
         self::assertStringContainsString('selfConfirmAdministrator', $approval);
         self::assertStringContainsString('administrative_self_confirm', $policy);
-        self::assertStringContainsString('$effectivePayable = !$ownerSelfConfirmation', $approval);
+        self::assertStringNotContainsString('$effectivePayable = !$ownerSelfConfirmation', $approval);
+        self::assertStringContainsString("(string)(\$entry['compensation_policy'] ?? '') === 'rules'", $approval);
         self::assertStringContainsString('$billingRateOverride ?? $this->billingRate($entry)', $approval);
         self::assertStringContainsString('time_entry.administratively_self_confirmed', $approval);
         self::assertStringContainsString('workforce_self_confirm_completed', $controller);

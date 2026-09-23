@@ -205,8 +205,8 @@ $statusLabel = static fn(string $status): string => match ($status) {
   <?php if (!empty($_GET['success'])): ?><div class="alert alert-success"><?= $h($_GET['success']) ?></div><?php endif; ?>
   <?php if (!empty($_GET['error'])): ?><div class="alert alert-danger"><?= $h($_GET['error']) ?></div><?php endif; ?>
 
-  <?php if ($currentWorker && $currentWorker['relationship_type'] === 'owner'): ?>
-    <div class="alert alert-info">Owner time may be tracked for operations, costing, and client billing, but it does not create worker earnings or a pay statement.</div>
+  <?php if ($currentWorker && in_array((string)$currentWorker['compensation_policy'], ['nonpayable', 'owner_no_pay'], true)): ?>
+    <div class="alert alert-info">This worker profile is configured as nonpayable. Time may still be tracked for operations, costing, and client billing, but it does not create worker earnings or a pay statement.</div>
   <?php elseif ($currentWorker && $currentPeriod): ?>
     <article class="card workforce-card">
       <div class="card-head">

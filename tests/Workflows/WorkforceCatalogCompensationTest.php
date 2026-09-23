@@ -93,12 +93,14 @@ final class WorkforceCatalogCompensationTest extends TestCase
         self::assertStringContainsString('JOIN worker_profiles wp ON wp.user_id=m.user_id', $source);
     }
 
-    public function testOwnerQuickDurationNeverCreatesOwnerPay(): void
+    public function testOwnerQuickDurationUsesExplicitCompensationPolicy(): void
     {
         $service = (string)file_get_contents(dirname(__DIR__,2).'/src/Modules/Timekeeping/TimekeepingService.php');
         self::assertStringContainsString('public function saveDuration', $service);
         self::assertStringContainsString("'duration'", $service);
-        self::assertStringContainsString("'review','draft',?,'owner_no_pay'", $service);
+        self::assertStringContainsString("\$worker['is_payable']", $service);
+        self::assertStringContainsString("\$worker['compensation_state']", $service);
+        self::assertStringNotContainsString("'review','draft',?,'owner_no_pay'", $service);
         self::assertStringContainsString('ApprovalService::selfConfirmOwner', $service);
         self::assertStringContainsString('owner_internal_cost_rate', $service);
     }

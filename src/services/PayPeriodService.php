@@ -48,7 +48,7 @@ final class PayPeriodService
             }
             $missing = $this->pdo->prepare(
                 "SELECT wp.display_name FROM worker_profiles wp
-                 WHERE wp.status='active' AND wp.relationship_type<>'owner'
+                 WHERE wp.status='active' AND wp.compensation_policy='rules'
                    AND NOT EXISTS (SELECT 1 FROM worker_period_submissions s WHERE s.pay_period_id=? AND s.worker_profile_id=wp.id AND s.status IN ('submitted','accepted','adjusted'))
                  ORDER BY wp.display_name"
             );
@@ -85,7 +85,7 @@ final class PayPeriodService
                    UNION ALL
                    SELECT ca.worker_profile_id FROM compensation_adjustments ca
                    WHERE ca.pay_period_id=? AND ca.status='reviewed'
-                 ) payable ON payable.worker_profile_id=wp.id WHERE wp.relationship_type<>'owner'"
+                 ) payable ON payable.worker_profile_id=wp.id"
             );
             $workers->execute([
                 $periodId, $period['period_start'], $period['period_end'],

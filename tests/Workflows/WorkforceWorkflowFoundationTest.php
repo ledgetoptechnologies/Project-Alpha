@@ -89,7 +89,8 @@ final class WorkforceWorkflowFoundationTest extends TestCase
         self::assertStringContainsString("wp.compensation_policy='needs_review'", $migration);
 
         $service = (string)file_get_contents($this->root . '/src/services/WorkerEarningService.php');
-        self::assertStringContainsString("worker['relationship_type'] === 'owner'", $service);
+        self::assertStringContainsString("worker['compensation_policy'] === 'owner_no_pay'", $service);
+        self::assertStringNotContainsString("worker['relationship_type']", $service);
         self::assertStringNotContainsString("worker['role']", $service);
     }
 

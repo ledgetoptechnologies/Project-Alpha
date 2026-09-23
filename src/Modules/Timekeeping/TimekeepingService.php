@@ -409,7 +409,7 @@ final class TimekeepingService
             throw new DomainException('The optional start time must be on the selected work date.');
         }
         $profile = $this->pdo->prepare(
-            'SELECT wp.id,wp.relationship_type,wp.owner_internal_cost_rate,u.role user_role
+            'SELECT wp.id,wp.relationship_type,wp.compensation_policy,wp.relationship_review_required,wp.owner_internal_cost_rate,u.role user_role
              FROM users u LEFT JOIN worker_profiles wp ON wp.user_id=u.id AND wp.status="active"
              WHERE u.id=? AND u.deleted_at IS NULL AND u.is_disabled=0'
         );
@@ -441,18 +441,19 @@ final class TimekeepingService
         $billingState = $this->billingStateForInput($input);
         $billable = $this->explicitBillableFlag($input);
         $this->assertBillableJob($billable, $context['job_id']);
+        $worker = $this->workerContext($userId);
         $this->pdo->prepare(
             "INSERT INTO work_time_entries
              (id,user_id,worker_profile_id,entered_by_user_id,client_id,project_id,invoice_id,job_id,work_type_id,work_assignment_id,
               entry_mode,start_time,end_time,duration_seconds,description,tags,billable,is_payable,owner_self_confirmed,internal_cost_rate,
               status,workflow_status,billing_state,compensation_state,reviewed_by,reviewed_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,'duration',?,?,?,?,?,?,0,0,?,'review','draft',?,'owner_no_pay',NULL,NULL)"
+             VALUES (?,?,?,?,?,?,?,?,?,?,'duration',?,?,?,?,?,?,?,0,?,'review','draft',?,?,NULL,NULL)"
         )->execute([
             $id,$userId,$profile['id'] ?? null,$this->enteredBy($userId, $input),$context['client_id'],$context['project_id'],
             $context['invoice_id'],$context['job_id'],$workTypeId,$assignmentId,
             $startUtc->format('Y-m-d H:i:s.u'),$endUtc->format('Y-m-d H:i:s.u'),$minutes*60,
             trim((string)($input['description'] ?? '')),json_encode([],JSON_THROW_ON_ERROR),$billable,
-            $profile['owner_internal_cost_rate'] ?? null,$billingState,
+            $worker['is_payable'],$profile['owner_internal_cost_rate'] ?? null,$billingState,$worker['compensation_state'],
         ]);
         $this->audit->record('time_entry.created', 'work_time_entry', $id, $userId, [], ['job_id'=>$context['job_id'],'duration_minutes'=>$minutes,'entry_mode'=>'duration']);
         return $id;
@@ -813,15 +814,13 @@ final class TimekeepingService
             || in_array((string)$profile['compensation_policy'], ['needs_setup', 'needs_review'], true)) {
             return ['id' => (int)$profile['id'], 'is_payable' => 0, 'compensation_state' => 'needs_setup'];
         }
-        if ((string)$profile['relationship_type'] === 'owner'
-            || (string)$profile['compensation_policy'] === 'owner_no_pay') {
+        if ((string)$profile['compensation_policy'] === 'owner_no_pay') {
             return ['id' => (int)$profile['id'], 'is_payable' => 0, 'compensation_state' => 'owner_no_pay'];
         }
         if ((string)$profile['compensation_policy'] === 'nonpayable') {
             return ['id' => (int)$profile['id'], 'is_payable' => 0, 'compensation_state' => 'nonpayable'];
         }
-        $payable = in_array((string)$profile['relationship_type'], ['employee', 'contractor'], true)
-            && (string)$profile['compensation_policy'] === 'rules';
+        $payable = (string)$profile['compensation_policy'] === 'rules';
         return [
             'id' => (int)$profile['id'],
             'is_payable' => $payable ? 1 : 0,

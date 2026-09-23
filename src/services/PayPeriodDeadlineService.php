@@ -162,7 +162,7 @@ final class PayPeriodDeadlineService
         $stmt = $this->pdo->prepare(
             "SELECT wp.id worker_profile_id,wp.display_name,wp.user_id,u.email
              FROM worker_profiles wp JOIN users u ON u.id=wp.user_id
-             WHERE wp.status='active' AND wp.relationship_type<>'owner'
+             WHERE wp.status='active' AND wp.compensation_policy='rules'
                AND u.deleted_at IS NULL AND u.is_disabled=0 AND u.email<>''
                AND EXISTS (
                  SELECT 1 FROM work_time_entries t
@@ -183,7 +183,7 @@ final class PayPeriodDeadlineService
             "SELECT DISTINCT wp.id worker_profile_id,wp.display_name,wp.user_id,u.email
              FROM worker_profiles wp JOIN users u ON u.id=wp.user_id
              JOIN work_time_entries t ON t.worker_profile_id=wp.id
-             WHERE wp.status='active' AND wp.relationship_type<>'owner'
+             WHERE wp.status='active' AND wp.compensation_policy='rules'
                AND t.start_time>=? AND t.start_time<?
                AND t.workflow_status<>'voided' AND u.deleted_at IS NULL AND u.is_disabled=0
              ORDER BY wp.display_name,u.email"
