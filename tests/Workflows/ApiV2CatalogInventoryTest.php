@@ -54,14 +54,13 @@ final class ApiV2CatalogInventoryTest extends TestCase
 
     public function testByteBudgetPaginatesMaximumValidMultibyteItems():void
     {
-        $options=[];for($i=0;$i<50;$i++)$options[]=['value'=>str_pad((string)$i,2,'0',STR_PAD_LEFT).str_repeat('界',98),'label'=>str_repeat('界',200)];
-        $questions=[];for($i=0;$i<10;$i++)$questions[]=['id'=>'choice_'.$i,'label'=>str_repeat('界',200),'type'=>'multi-select','required'=>true,'helpText'=>str_repeat('界',500),'options'=>$options];
+        $options=[];for($i=0;$i<50;$i++)$options[]=['value'=>str_pad((string)$i,2,'0',STR_PAD_LEFT).str_repeat('😀',98),'label'=>str_repeat('😀',200)];
+        $questions=[];for($i=0;$i<10;$i++)$questions[]=['id'=>'choice_'.$i,'label'=>str_repeat('😀',200),'type'=>'multi-select','required'=>true,'helpText'=>str_repeat('😀',500),'options'=>$options];
         $update=$this->pdo->prepare('UPDATE item_library SET item_name=?,portal_summary=?,portal_category=?,portal_questions_json=?,is_active=1,portal_requestable=1 WHERE id IN (1,2,3)');
-        $update->execute([str_repeat('界',255),str_repeat('界',1000),str_repeat('界',100),json_encode($questions,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
-        $first=api_v2_catalog_inventory_read($this->pdo,null,3,7,$this->headers,'maximum-page-one');self::assertSame(200,$first['status']);self::assertNotEmpty($first['payload']['items']);self::assertLessThan(3,count($first['payload']['items']));self::assertSame(3,$first['payload']['totalCount']);self::assertNotNull($first['payload']['nextCursor']);
-        self::assertLessThanOrEqual(API_V2_CATALOG_RESPONSE_MAX_BYTES,strlen(json_encode($first['payload'],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)));
-        $second=api_v2_catalog_inventory_read($this->pdo,$first['payload']['nextCursor'],3,7,$this->headers,'maximum-page-two');self::assertSame(200,$second['status']);self::assertCount(3-count($first['payload']['items']),$second['payload']['items']);self::assertNull($second['payload']['nextCursor']);
-        self::assertLessThanOrEqual(API_V2_CATALOG_RESPONSE_MAX_BYTES,strlen(json_encode($second['payload'],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)));
+        $update->execute([str_repeat('😀',255),str_repeat('😀',1000),str_repeat('😀',100),json_encode($questions,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
+        $cursor=null;$seen=[];$pages=0;
+        do{$result=api_v2_catalog_inventory_read($this->pdo,$cursor,3,7,$this->headers,'maximum-page-'.(++$pages));self::assertSame(200,$result['status']);self::assertNotEmpty($result['payload']['items']);self::assertSame(3,$result['payload']['totalCount']);self::assertLessThanOrEqual(API_V2_CATALOG_RESPONSE_MAX_BYTES,strlen(json_encode($result['payload'],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)));array_push($seen,...array_column($result['payload']['items'],'publicId'));$cursor=$result['payload']['nextCursor'];}while($cursor!==null);
+        self::assertGreaterThan(1,$pages);self::assertSame([str_repeat('a',32),str_repeat('b',32),str_repeat('c',32)],$seen);
     }
 
     public function testRequiresExactIdentityAndValidCursor():void
