@@ -82,6 +82,11 @@ $employeeProjectIds = array_values(array_unique(array_filter(
     static fn(int $id): bool => $id > 0
 )));
 $employeeProjectRates = (array)($_POST['employee_project_rates'] ?? []);
+$workerCompensationPolicy = trim((string)($_POST['worker_compensation_policy'] ?? 'needs_setup'));
+$allowedWorkerCompensationPolicies = ['needs_setup', 'rules', 'nonpayable'];
+if (!in_array($workerCompensationPolicy, $allowedWorkerCompensationPolicies, true)) {
+    $workerCompensationPolicy = 'needs_setup';
+}
 
 if ($role === 'employee') {
     if ($employeeFirstName === '') {
@@ -166,7 +171,6 @@ try {
         $workerCurrency = (string)$settings['currency'];
         $workerRelationship = $role === 'owner' ? 'owner' : 'employee';
         $workerReviewPolicy = $workerRelationship === 'owner' ? 'self_confirm' : 'manager_review';
-        $workerCompensationPolicy = $workerRelationship === 'owner' ? 'owner_no_pay' : 'rules';
         $pdo->prepare(
             'INSERT INTO worker_profiles (user_id,relationship_type,time_review_policy,compensation_policy,status,display_name,currency,hired_at)
              VALUES (?,?,?, ?,"active",?,?,?)'

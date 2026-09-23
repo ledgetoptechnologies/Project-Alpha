@@ -96,8 +96,8 @@ $entryCompensationLabels = [
     'adjusted' => 'Adjusted',
     'voided' => 'Voided',
 ];
-$defaultPayable = !$selectedIsOwner && ($selectedCompensationPolicy === 'rules'
-    || ($selectedCompensationPolicy === '' && $selectedRole === 'employee'));
+$defaultPayable = $selectedCompensationPolicy === 'rules'
+    || ($selectedCompensationPolicy === '' && $selectedRole === 'employee');
 $defaultPaySummary = in_array($selectedCompensationPolicy, ['needs_setup', 'needs_review'], true)
     ? 'Needs pay setup'
     : ($defaultPayable ? 'Provisional' : 'Nonpayable / internal');
@@ -312,11 +312,11 @@ foreach ($entries as $entry) {
         </fieldset>
         <fieldset class="workforce-outcome workforce-outcome--compensation">
           <legend>Worker compensation</legend>
-          <?php if (!$selectedIsOwner): ?>
+          <?php if (!in_array($selectedCompensationPolicy, ['nonpayable', 'owner_no_pay'], true)): ?>
             <label class="workforce-outcome__choice"><input type="checkbox" name="is_payable" value="1" <?= $defaultPayable ? 'checked' : '' ?> data-workforce-payable> <span>Eligible for worker compensation<small>Final eligibility is determined after time approval.</small></span></label>
             <p class="workforce-outcome__summary"><strong data-workforce-pay-summary><?= $h($defaultPaySummary) ?></strong><span>Compensation remains separate from client billing.</span></p>
-          <?php elseif ($selectedIsOwner): ?>
-            <input type="hidden" name="is_payable" value="0"><p class="workforce-outcome__summary"><strong>Owner &mdash; no payroll compensation</strong><span>Owner time may still be available for client billing.</span></p>
+          <?php elseif (in_array($selectedCompensationPolicy, ['nonpayable', 'owner_no_pay'], true)): ?>
+            <input type="hidden" name="is_payable" value="0"><p class="workforce-outcome__summary"><strong>Nonpayable by worker policy</strong><span>Time may still be available for client billing.</span></p>
           <?php else: ?>
             <p class="workforce-outcome__summary"><strong>Based on worker pay setup</strong><span>Approval confirms time; compensation rules are applied separately.</span></p>
           <?php endif; ?>

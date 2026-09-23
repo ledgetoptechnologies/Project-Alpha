@@ -146,6 +146,10 @@ final class WorkforceRedesignDatabaseTest extends TestCase
             $adminId,
             'Verification approval'
         );
+        // A later policy change governs future work, not this immutable
+        // already-approved earning.
+        $pdo->prepare("UPDATE worker_profiles SET compensation_policy='nonpayable' WHERE id=?")
+            ->execute([$workerProfileId]);
         // This test runs against a shared isolated QA schema that may contain
         // unrelated active worker fixtures from prior verification passes.
         $closed = $periods->close((int)$period['id'], $adminId, true);
@@ -178,6 +182,20 @@ final class WorkforceRedesignDatabaseTest extends TestCase
         self::assertSame('confirmed', $this->value($pdo, 'SELECT workflow_status FROM work_time_entries WHERE id=?', [$ownerEntryId]));
         self::assertSame('owner_no_pay', $this->value($pdo, 'SELECT compensation_state FROM work_time_entries WHERE id=?', [$ownerEntryId]));
         self::assertSame('0', $this->value($pdo, 'SELECT COUNT(*) FROM worker_earnings WHERE work_time_entry_id=?', [$ownerEntryId]));
+
+        $pdo->prepare("UPDATE worker_profiles SET compensation_policy='rules' WHERE id=?")
+            ->execute([$ownerProfileId]);
+        $paidOwnerEntryId = $time->saveManual($ownerUserId, [
+            'capture_mode' => 'duration',
+            'start_time' => $workDate->modify('+2 days')->format('Y-m-d\\TH:i'),
+            'end_time' => $workDate->modify('+2 days +1 hour')->format('Y-m-d\\TH:i'),
+            'description' => 'Compensated owner operations work',
+            'billing_treatment' => 'nonbillable',
+            'entered_by_user_id' => $ownerUserId,
+        ]);
+        $approval->ensureOwnerProjection($ownerUserId, $paidOwnerEntryId);
+        self::assertSame('eligible', $this->value($pdo, 'SELECT compensation_state FROM work_time_entries WHERE id=?', [$paidOwnerEntryId]));
+        self::assertSame('1', $this->value($pdo, 'SELECT COUNT(*) FROM worker_earnings WHERE work_time_entry_id=? AND status="eligible"', [$paidOwnerEntryId]));
     }
 
     private function value(PDO $pdo, string $sql, array $parameters): string

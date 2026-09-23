@@ -289,9 +289,7 @@ final class ApprovalService
             $payPolicyReady = !empty($entry['worker_profile_id'])
                 && empty($entry['relationship_review_required'])
                 && (string)($entry['compensation_policy'] ?? '') === 'rules';
-            $effectivePayable = !$ownerSelfConfirmation
-                && (int)$entry['is_payable'] === 1
-                && ($entry['relationship_type'] ?? '') !== 'owner'
+            $effectivePayable = (int)$entry['is_payable'] === 1
                 && empty($entry['work_assignment_id'])
                 && $payPolicyReady;
             $payRate = $entry['pay_rate_override'] ?? $entry['employee_rate'] ?? $entry['default_hourly_rate'];
@@ -348,7 +346,7 @@ final class ApprovalService
                 : (in_array((string)($entry['billing_state'] ?? ''), ['internal','fixed_price_included','decide_later'], true)
                     ? (string)$entry['billing_state'] : 'decide_later');
             $compensationState = match (true) {
-                $ownerSelfConfirmation || ($entry['relationship_type'] ?? '') === 'owner' => 'owner_no_pay',
+                (string)($entry['compensation_policy'] ?? '') === 'owner_no_pay' => 'owner_no_pay',
                 (string)($entry['compensation_policy'] ?? '') === 'nonpayable' => 'nonpayable',
                 !empty($entry['work_assignment_id']) => 'provisional',
                 $effectivePayable => $payAmount === null ? 'needs_setup' : 'eligible',
@@ -429,7 +427,7 @@ final class ApprovalService
                 'approval:' . $snapshotId
             );
             $this->billing->consume($snapshot);
-            if(!$ownerSelfConfirmation&&!empty($entry['work_assignment_id'])){
+            if(!empty($entry['work_assignment_id'])){
                 $pending=$this->pdo->prepare("SELECT COUNT(*) FROM work_time_entries WHERE work_assignment_id=? AND id<>? AND status NOT IN ('approved','cancelled','voided')");$pending->execute([$entry['work_assignment_id'],$entryId]);
                 if((int)$pending->fetchColumn()===0){$assignment=$this->pdo->prepare("SELECT status,JSON_UNQUOTE(JSON_EXTRACT(compensation_snapshot,'$.eligibility_trigger')) trigger_name FROM work_assignments WHERE id=?");$assignment->execute([$entry['work_assignment_id']]);$assignment=$assignment->fetch(PDO::FETCH_ASSOC);if($assignment&&$assignment['status']==='completed'&&$assignment['trigger_name']==='completed_approved')(new JobWorkPlanningService($this->pdo,new CompensationRuleService($this->pdo)))->markEligible((int)$entry['work_assignment_id'],['trigger_event'=>'completed_approved'],$approverId);}
             }

@@ -350,7 +350,9 @@ try {
         ]);
     } elseif ($defaultWorkerRelationship !== null) {
         $workerReviewPolicy = $defaultWorkerRelationship === 'owner' ? 'self_confirm' : 'manager_review';
-        $workerCompensationPolicy = $defaultWorkerRelationship === 'owner' ? 'owner_no_pay' : 'rules';
+        // Account role selects the initial relationship only. Compensation is
+        // intentionally left unresolved until an authorized policy is chosen.
+        $workerCompensationPolicy = 'needs_setup';
         $pdo->prepare(
             'INSERT INTO worker_profiles (user_id,relationship_type,time_review_policy,compensation_policy,status,display_name,currency,hired_at,ended_at)
              VALUES (?,?,?,?,?,?,?,?,?)'

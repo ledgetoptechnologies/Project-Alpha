@@ -2868,7 +2868,7 @@ CREATE TABLE IF NOT EXISTS worker_profiles (
     relationship_reviewed_by INT NULL,
     relationship_reviewed_at DATETIME(6) NULL,
     time_review_policy ENUM('manager_review','self_confirm','auto_confirm') NOT NULL DEFAULT 'manager_review',
-    compensation_policy ENUM('rules','nonpayable','owner_no_pay','needs_setup','needs_review') NOT NULL DEFAULT 'rules',
+    compensation_policy ENUM('rules','nonpayable','owner_no_pay','needs_setup','needs_review') NOT NULL DEFAULT 'needs_setup',
     status ENUM('active','inactive','terminated') NOT NULL DEFAULT 'active',
     display_name VARCHAR(255) NOT NULL DEFAULT '',
     currency CHAR(3) NOT NULL DEFAULT 'USD',

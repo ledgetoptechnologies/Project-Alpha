@@ -37,16 +37,16 @@ $requiredPermissions=match($action){
 if(!$requiredPermissions||!array_filter($requiredPermissions,$can)){http_response_code(403);exit('Forbidden');}
 try{
  if($action==='save-worker-profile'){
-  $id=(int)($_POST['id']??0);$display=trim((string)($_POST['display_name']??''));$relationship=strtolower(trim((string)($_POST['relationship_type']??'employee')));$accountId=(int)($_POST['user_id']??0)?:null;$status=(string)($_POST['status']??'active');$currency=strtoupper(trim((string)($_POST['currency']??'USD')));
-  $previousAccountId=null;if($id){$previousAccount=$pdo->prepare('SELECT user_id FROM worker_profiles WHERE id=?');$previousAccount->execute([$id]);$previousProfile=$previousAccount->fetch(PDO::FETCH_ASSOC)?:[];$previousAccountId=(int)($previousProfile['user_id']??0)?:null;}
+  $id=(int)($_POST['id']??0);$display=trim((string)($_POST['display_name']??''));$relationship=strtolower(trim((string)($_POST['relationship_type']??'employee')));$accountId=(int)($_POST['user_id']??0)?:null;$status=(string)($_POST['status']??'active');$currency=strtoupper(trim((string)($_POST['currency']??'USD')));$reviewPolicy=trim((string)($_POST['time_review_policy']??''));$compensationPolicy=trim((string)($_POST['compensation_policy']??''));
+  $previousAccountId=null;if($id){$previousAccount=$pdo->prepare('SELECT user_id,time_review_policy,compensation_policy FROM worker_profiles WHERE id=?');$previousAccount->execute([$id]);$previousProfile=$previousAccount->fetch(PDO::FETCH_ASSOC)?:[];$previousAccountId=(int)($previousProfile['user_id']??0)?:null;$reviewPolicy=(string)($previousProfile['time_review_policy']??'manager_review');$compensationPolicy=$compensationPolicy!==''?$compensationPolicy:(string)($previousProfile['compensation_policy']??'needs_setup');}else{$reviewPolicy='manager_review';$compensationPolicy=$compensationPolicy!==''?$compensationPolicy:'needs_setup';}
   if($display===''||!preg_match('/^[a-z0-9_-]{2,50}$/',$relationship))throw new DomainException('Enter a worker name and valid relationship type.');
   if(!in_array($status,['active','inactive','terminated'],true)||!preg_match('/^[A-Z]{3}$/',$currency))throw new DomainException('Choose a valid worker status and currency.');
+  if(!in_array($reviewPolicy,['manager_review','self_confirm','auto_confirm'],true))throw new DomainException('Choose a valid time review policy.');
+  if(!in_array($compensationPolicy,['rules','nonpayable','owner_no_pay','needs_setup'],true))throw new DomainException('Choose a valid compensation policy.');
   $pdo->beginTransaction();
   if($id){
-   $reviewPolicy=$relationship==='owner'?'self_confirm':'manager_review';$compensationPolicy=$relationship==='owner'?'owner_no_pay':'rules';
    $pdo->prepare('UPDATE worker_profiles SET user_id=?,relationship_type=?,relationship_review_required=0,relationship_review_reason=NULL,relationship_reviewed_by=?,relationship_reviewed_at=UTC_TIMESTAMP(6),time_review_policy=?,compensation_policy=?,status=?,display_name=?,currency=?,ended_at=CASE WHEN ?="terminated" THEN COALESCE(ended_at,CURRENT_DATE) ELSE NULL END WHERE id=?')->execute([$accountId,$relationship,$userId,$reviewPolicy,$compensationPolicy,$status,$display,$currency,$status,$id]);
   }else{
-   $reviewPolicy=$relationship==='owner'?'self_confirm':'manager_review';$compensationPolicy=$relationship==='owner'?'owner_no_pay':'rules';
    $pdo->prepare('INSERT INTO worker_profiles (user_id,relationship_type,time_review_policy,compensation_policy,status,display_name,currency) VALUES (?,?,?,?,?,?,?)')->execute([$accountId,$relationship,$reviewPolicy,$compensationPolicy,$status,$display,$currency]);
   }
   $syncOpsAccount($previousAccountId);if($accountId!==$previousAccountId)$syncOpsAccount($accountId);

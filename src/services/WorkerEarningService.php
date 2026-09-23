@@ -93,13 +93,13 @@ final class WorkerEarningService
             if (!$worker) {
                 throw new DomainException('Worker profile not found.');
             }
-            // Worker relationship, never account ACL role, determines owner pay.
-            if ((string)$worker['relationship_type'] === 'owner'
-                || (string)$worker['compensation_policy'] === 'owner_no_pay') {
-                throw new DomainException('Owner time does not create a payroll earning.');
+            // Compensation policy, never relationship or account ACL role,
+            // determines whether this worker can receive an earning.
+            if ((string)$worker['compensation_policy'] === 'owner_no_pay') {
+                throw new DomainException('This worker profile is configured as nonpayable.');
             }
             if ((int)$worker['relationship_review_required'] === 1
-                || (string)$worker['compensation_policy'] === 'needs_review') {
+                || in_array((string)$worker['compensation_policy'], ['needs_review', 'needs_setup'], true)) {
                 throw new DomainException('Reconcile this worker relationship before creating earnings.');
             }
             if ((string)$worker['compensation_policy'] === 'nonpayable') {

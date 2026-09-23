@@ -257,7 +257,6 @@ final class TimeCorrectionService
             $profile->execute([(string)$before['id']]);
             $worker = $profile->fetch(PDO::FETCH_ASSOC);
             if (!$worker
-                || (string)$worker['relationship_type'] === 'owner'
                 || (string)$worker['compensation_policy'] !== 'rules'
                 || !empty($worker['relationship_review_required'])
                 || empty($after['work_type_id'])) {

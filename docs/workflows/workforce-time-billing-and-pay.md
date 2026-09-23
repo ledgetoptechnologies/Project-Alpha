@@ -50,11 +50,13 @@ After time is confirmed:
 - Finalized invoices are never automatic destinations.
 - An admin may move the entry while the affected billing records remain mutable. Conflicting client, Project, or Job context requires an explicit correction and is never silently overwritten.
 
-Selecting a draft invoice while entering time records the intended destination, but it does not create a financial line before confirmation. The draft invoice editor shows matching pending time and its current review state. A verified Owner can use **Confirm and add** for their own nonpayable owner time. Built-in `admin` and `owner` account roles may also confirm their own completed time while retaining the compensation policy from their Worker Profile. Other employee and contractor entries remain behind the normal reviewer control. Once confirmed, the selected draft invoice is updated automatically and its totals are recalculated.
+Selecting a draft invoice while entering time records the intended destination, but it does not create a financial line before confirmation. The draft invoice editor shows matching pending time and its current review state. A verified Owner can use **Confirm and add** for their own time. Built-in `admin` and `owner` account roles may also confirm their own completed time. In either case, the Worker Profile's explicit compensation policy determines whether confirmed time can create an eligible earning; confirmation does not itself approve or pay that earning. Other employee and contractor entries remain behind the normal reviewer control. Once confirmed, the selected draft invoice is updated automatically and its totals are recalculated.
 
-Verified-Owner confirmation and administrative self-confirmation have different pay semantics. The verified **Owner relationship** remains nonpayable owner time. Administrative self-confirmation is an account-role privilege and preserves ordinary employee or contractor compensation rules. Permission grants such as time-management access do not provide this self-confirmation bypass. Closed periods and finalized historical records remain unchanged and must be handled as audited exceptions.
+Verified-Owner confirmation and administrative self-confirmation are different authority paths, not compensation policies. The verified **Owner relationship** can allow self-confirmation; an explicit `rules` Worker Profile may earn compensation, while a nonpayable policy suppresses it. Administrative self-confirmation is an account-role privilege and does not change the Worker Profile's compensation policy. Permission grants such as time-management access do not provide this self-confirmation bypass. Closed periods and finalized historical records remain unchanged and must be handled as audited exceptions.
 
 Owner self-confirmation depends on the verified **Owner relationship** in the Worker Profile, not an `admin` or `owner` account role by itself. Verifying that relationship reconciles completed pending entries in open review periods through the normal approval service. Closed periods and finalized historical records remain unchanged and must be handled as audited exceptions.
+
+Compensation policy is independent of account role and worker relationship. A newly created Worker Profile without an explicit policy starts at **Needs setup**; an administrator must choose the intended policy before payable work is processed. Changing a policy governs future calculations and does not erase approved earning snapshots. Pay-period statements still include already-approved earnings after a later policy change. Worker Payment Records remain a separate confirmation that money was actually paid.
 
 Hourly Service lines on quotes and contracts are estimates. They show estimated hours, hourly price, and an estimated total. They do not become collectible invoice charges during conversion. Confirmed time creates the actual hourly invoice lines. Fixed-price time is operational history and does not create an additional client charge.
 
@@ -104,3 +106,14 @@ The organization configures the pay-period deadline time in the Workforce settin
 At the deadline, Project Alpha submits and confirms completed entries, creates their snapshots, and locks worker editing. Running or incomplete entries remain in the exception queue. Later changes use the admin correction workflow.
 
 Statements calculate what is owed. Worker Payment Records separately document what was actually paid. Payroll exports contain stable statement, earning, worker, work-date, method, quantity, rate, gross-delta, currency, and correction identifiers for reconciliation.
+
+## Compensation-policy migration verification
+
+On September 23, 2026, an isolated MySQL 8.4 fixture was initialized from the
+pre-change baseline. The normal migration runner applied and validated all
+pending migrations through `0107_decouple_worker_compensation_policy.sql`.
+The column default changed from `rules` to `needs_setup`; the workforce
+database lifecycle test then passed (1 test, 29 assertions). Focused workflow
+tests passed separately (28 tests, 153 assertions). The temporary fixture was
+removed. These are local checks, not evidence of a production migration,
+deployment, or payroll acceptance.

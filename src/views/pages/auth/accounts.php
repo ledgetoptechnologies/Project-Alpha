@@ -261,6 +261,16 @@ if (!isset($roleDefaults[(string)$defaultCreateRoleId]) || empty($roleDefaults[(
             <span>Force password change on first login</span>
           </label>
 
+          <label style="display:block;margin-top:16px;">
+            <span style="display:block;font-weight:600;margin-bottom:4px;">New worker compensation policy</span>
+            <select name="worker_compensation_policy" class="input">
+              <option value="needs_setup">Needs setup (recommended)</option>
+              <option value="rules">Pay using compensation rules</option>
+              <option value="nonpayable">Do not create compensation</option>
+            </select>
+            <small>Used when the selected role creates a worker profile. Account access does not determine pay.</small>
+          </label>
+
         </div>
 
         <div id="employee-profile-panel" class="pa-create-card" style="margin-bottom:16px;" hidden>
