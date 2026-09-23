@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/api_v2_capabilities.php';
 
+const API_V2_CATALOG_RESPONSE_MAX_BYTES = 1048576;
+
 function api_v2_catalog_cursor_encode(string $snapshotId, int $totalCount, string $afterPublicId): string
 {
     $json = json_encode(['snapshotId'=>$snapshotId,'totalCount'=>$totalCount,'afterPublicId'=>$afterPublicId], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -75,7 +77,7 @@ function api_v2_catalog_inventory_read(PDO $pdo, ?string $cursor, int $limit, in
             || !hash_equals((string)$identity['history_epoch'],(string)($headers['epoch']??''))) {
             $pdo->rollBack(); return ['status'=>409];
         }
-        $statement=$pdo->query("SELECT portal_public_id,item_name,portal_summary,portal_category,portal_display_order,portal_geometry_requirement,portal_questions_json FROM item_library WHERE is_active=1 AND portal_requestable=1 ORDER BY portal_public_id");
+        $statement=$pdo->query("SELECT portal_public_id,item_name,portal_summary,portal_category,portal_display_order,portal_geometry_requirement,portal_questions_json FROM item_library WHERE entry_type='service' AND is_active=1 AND portal_requestable=1 ORDER BY portal_public_id");
         $rows=$statement->fetchAll(PDO::FETCH_ASSOC); $items=[]; $seen=[];
         foreach ($rows as $row) {
             $publicId=(string)($row['portal_public_id']??'');
@@ -102,9 +104,19 @@ function api_v2_catalog_inventory_read(PDO $pdo, ?string $cursor, int $limit, in
             while ($start<$totalCount && strcmp($items[$start]['publicId'],$decodedCursor['afterPublicId'])<=0) $start++;
             if($start===0||$items[$start-1]['publicId']!==$decodedCursor['afterPublicId']){$pdo->rollBack();return['status'=>400];}
         }
-        $page=array_slice($items,$start,$limit); $hasMore=$start+count($page)<$totalCount;
-        $next=$hasMore&&$page!==[]?api_v2_catalog_cursor_encode($snapshotId,$totalCount,$page[count($page)-1]['publicId']):null;
-        $payload=['apiVersion'=>'2','sourceInstanceId'=>(string)$identity['source_instance_id'],'applicationId'=>(string)$identity['application_id'],'historyEpoch'=>(string)$identity['history_epoch'],'requestId'=>$requestId,'snapshotId'=>$snapshotId,'totalCount'=>$totalCount,'items'=>$page,'nextCursor'=>$next];
+        $base=['apiVersion'=>'2','sourceInstanceId'=>(string)$identity['source_instance_id'],'applicationId'=>(string)$identity['application_id'],'historyEpoch'=>(string)$identity['history_epoch'],'requestId'=>$requestId,'snapshotId'=>$snapshotId,'totalCount'=>$totalCount];
+        $page=[];
+        for($index=$start;$index<$totalCount&&count($page)<$limit;$index++){
+            $candidate=[...$page,$items[$index]];$candidateMore=$index+1<$totalCount;
+            $candidateNext=$candidateMore?api_v2_catalog_cursor_encode($snapshotId,$totalCount,$items[$index]['publicId']):null;
+            $candidatePayload=$base+['items'=>$candidate,'nextCursor'=>$candidateNext];
+            $bytes=strlen(json_encode($candidatePayload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
+            if($bytes>API_V2_CATALOG_RESPONSE_MAX_BYTES){if($page===[])throw new RuntimeException('Catalog item exceeds response limit');break;}
+            $page=$candidate;
+        }
+        $hasMore=$start+count($page)<$totalCount;
+        $next=$hasMore?api_v2_catalog_cursor_encode($snapshotId,$totalCount,$page[count($page)-1]['publicId']):null;
+        $payload=$base+['items'=>$page,'nextCursor'=>$next];
         $pdo->commit(); return ['status'=>200,'payload'=>$payload];
     } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }
 }

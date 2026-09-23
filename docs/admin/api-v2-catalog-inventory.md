@@ -8,11 +8,18 @@ an API v2 application and have the explicit `api.capabilities.read` and
 `full` scope is rejected. Requests carry the matching `X-PA-Source-Instance-ID`,
 `X-PA-Application-ID`, and `X-PA-History-Epoch`.
 
-The endpoint returns current active, externally requestable items in stable
-`publicId` order. `limit` is 1 through 200; there is no installation-size
+The endpoint returns current active, externally requestable services in stable
+`publicId` order. Canonical `entry_type=service` is required; products, fees,
+and bundles remain excluded even if legacy data marks them requestable.
+`limit` is 1 through 200; there is no installation-size
 truncation or hidden total-count ceiling. Each item's `version` is the SHA-256 of its emitted canonical
 content. The top-level `snapshotId` is the SHA-256 of the ordered `publicId` and
 `version` pairs, and `totalCount` is pinned in the opaque cursor.
+Pages are also bounded to 1,048,576 serialized JSON bytes. The server returns up
+to the requested item limit and stops before the next item would cross that byte
+budget, then continues from the last emitted item. One item at every documented
+maximum, including four-byte Unicode content, fits this absolute cap, so a
+valid item never becomes unenumerable and a non-final page is never empty.
 
 Before enabling the route, audit every active externally requestable item for a
 unique 32-character lowercase hexadecimal `publicId` and valid client-safe
