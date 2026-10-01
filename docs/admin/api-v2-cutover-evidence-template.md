@@ -93,6 +93,7 @@ to suppress an individual route.
 | `APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read`, `projects.binding.revision.refresh` |
 | `APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read`, `projects.binding_status.read` |
 | `APP_API_V2_PROJECTS_INVENTORY_ENABLED` | enabled | `api.capabilities.read`, `projects.inventory.read` |
+| `APP_API_V2_FINANCIAL_PORTAL_SUMMARY_ENABLED` | disabled | `api.capabilities.read`, `financial.portal_summary.read`; read-only, exact application-bound customer, organization, or Project mapping |
 
 For the planned subset, retain:
 

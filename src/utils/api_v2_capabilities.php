@@ -139,6 +139,9 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'projects_inventory' => [
             ['projects.inventory.read', '/api/v2/projects/inventory'],
         ],
+        'financial_portal_summary' => [
+            ['financial.portal_summary.read', '/api/v2/financial/summary'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;

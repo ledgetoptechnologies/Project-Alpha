@@ -73,6 +73,32 @@ final class ApiV2ReadRouteDefaultsTest extends TestCase
         }
     }
 
+    public function testFinancialPortalSummaryIsASeparateDefaultOffReadSurface(): void
+    {
+        $flag = 'APP_API_V2_FINANCIAL_PORTAL_SUMMARY_ENABLED';
+        $previous = getenv($flag);
+        try {
+            putenv($flag);
+            self::assertFalse(filter_var(getenv($flag) ?: 'false', FILTER_VALIDATE_BOOLEAN));
+            putenv($flag . '=true');
+            self::assertTrue(filter_var(getenv($flag) ?: 'false', FILTER_VALIDATE_BOOLEAN));
+            $root = dirname(__DIR__, 2);
+            self::assertStringContainsString("'/api/v2/financial/summary'", (string) file_get_contents($root . '/public/index.php'));
+            self::assertStringContainsString("'financial_portal_summary'", (string) file_get_contents($root . '/src/controllers/api/capabilities_v2.php'));
+            self::assertStringContainsString($flag . '=false', (string) file_get_contents($root . '/config/.env.example'));
+        } finally {
+            $previous === false ? putenv($flag) : putenv($flag . '=' . $previous);
+        }
+    }
+
+    public function testFinancialPortalSummaryIsDarkUntilExplicitlyEnabled(): void
+    {
+        [$disabledStatus] = $this->runRoute('/api/v2/financial/summary?clientExternalId=customer-a', 'APP_API_V2_FINANCIAL_PORTAL_SUMMARY_ENABLED=false');
+        self::assertSame(404, $disabledStatus);
+        [$enabledStatus] = $this->runRoute('/api/v2/financial/summary?clientExternalId=customer-a', 'APP_API_V2_FINANCIAL_PORTAL_SUMMARY_ENABLED=true');
+        self::assertSame(503, $enabledStatus);
+    }
+
     public function testRouterAndCapabilityControllerUseTheSharedDefaults(): void
     {
         $root = dirname(__DIR__, 2);

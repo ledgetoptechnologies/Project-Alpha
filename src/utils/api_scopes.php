@@ -173,6 +173,11 @@ function api_scope_catalog(): array
             'description' => 'Read a bounded inventory containing only this application\'s explicit Project bindings. Explicit grant required.',
             'endpoints' => [],
         ],
+        'financial.portal_summary.read' => [
+            'label' => 'API v2 portal financial summary',
+            'description' => 'Read a bounded, customer-, organization-, or Project-bound financial summary through an application-bound API v2 connection. This grants no invoice body, contract, payment, or payment-secret access. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
         'dashboard.read' => [
             'label' => 'Dashboard summary',
             'description' => 'Read high-level dashboard counts and status summaries.',
