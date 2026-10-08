@@ -173,6 +173,11 @@ function api_scope_catalog(): array
             'description' => 'Read a bounded inventory containing only this application\'s explicit Project bindings. Explicit grant required.',
             'endpoints' => [],
         ],
+        'projects.adoption_candidates.read' => [
+            'label' => 'API v2 Project adoption candidates',
+            'description' => 'Read a bounded list of canonical unarchived Projects not yet bound to the calling application. Explicit grant required; legacy full access does not inherit this scope.',
+            'endpoints' => [],
+        ],
         'catalog.inventory.read' => [
             'label' => 'API v2 catalog inventory',
             'description' => 'Read a bounded, fenced full snapshot of externally requestable catalog items. Explicit grant required.',

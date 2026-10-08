@@ -30,6 +30,12 @@ if ($apiV2Path === '/api/v2/projects/inventory') {
     }
     require __DIR__ . '/../src/controllers/api/project_inventory_v2.php'; exit;
 }
+if ($apiV2Path === '/api/v2/projects/adoption-candidates') {
+    if (!api_v2_enabled('APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED')) {
+        header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
+    }
+    require __DIR__ . '/../src/controllers/api/project_adoption_candidates_v2.php'; exit;
+}
 if (preg_match('#^/api/v2/projects/bindings/status(?:/|$)#D', $apiV2Path) === 1) {
     if (!api_v2_enabled('APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
