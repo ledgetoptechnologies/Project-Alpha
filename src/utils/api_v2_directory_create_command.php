@@ -96,6 +96,19 @@ function api_v2_directory_create_result(array $identity, string $type, string $e
     ];
 }
 
+/** @return array{status:409,payload:array} */
+function api_v2_directory_create_authorization_generation_conflict(array $identity, string $requestId): array
+{
+    return ['status'=>409, 'payload'=>[
+        'apiVersion'=>'2',
+        'sourceInstanceId'=>(string)$identity['source_instance_id'],
+        'applicationId'=>(string)$identity['application_id'],
+        'historyEpoch'=>(string)$identity['history_epoch'],
+        'requestId'=>$requestId,
+        'error'=>['code'=>'authorization_generation_conflict'],
+    ]];
+}
+
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_create_command_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
@@ -137,10 +150,12 @@ function api_v2_directory_create_command_write(PDO $pdo, string $type, array $co
 
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
         $authorizationStatement->execute([$appPk]); $generation = $authorizationStatement->fetchColumn();
-        if ($generation === false || (string)$generation !== $command['expectedAuthorizationGeneration']
-            || !api_v2_directory_create_generation_valid((string)$generation)
+        if ($generation === false || !api_v2_directory_create_generation_valid((string)$generation)
             || (string)$generation === PA_API_V2_AUTHORIZATION_GENERATION_MAX) {
             $pdo->rollBack(); return ['status'=>409];
+        }
+        if ((string)$generation !== $command['expectedAuthorizationGeneration']) {
+            $pdo->rollBack(); return api_v2_directory_create_authorization_generation_conflict($identity, $requestId);
         }
 
         $organizationId = null;

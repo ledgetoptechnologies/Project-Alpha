@@ -41,14 +41,20 @@ final class ApiV2DirectoryCreateCommandMySqlTest extends TestCase
         $replay=\api_v2_directory_create_command_write($this->second,'organization',$organization,7,$this->headers(),'two');
         self::assertSame(200,$replay['status']); self::assertTrue($replay['payload']['replayed']);
         $duplicate=$this->organizationCommand(); $duplicate['commandId']='623e4567-e89b-42d3-a456-426614174000'; $duplicate['externalId']='org-2'; $duplicate['expectedAuthorizationGeneration']='1'; $duplicate['profile']['generalEmail']='replacement@example.test';
-        self::assertSame(409,\api_v2_directory_create_command_write($this->first,'organization',$duplicate,7,$this->headers(),'duplicate')['status']);
+        $duplicateOutcome=\api_v2_directory_create_command_write($this->first,'organization',$duplicate,7,$this->headers(),'duplicate');
+        self::assertSame(409,$duplicateOutcome['status']); self::assertArrayNotHasKey('payload',$duplicateOutcome);
         self::assertSame(1,(int)$this->first->query('SELECT COUNT(*) FROM organizations')->fetchColumn());
         self::assertSame('office@example.test',$this->first->query('SELECT general_email FROM organizations')->fetchColumn());
         $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
         self::assertSame(201,\api_v2_directory_create_command_write($this->first,'client',$client,7,$this->headers(),'client')['status']);
         self::assertSame((int)$this->first->query('SELECT id FROM organizations')->fetchColumn(),(int)$this->first->query('SELECT organization_id FROM clients')->fetchColumn());
         $stale=$this->clientCommand(null,'1'); $stale['commandId']='723e4567-e89b-42d3-a456-426614174000'; $stale['externalId']='client-2';
-        self::assertSame(409,\api_v2_directory_create_command_write($this->first,'client',$stale,7,$this->headers(),'stale')['status']);
+        self::assertSame(['status'=>409,'payload'=>['apiVersion'=>'2','sourceInstanceId'=>$this->headers()['source'],
+            'applicationId'=>$this->headers()['application'],'historyEpoch'=>$this->headers()['epoch'],'requestId'=>'stale',
+            'error'=>['code'=>'authorization_generation_conflict']]],
+            \api_v2_directory_create_command_write($this->first,'client',$stale,7,$this->headers(),'stale'));
+        $advancedReplay=\api_v2_directory_create_command_write($this->second,'organization',$organization,7,$this->headers(),'advanced-replay');
+        self::assertSame(200,$advancedReplay['status']); self::assertTrue($advancedReplay['payload']['replayed']);
     }
 
     public function testReceiptFailureRollsBackEveryCreatedRowAndGeneration(): void
@@ -91,7 +97,8 @@ final class ApiV2DirectoryCreateCommandMySqlTest extends TestCase
 
         $this->first->commit();
         self::assertSame('2',(string)$this->second->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='organization'")->fetchColumn());
-        self::assertSame(409,\api_v2_directory_create_command_write($this->second,'client',$client,7,$this->headers(),'stale-after-profile')['status']);
+        $stale=\api_v2_directory_create_command_write($this->second,'client',$client,7,$this->headers(),'stale-after-profile');
+        self::assertSame(409,$stale['status']); self::assertArrayNotHasKey('payload',$stale);
         self::assertSame(0,(int)$this->second->query('SELECT COUNT(*) FROM clients')->fetchColumn());
         self::assertSame(0,(int)$this->second->query("SELECT COUNT(*) FROM api_v2_directory_create_command_receipts WHERE resource_type='client'")->fetchColumn());
         self::assertSame(0,(int)$this->second->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetchColumn());
