@@ -122,6 +122,12 @@ jobs:
           API_V2_PROJECT_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-api-v2-project-lifecycle-mysql-integration.ps1
 
+      - name: MySQL API v2 catalog and adoption read regressions
+        shell: pwsh
+        env:
+          API_V2_READ_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-read-mysql-integration.ps1
+
       - name: MySQL API v2 directory client profile regressions
         shell: pwsh
         env:
