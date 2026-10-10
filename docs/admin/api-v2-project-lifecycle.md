@@ -58,6 +58,7 @@ route capability, and matching `X-PA-Source-Instance-ID`,
 - `POST /api/v2/projects/bindings/revisions/commands` requires `projects.binding.revision.refresh`.
 - `GET /api/v2/projects/bindings/status/{base64urlExternalId}` requires `projects.binding_status.read`.
 - `GET /api/v2/projects/inventory?limit=100&cursor=...` requires `projects.inventory.read`.
+- `GET /api/v2/projects/adoption-candidates?limit=100&cursor=...` requires `projects.adoption_candidates.read` and the default-off `APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED` gate.
 
 Lifecycle command bodies have exactly two fields:
 
@@ -169,6 +170,20 @@ is current. At most one external ID is returned per request. Missing or corrupt
 canonical history still produces a bare `409`. These responses contain no
 billing, budget, invoice, payment, document, portal URL, public action link, or
 other financial/publishing content.
+
+Adoption-candidate discovery is a separate, default-off contract and does not
+change bound inventory semantics. It is ordered by permanent Project public ID,
+uses that public ID as an exclusive cursor, and returns at most 200 canonical,
+unarchived Projects not already bound to the calling application. Each row is
+limited to public ID, revision, projection hash, name, workflow status, the
+constant `archived: false` assertion, and organization/client public IDs needed
+for explicit relationship review. The envelope includes the calling
+application lineage and current Project authorization generation. A canonical
+history failure rejects the whole page. A binding owned by another application
+does not reveal that application's external ID or binding state; the Project
+remains an ordinary candidate for the caller. Discovery never binds, matches,
+publishes, enables a public link, or activates portal delivery. A separate
+explicit `projects.bind` command with exact immutable evidence is still required.
 
 ## Release gate
 

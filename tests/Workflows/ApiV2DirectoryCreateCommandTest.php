@@ -89,6 +89,10 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         self::assertSame(200,$replay['status']); self::assertTrue($replay['payload']['replayed']);
         self::assertSame($first['payload']['result'],$replay['payload']['result']);
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM organizations')->fetchColumn());
+        $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=2 WHERE application_pk=3');
+        $advancedReplay=api_v2_directory_create_command_write($pdo,'organization',$command,7,$this->headers(),'request-advanced');
+        self::assertSame(200,$advancedReplay['status']); self::assertTrue($advancedReplay['payload']['replayed']);
+        self::assertSame($first['payload']['result'],$advancedReplay['payload']['result']);
 
         $reordered=['profile'=>array_reverse($command['profile'],true),'expectedAuthorizationGeneration'=>'0','externalId'=>'org-1','commandId'=>$command['commandId']];
         $canonical=api_v2_directory_create_command_parse('organization',json_encode($reordered,JSON_THROW_ON_ERROR));
@@ -102,15 +106,23 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         $pdo=$this->database(); $command=$this->organizationCommand();
         self::assertSame(201,api_v2_directory_create_command_write($pdo,'organization',$command,7,$this->headers(),'one')['status']);
         $changed=$command; $changed['profile']['name']='Changed';
-        self::assertSame(409,api_v2_directory_create_command_write($pdo,'organization',$changed,7,$this->headers(),'two')['status']);
+        $changedOutcome=api_v2_directory_create_command_write($pdo,'organization',$changed,7,$this->headers(),'two');
+        self::assertSame(409,$changedOutcome['status']); self::assertArrayNotHasKey('payload',$changedOutcome);
         $duplicate=$this->organizationCommand('org-2','1'); $duplicate['commandId']='623e4567-e89b-42d3-a456-426614174000';
         $duplicate['profile']['generalEmail']='replacement@example.test';
-        self::assertSame(409,api_v2_directory_create_command_write($pdo,'organization',$duplicate,7,$this->headers(),'three')['status']);
+        $duplicateOutcome=api_v2_directory_create_command_write($pdo,'organization',$duplicate,7,$this->headers(),'three');
+        self::assertSame(409,$duplicateOutcome['status']); self::assertArrayNotHasKey('payload',$duplicateOutcome);
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM organizations')->fetchColumn());
         self::assertSame('office@example.test',$pdo->query('SELECT general_email FROM organizations')->fetchColumn());
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_create_command_receipts')->fetchColumn());
         $stale=$this->clientCommand(null,'0');
-        self::assertSame(409,api_v2_directory_create_command_write($pdo,'client',$stale,7,$this->headers(),'four')['status']);
+        $staleOutcome=api_v2_directory_create_command_write($pdo,'client',$stale,7,$this->headers(),'four');
+        self::assertSame(['status'=>409,'payload'=>['apiVersion'=>'2','sourceInstanceId'=>$this->headers()['source'],
+            'applicationId'=>$this->headers()['application'],'historyEpoch'=>$this->headers()['epoch'],'requestId'=>'four',
+            'error'=>['code'=>'authorization_generation_conflict']]],$staleOutcome);
+        $staleReplay=api_v2_directory_create_command_write($pdo,'client',$stale,7,$this->headers(),'four-replay');
+        self::assertSame('authorization_generation_conflict',$staleReplay['payload']['error']['code']);
+        self::assertSame('four-replay',$staleReplay['payload']['requestId']);
         self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
     }
 
@@ -122,6 +134,35 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         $outcome=api_v2_directory_create_command_write($pdo,'organization',$command,7,$headers,'next');
         self::assertSame(409,$outcome['status']);self::assertArrayNotHasKey('payload',$outcome);self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM organizations')->fetchColumn());
         self::assertSame('323e4567-e89b-42d3-a456-426614174000',$pdo->query('SELECT history_epoch FROM api_v2_directory_create_command_receipts')->fetchColumn());
+    }
+
+    public function testMissingMalformedAndExhaustedGenerationRemainGenericConflicts(): void
+    {
+        foreach (['missing', 'malformed', 'maximum'] as $case) {
+            $pdo=$this->database();
+            if ($case === 'missing') $pdo->exec('DELETE FROM api_v2_directory_authorization_state WHERE application_pk=3');
+            elseif ($case === 'malformed') $pdo->exec("UPDATE api_v2_directory_authorization_state SET authorization_generation='invalid' WHERE application_pk=3");
+            else $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=9223372036854775807 WHERE application_pk=3');
+            $outcome=api_v2_directory_create_command_write($pdo,'client',$this->clientCommand(),7,$this->headers(),$case);
+            self::assertSame(409,$outcome['status'],$case); self::assertArrayNotHasKey('payload',$outcome,$case);
+        }
+    }
+
+    public function testManagedGenerationConflictIsStructuredWithoutTouchingPublicLinks(): void
+    {
+        $pdo=$this->database();
+        $pdo->exec("CREATE TABLE public_links(id INTEGER PRIMARY KEY,label TEXT NOT NULL);INSERT INTO public_links VALUES(1,'unchanged')");
+        $pdo->exec("INSERT INTO app_config VALUES(0,'api_v2_directory_management_ownership_active','1')");
+        $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1 WHERE application_pk=3');
+
+        $outcome=api_v2_directory_create_command_write($pdo,'client',$this->clientCommand(),7,$this->headers(),'managed-stale');
+
+        self::assertSame(409,$outcome['status']);
+        self::assertSame(['code'=>'authorization_generation_conflict'],$outcome['payload']['error']);
+        self::assertSame('managed-stale',$outcome['payload']['requestId']);
+        self::assertSame('unchanged',$pdo->query('SELECT label FROM public_links WHERE id=1')->fetchColumn());
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+        self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_create_command_receipts')->fetchColumn());
     }
 
     public function testClientAssignmentRequiresExactActiveApplicationBindingRevision(): void

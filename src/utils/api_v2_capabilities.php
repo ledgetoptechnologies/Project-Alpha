@@ -161,6 +161,12 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'projects_inventory' => [
             ['projects.inventory.read', '/api/v2/projects/inventory'],
         ],
+        'projects_adoption_candidates' => [
+            ['projects.adoption_candidates.read', '/api/v2/projects/adoption-candidates'],
+        ],
+        'catalog_inventory' => [
+            ['catalog.inventory.read', '/api/v2/catalog/inventory'],
+        ],
     ];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;
