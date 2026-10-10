@@ -43,6 +43,19 @@ function api_v2_directory_relationship_result(array$identity,string$clientPublic
             'organizationPublicId'=>$organizationPublicId,'authorizationGeneration'=>$generation]];
 }
 
+/** @return array{status:409,payload:array} */
+function api_v2_directory_relationship_authorization_generation_conflict(array$identity,string$requestId):array
+{
+    return['status'=>409,'payload'=>[
+        'apiVersion'=>'2',
+        'sourceInstanceId'=>(string)$identity['source_instance_id'],
+        'applicationId'=>(string)$identity['application_id'],
+        'historyEpoch'=>(string)$identity['history_epoch'],
+        'requestId'=>$requestId,
+        'error'=>['code'=>'authorization_generation_conflict'],
+    ]];
+}
+
 function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublicId,string$action,array$command,int$apiKeyId,array$headers,string$requestId):array
 {
     if(preg_match('/^[0-9a-f]{32}$/D',$clientPublicId)!==1||!in_array($action,['assign','remove','move'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory relationship command');
@@ -84,7 +97,8 @@ function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublic
                 ||!hash_equals((string)$binding['resource_projection_sha256'],(string)$organizationState['projection_sha256'])||!hash_equals((string)$organizationState['projection_sha256'],api_v2_directory_projection_hash('organization',$organization))){$pdo->rollBack();return['status'=>409];}
         }
         $authorization=$pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?'.$lock);$authorization->execute([$appPk]);$generation=$authorization->fetchColumn();
-        if($generation===false||(string)$generation!==$command['expectedAuthorizationGeneration']||(string)$generation===PA_API_V2_AUTHORIZATION_GENERATION_MAX){$pdo->rollBack();return['status'=>409];}
+        if($generation===false||!api_v2_directory_lifecycle_generation((string)$generation)||(string)$generation===PA_API_V2_AUTHORIZATION_GENERATION_MAX){$pdo->rollBack();return['status'=>409];}
+        if((string)$generation!==$command['expectedAuthorizationGeneration']){$pdo->rollBack();return api_v2_directory_relationship_authorization_generation_conflict($identity,$requestId);}
         $update=$pdo->prepare('UPDATE clients SET organization_id=?,source_version=? WHERE id=? AND '.($client['organization_id']===null?'organization_id IS NULL':'organization_id=?'));
         $params=[$targetOrganizationId,portal_projection_source_version(),$clientId];if($client['organization_id']!==null)$params[]=(int)$client['organization_id'];$update->execute($params);
         if($update->rowCount()!==1)throw new DomainException('Client organization relationship changed.');
