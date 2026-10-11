@@ -83,6 +83,56 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
         self::assertSame(3,(int)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
     }
 
+    public function testStaleRelationshipGenerationReturnsSafeStructuredConflict():void
+    {
+        $this->pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1 WHERE application_pk=3');
+        $command=$this->relationship('f23e4567-e89b-42d3-a456-426614174000','1','0',null,'org/one',str_repeat('b',32),'1');
+
+        $outcome=api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'stale-relationship');
+
+        self::assertSame(['status'=>409,'payload'=>[
+            'apiVersion'=>'2','sourceInstanceId'=>$this->headers['source'],'applicationId'=>$this->headers['application'],
+            'historyEpoch'=>$this->headers['epoch'],'requestId'=>'stale-relationship',
+            'error'=>['code'=>'authorization_generation_conflict'],
+        ]],$outcome);
+        self::assertNull($this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
+    }
+
+    public function testUnavailableRelationshipGenerationsRemainGenericConflicts():void
+    {
+        foreach(['missing','malformed','maximum']as$case){
+            $this->setUp();
+            if($case==='missing')$this->pdo->exec('DELETE FROM api_v2_directory_authorization_state WHERE application_pk=3');
+            elseif($case==='malformed')$this->pdo->exec("UPDATE api_v2_directory_authorization_state SET authorization_generation='invalid' WHERE application_pk=3");
+            else$this->pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=9223372036854775807 WHERE application_pk=3');
+            $command=$this->relationship('e23e4567-e89b-42d3-a456-426614174000','1','0',null,'org/one',str_repeat('b',32),'1');
+            $outcome=api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,$case);
+            self::assertSame(409,$outcome['status'],$case);self::assertArrayNotHasKey('payload',$outcome,$case);
+        }
+    }
+
+    public function testEarlierRelationshipProofFailuresTakePrecedenceOverStaleGeneration():void
+    {
+        $cases=[
+            'wrong client revision'=>['assign',$this->relationship('123e4567-e89b-42d3-a456-426614174001','2','0',null,'org/one',str_repeat('b',32),'1')],
+            'wrong target binding'=>['assign',$this->relationship('123e4567-e89b-42d3-a456-426614174002','1','0',null,'org/one',str_repeat('b',32),'2')],
+            'wrong expected parent'=>['move',$this->relationship('123e4567-e89b-42d3-a456-426614174003','1','0',str_repeat('b',32),'org/two',str_repeat('c',32),'1')],
+        ];
+        foreach($cases as$name=>[$action,$command]){
+            $this->setUp();
+            $this->pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1 WHERE application_pk=3');
+
+            $outcome=api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),$action,$command,7,$this->headers,'precedence');
+
+            self::assertSame(409,$outcome['status'],$name);self::assertArrayNotHasKey('payload',$outcome,$name);
+            self::assertNull($this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn(),$name);
+            self::assertSame(1,(int)$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client' AND public_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'")->fetchColumn(),$name);
+            self::assertSame(1,(int)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn(),$name);
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn(),$name);
+        }
+    }
+
     public function testExplicitBindingRevocationAndHistoricalInventory():void
     {
         $command=['commandId'=>'b23e4567-e89b-42d3-a456-426614174000','externalId'=>'client/one','expectedPublicId'=>str_repeat('a',32),'expectedRevision'=>'1','expectedAuthorizationGeneration'=>'0'];
@@ -120,7 +170,7 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
         self::assertStringContainsString("'APP_API_V2_DIRECTORY_' . strtoupper",$router);
         $features=['directory_client_archive'=>true,'directory_client_restore'=>true,'directory_organization_archive'=>true,'directory_organization_restore'=>true,'directory_relationship_write'=>true,'directory_binding_revoke'=>true,'directory_inventory'=>true];
         $payload=api_v2_capabilities_payload(['source_instance_id'=>'s','application_id'=>'a','history_epoch'=>'e'],'r',$scopes,$features);
-        self::assertCount(11,$payload['implementedEndpoints']);self::assertCount(11,$payload['grantedCapabilities']);
+        self::assertCount(12,$payload['implementedEndpoints']);self::assertCount(11,$payload['grantedCapabilities']);
         self::assertStringNotContainsString('delete/commands',json_encode($payload,JSON_THROW_ON_ERROR));
         $migration=(string)file_get_contents($root.'/database/migrations/0099_api_v2_directory_lifecycle_relationships.sql');self::assertStringContainsString('ADD COLUMN archived',$migration);self::assertStringContainsString('ON DELETE RESTRICT',$migration);
     }

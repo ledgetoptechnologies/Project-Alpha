@@ -13,13 +13,16 @@ final class ApiV2DirectoryBackfillTest extends TestCase
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) self::markTestSkipped('pdo_sqlite unavailable');
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_backfill.php';
         $pdo = new PDO('sqlite::memory:'); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT); INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql');
+        $pdo->exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,filename TEXT); INSERT INTO schema_migrations VALUES(88,'0088_api_v2_application_identity.sql'),(89,'0089_api_v2_directory_revision_foundation.sql'),(104,'0104_api_v2_directory_units.sql');
             CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
             CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,general_email TEXT,general_phone TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
+            CREATE TABLE organization_departments(id INTEGER PRIMARY KEY,public_id TEXT,organization_id INTEGER,name TEXT,archived INTEGER DEFAULT 0,deleted_at TEXT);
+            CREATE TABLE organization_department_contacts(department_id INTEGER,client_id INTEGER,role TEXT,is_primary INTEGER);
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
             CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
             INSERT INTO clients(id,public_id,name) VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','One'),(2,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','Two');
-            INSERT INTO organizations(id,public_id,name) VALUES(3,'cccccccccccccccccccccccccccccccc','Three');");
+            INSERT INTO organizations(id,public_id,name) VALUES(3,'cccccccccccccccccccccccccccccccc','Three');
+            INSERT INTO organization_departments(id,public_id,organization_id,name) VALUES(4,'dddddddddddddddddddddddddddddddd',3,'Field');");
         return $pdo;
     }
 
@@ -79,9 +82,18 @@ final class ApiV2DirectoryBackfillTest extends TestCase
     public function testAllModeBoundaryUsesZeroCursorAndDoesNotSkipFirstOrganization(): void
     {
         $pdo = $this->database(); $first = \api_v2_directory_backfill($pdo, 'all', null, 2, true);
-        self::assertSame('organization:0', $first['nextCursor']);
+        self::assertSame('client:1', $first['nextCursor']);
         $second = \api_v2_directory_backfill($pdo, 'all', $first['nextCursor'], 1, true);
         self::assertSame(1, $second['scanned']); self::assertSame(1, $second['inserted']);
+    }
+
+    public function testUnitBackfillUsesDependencyProjectionAndIsIdempotent(): void
+    {
+        $pdo=$this->database();$first=\api_v2_directory_backfill($pdo,'unit',null,10,false);
+        self::assertSame(1,$first['inserted']);self::assertSame(0,$first['skippedCurrent']);
+        $state=$pdo->query("SELECT revision,present FROM api_v2_directory_resource_state WHERE resource_type='unit'")->fetch(PDO::FETCH_NUM);
+        self::assertSame([1,1],array_map('intval',$state));
+        $again=\api_v2_directory_backfill($pdo,'unit',null,10,false);self::assertSame(0,$again['inserted']);self::assertSame(1,$again['skippedCurrent']);
     }
 
     public function testMalformedIdentityAndMigrationStateFailClosed(): void
