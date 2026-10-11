@@ -68,6 +68,14 @@ revision and authorization generation, and, when adding a destination, an exact
 active application-scoped organization binding plus its public ID and revision.
 Names and email addresses are never matching keys.
 
+When the calling application already has an active client binding that exactly
+matches the command's verified pre-mutation revision and projection hash, the
+relationship transaction advances that same binding to the resulting client
+revision and hash. It never creates a missing binding, revives a tombstone, or
+updates another application's binding. The explicit binding-revision refresh
+command remains required for historical stale bindings and drift produced by
+local or differently authorized mutations.
+
 Binding authority is explicitly revoked through
 `POST /api/v2/directory/{clients|organizations|units}/bindings/revoke/commands`.
 Revoked external IDs remain tombstoned and are not silently reused.

@@ -19,7 +19,7 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
             CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER);
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
             CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
-            CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,tombstoned_at TEXT,PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE(application_pk,resource_type,public_id));
+            CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,tombstoned_at TEXT,PRIMARY KEY(application_pk,resource_type,external_id));
             CREATE TABLE api_v2_directory_lifecycle_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
             CREATE TABLE api_v2_directory_relationship_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,action_name TEXT,client_public_id TEXT,expected_client_revision INTEGER,expected_authorization_generation INTEGER,result_client_revision INTEGER,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,history_epoch,command_id));
             CREATE TABLE api_v2_directory_binding_revoke_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,expected_resource_revision INTEGER,expected_authorization_generation INTEGER,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
@@ -80,7 +80,56 @@ final class ApiV2DirectoryLifecycleRelationshipTest extends TestCase
         self::assertSame(200,api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'remove',$remove,7,$this->headers,'r')['status']);
         self::assertNull($this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());
         self::assertSame(4,(int)$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn());
+        self::assertSame(4,(int)$this->pdo->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=3 AND resource_type='client'")->fetchColumn());
+        self::assertSame($this->pdo->query("SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn(),$this->pdo->query("SELECT resource_projection_sha256 FROM api_v2_directory_external_bindings WHERE application_pk=3 AND resource_type='client'")->fetchColumn());
         self::assertSame(3,(int)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+    }
+
+    public function testRelationshipAdvancesOnlyCurrentSameApplicationBindingAndReplayIsIdempotent():void
+    {
+        $this->pdo->exec("INSERT INTO api_v2_applications VALUES(4,'423e4567-e89b-42d3-a456-426614174000');INSERT INTO api_v2_directory_authorization_state VALUES(4,11)");
+        $hash=$this->pdo->query("SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn();
+        $this->pdo->prepare("INSERT INTO api_v2_directory_external_bindings VALUES(4,'client','other/client','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,?,'active',NULL)")->execute([$hash]);
+        $command=$this->relationship('123e4567-e89b-42d3-a456-426614174010','1','0',null,'org/one',str_repeat('b',32),'1');
+        $first=api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'first');self::assertSame(200,$first['status']);
+        self::assertSame('2',(string)$this->pdo->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=3 AND resource_type='client'")->fetchColumn());
+        self::assertSame('1',(string)$this->pdo->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=4 AND resource_type='client'")->fetchColumn());
+        self::assertSame('11',(string)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
+        $replay=api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'replay');self::assertSame(200,$replay['status']);self::assertTrue($replay['payload']['replayed']);
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());self::assertSame('1',(string)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());
+    }
+
+    public function testMissingAndTombstonedBindingsArePreservedWithoutImplicitBinding():void
+    {
+        foreach(['missing','tombstoned']as$case){$this->setUp();if($case==='missing')$this->pdo->exec("DELETE FROM api_v2_directory_external_bindings WHERE resource_type='client'");else$this->pdo->exec("UPDATE api_v2_directory_external_bindings SET status='tombstoned' WHERE resource_type='client'");
+            $command=$this->relationship('123e4567-e89b-42d3-a456-426614174011','1','0',null,'org/one',str_repeat('b',32),'1');self::assertSame(200,api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,$case)['status'],$case);
+            self::assertSame($case==='missing'?0:1,(int)$this->pdo->query("SELECT COUNT(*) FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetchColumn(),$case);
+            if($case==='tombstoned')self::assertSame('tombstoned',$this->pdo->query("SELECT status FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetchColumn());
+        }
+    }
+
+    public function testStaleSameApplicationBindingFailsBeforeRelationshipMutation():void
+    {
+        $this->pdo->exec("UPDATE api_v2_directory_external_bindings SET resource_projection_sha256='".str_repeat('f',64)."' WHERE resource_type='client'");
+        $before=['organization'=>$this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn(),'revision'=>$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn(),'generation'=>$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn()];
+        $command=$this->relationship('123e4567-e89b-42d3-a456-426614174012','1','0',null,'org/one',str_repeat('b',32),'1');self::assertSame(409,api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'stale')['status']);
+        self::assertSame($before['organization'],$this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());self::assertSame($before['revision'],$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn());self::assertSame($before['generation'],$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
+    }
+
+    public function testAmbiguousSameApplicationBindingsFailBeforeMutation():void
+    {
+        $hash=$this->pdo->query("SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn();$this->pdo->prepare("INSERT INTO api_v2_directory_external_bindings VALUES(3,'client','duplicate/client','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,?,'active',NULL)")->execute([$hash]);
+        $command=$this->relationship('123e4567-e89b-42d3-a456-426614174014','1','0',null,'org/one',str_repeat('b',32),'1');self::assertSame(409,api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'ambiguous')['status']);
+        self::assertNull($this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());self::assertSame('1',(string)$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn());self::assertSame('0',(string)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
+    }
+
+    public function testBindingAdvanceFailureRollsBackRelationshipStateGenerationAndReceipt():void
+    {
+        $this->pdo->exec("CREATE TRIGGER stop_client_binding_advance BEFORE UPDATE ON api_v2_directory_external_bindings WHEN OLD.resource_type='client' BEGIN SELECT RAISE(ABORT,'blocked binding advance'); END");
+        $beforeBinding=$this->pdo->query("SELECT * FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetch(PDO::FETCH_ASSOC);
+        $command=$this->relationship('123e4567-e89b-42d3-a456-426614174013','1','0',null,'org/one',str_repeat('b',32),'1');
+        self::assertSame(409,api_v2_directory_relationship_command_write($this->pdo,str_repeat('a',32),'assign',$command,7,$this->headers,'rollback')['status']);
+        self::assertNull($this->pdo->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());self::assertSame('1',(string)$this->pdo->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn());self::assertSame('0',(string)$this->pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());self::assertSame($beforeBinding,$this->pdo->query("SELECT * FROM api_v2_directory_external_bindings WHERE resource_type='client'")->fetch(PDO::FETCH_ASSOC));self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
     }
 
     public function testStaleRelationshipGenerationReturnsSafeStructuredConflict():void
