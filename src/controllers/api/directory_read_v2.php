@@ -17,12 +17,12 @@ require_once __DIR__ . '/../../utils/api_v2_directory_read.php';
 $requestId = api_v2_uuid();
 header('X-Request-ID: ' . $requestId);
 $path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH) ?: '');
-if (preg_match('#^/api/v2/directory/(clients|organizations)/([0-9a-f]{32})$#D', $path, $match) !== 1) {
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/([0-9a-f]{32})$#D', $path, $match) !== 1) {
     http_response_code(404);
     echo json_encode(['error' => 'Resource unavailable']);
     exit;
 }
-$type = $match[1] === 'clients' ? 'client' : 'organization';
+$type = ['clients'=>'client','organizations'=>'organization','units'=>'unit'][$match[1]];
 $scope = 'directory.' . $match[1] . '.read';
 try {
     $host = getenv('DB_HOST') ?: 'db';

@@ -48,7 +48,24 @@ final class ApiV2DirectoryLifecycleRelationshipMySqlTest extends TestCase
         self::assertSame('0',(string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());self::assertSame('1',(string)$this->first->query('SELECT revision FROM api_v2_directory_resource_state')->fetchColumn());
     }
 
+    public function testRelationshipAtomicallyAdvancesOnlyTheCallingApplicationsCurrentBinding():void
+    {
+        $this->first->exec("INSERT INTO api_v2_applications VALUES(4,'423e4567-e89b-42d3-a456-426614174000','Other');INSERT INTO api_v2_directory_authorization_state VALUES(4,7)");
+        $hash=$this->first->query("SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn();$this->first->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status)VALUES(4,'client','other/client','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,?,'active')")->execute([$hash]);
+        $command=$this->relationship('823e4567-e89b-42d3-a456-426614174000');$first=\api_v2_directory_relationship_command_write($this->first,str_repeat('a',32),'assign',$command,7,$this->headers(),'r');self::assertSame(200,$first['status']);
+        self::assertSame('2',(string)$this->first->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=3 AND resource_type='client'")->fetchColumn());self::assertSame('1',(string)$this->first->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=4 AND resource_type='client'")->fetchColumn());self::assertSame('7',(string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
+        self::assertTrue(\api_v2_directory_relationship_command_write($this->first,str_repeat('a',32),'assign',$command,7,$this->headers(),'replay')['payload']['replayed']);self::assertSame(1,(int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
+    }
+
+    public function testRelationshipBindingUpdateFailureRollsBackEverySettlementRow():void
+    {
+        $this->first->exec("CREATE TRIGGER stop_relationship_binding BEFORE UPDATE ON api_v2_directory_external_bindings FOR EACH ROW SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO=1062,MESSAGE_TEXT='blocked binding advance'");
+        self::assertSame(409,\api_v2_directory_relationship_command_write($this->first,str_repeat('a',32),'assign',$this->relationship('923e4567-e89b-42d3-a456-426614174000'),7,$this->headers(),'r')['status']);
+        self::assertNull($this->first->query('SELECT organization_id FROM clients WHERE id=9')->fetchColumn());self::assertSame('1',(string)$this->first->query("SELECT revision FROM api_v2_directory_resource_state WHERE resource_type='client'")->fetchColumn());self::assertSame('1',(string)$this->first->query("SELECT resource_revision FROM api_v2_directory_external_bindings WHERE application_pk=3 AND resource_type='client'")->fetchColumn());self::assertSame('0',(string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3')->fetchColumn());self::assertSame(0,(int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_relationship_command_receipts')->fetchColumn());
+    }
+
     private function headers():array{return['source'=>'123e4567-e89b-42d3-a456-426614174000','application'=>'223e4567-e89b-42d3-a456-426614174000','epoch'=>'323e4567-e89b-42d3-a456-426614174000'];}
+    private function relationship(string$id):array{return['commandId'=>$id,'expectedClientRevision'=>'1','expectedAuthorizationGeneration'=>'0','expectedCurrentOrganizationPublicId'=>null,'organization'=>['externalId'=>'org/one','publicId'=>str_repeat('b',32),'expectedRevision'=>'1']];}
 
     private function resetSchema():void
     {
@@ -65,6 +82,7 @@ final class ApiV2DirectoryLifecycleRelationshipMySqlTest extends TestCase
             CREATE TABLE projects(id INT PRIMARY KEY,client_id INT);CREATE TABLE organization_department_contacts(department_id INT,client_id INT);CREATE TABLE invoices(id INT PRIMARY KEY,client_id INT,FOREIGN KEY(client_id)REFERENCES clients(id)ON DELETE RESTRICT);CREATE TABLE app_config(organization_id INT,config_key VARCHAR(191),config_value TEXT);
             INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','Disposable');INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');INSERT INTO api_v2_directory_authorization_state VALUES(3,0);INSERT INTO organizations VALUES(1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','Org',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'overall_folder','v1');INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Client',NULL,NULL,'unknown',NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,NULL,'v1');INSERT INTO invoices VALUES(30,9);");
         $migration=(string)file_get_contents(dirname(__DIR__,2).'/database/migrations/0099_api_v2_directory_lifecycle_relationships.sql');$this->first->exec($migration);
-        $this->first->beginTransaction();\api_v2_directory_record($this->first,'client',9);$this->first->commit();$hash=$this->first->query('SELECT projection_sha256 FROM api_v2_directory_resource_state')->fetchColumn();$this->first->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status)VALUES(3,'client','client/one','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,?,'active')")->execute([$hash]);
+        $this->first->beginTransaction();\api_v2_directory_record($this->first,'organization',1);\api_v2_directory_record($this->first,'client',9);$this->first->commit();
+        foreach([['organization','org/one','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'],['client','client/one','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']]as[$type,$external,$public]){$hash=$this->first->prepare('SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type=? AND public_id=?');$hash->execute([$type,$public]);$this->first->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status)VALUES(3,?,?,?,?,?,'active')")->execute([$type,$external,$public,1,$hash->fetchColumn()]);}
     }
 }

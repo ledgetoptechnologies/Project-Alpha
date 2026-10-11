@@ -22,15 +22,16 @@ final class OrganizationProfileMutationServiceTest extends TestCase
 
         self::assertStringContainsString('portal_projection_mutate(', $writer);
         self::assertStringContainsString('source_version = ?', $writer);
-        self::assertStringContainsString("api_v2_directory_record(\$pdo, 'organization', \$organizationId)", $writer);
+        $revisionCall = "api_v2_directory_record(\$pdo, 'organization', \$organizationId, \$localDirectoryAuthority)";
+        self::assertStringContainsString($revisionCall, $writer);
         self::assertStringContainsString("address_book_save(\$pdo", $writer);
         self::assertLessThan(
-            strpos($writer, "api_v2_directory_record(\$pdo, 'organization', \$organizationId)"),
+            strpos($writer, $revisionCall),
             strpos($writer, 'address_book_save($pdo')
         );
         self::assertLessThan(
             strpos($writer, "},\n            static fn(): array => \$projection->organizationScopes"),
-            strpos($writer, "api_v2_directory_record(\$pdo, 'organization', \$organizationId)")
+            strpos($writer, $revisionCall)
         );
     }
 

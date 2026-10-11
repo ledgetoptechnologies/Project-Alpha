@@ -6,9 +6,9 @@ require_once __DIR__ . '/api_v2_directory_lifecycle_command.php';
 /** Snapshot-consistent inventory includes live resources and retained tombstones. */
 function api_v2_directory_inventory_read(PDO$pdo,string$type,?string$cursor,int$limit,int$apiKeyId,array$headers,string$requestId):?array
 {
-    if(!in_array($type,['all','client','organization'],true)||$limit<1||$limit>200||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory inventory request');
+    if(!in_array($type,['all','client','organization','unit'],true)||$limit<1||$limit>200||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory inventory request');
     $afterType='';$afterPublicId='';
-    if($cursor!==null){if(preg_match('/^(client|organization):([0-9a-f]{32})$/D',$cursor,$match)!==1||($type!=='all'&&$type!==$match[1]))return null;$afterType=$match[1];$afterPublicId=$match[2];}
+    if($cursor!==null){if(preg_match('/^(client|organization|unit):([0-9a-f]{32})$/D',$cursor,$match)!==1||($type!=='all'&&$type!==$match[1]))return null;$afterType=$match[1];$afterPublicId=$match[2];}
     $pdo->beginTransaction();
     try{
         // A repeatable-read snapshot is sufficient for reconciliation and
@@ -29,7 +29,7 @@ function api_v2_directory_inventory_read(PDO$pdo,string$type,?string$cursor,int$
         $statement=$pdo->prepare($sql);$statement->execute($params);$rows=$statement->fetchAll(PDO::FETCH_ASSOC);
         $hasMore=count($rows)>$limit;if($hasMore)array_pop($rows);$resources=[];
         foreach($rows as$row){
-            if(!in_array((string)$row['resource_type'],['client','organization'],true)||preg_match('/^[0-9a-f]{32}$/D',(string)$row['public_id'])!==1||!api_v2_directory_lifecycle_positive((string)$row['revision'])||!in_array((string)$row['last_action'],['upsert','delete'],true)){throw new RuntimeException('Directory inventory state is invalid');}
+            if(!in_array((string)$row['resource_type'],['client','organization','unit'],true)||preg_match('/^[0-9a-f]{32}$/D',(string)$row['public_id'])!==1||!api_v2_directory_lifecycle_positive((string)$row['revision'])||!in_array((string)$row['last_action'],['upsert','delete'],true)){throw new RuntimeException('Directory inventory state is invalid');}
             $binding=null;if($row['external_id']!==null){$binding=['externalId'=>(string)$row['external_id'],'status'=>(string)$row['binding_status'],'resourceRevision'=>(string)$row['binding_revision']];}
             $resources[]=['type'=>(string)$row['resource_type'],'publicId'=>(string)$row['public_id'],'revision'=>(string)$row['revision'],'present'=>(int)$row['present']===1,
                 'lastAction'=>(string)$row['last_action'],'projectionSha256'=>(string)$row['projection_sha256'],'binding'=>$binding];

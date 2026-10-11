@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../services/LinkResolverService.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
+require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -50,10 +51,14 @@ try {
         throw new RuntimeException('Invalid organization');
     }
     require_record_ownership($pdo, 'organizations', $organizationId);
+    if (api_v2_directory_management_guard($pdo, 'unit', $action)) {
+        throw new RuntimeException(API_V2_DIRECTORY_MANAGEMENT_LABEL);
+    }
     $projection = new \App\Services\PortalProjectionMutationService();
     $beforeScopes = $projection->organizationScopes($pdo, $organizationId);
     $createdDepartmentTransition = null;
     $pdo->beginTransaction();
+    api_v2_directory_management_acquire_shared_gate($pdo, true);
 
     if ($action === 'save_link_strategy') {
         $strategy = (string)($_POST['link_strategy'] ?? 'overall_folder');
@@ -107,6 +112,7 @@ try {
                 WHERE id = ? AND organization_id = ?
             ');
             $stmt->execute([$name, $folderName !== '' ? $folderName : null, $aliasesJson, $resolverMode, $notes !== '' ? $notes : null, portal_projection_source_version(), $departmentId, $organizationId]);
+            api_v2_directory_record($pdo, 'unit', $departmentId);
             $flag = 'department_saved=1';
         } else {
             $stmt = $pdo->prepare('
@@ -115,6 +121,7 @@ try {
             ');
             $stmt->execute([$organizationId, $name, $folderName !== '' ? $folderName : null, $aliasesJson, $resolverMode, $notes !== '' ? $notes : null, portal_projection_source_version()]);
             $departmentId = (int)$pdo->lastInsertId();
+            api_v2_directory_record($pdo, 'unit', $departmentId);
             if ($existingDepartmentCount === 0) {
                 $createdDepartmentTransition = [$organizationId, $departmentId];
             }
@@ -125,6 +132,10 @@ try {
         if ($departmentId <= 0) {
             throw new RuntimeException('Invalid department');
         }
+        $identity = $pdo->prepare('SELECT public_id FROM organization_departments WHERE id=? AND organization_id=?');
+        $identity->execute([$departmentId,$organizationId]);$departmentPublicId=$identity->fetchColumn();
+        if(!is_string($departmentPublicId))throw new RuntimeException('Department not found');
+        api_v2_directory_record_delete($pdo,'unit',$departmentPublicId);
         $stmt = $pdo->prepare('DELETE FROM organization_departments WHERE id = ? AND organization_id = ?');
         $stmt->execute([$departmentId, $organizationId]);
         $flag = 'department_deleted=1';
@@ -155,6 +166,7 @@ try {
                 ->execute([$departmentId]);
         }
         $stmt->execute([$departmentId, $clientId, $isPrimary]);
+        api_v2_directory_record($pdo, 'unit', $departmentId);
         $flag = 'department_contact_added=1';
     } elseif ($action === 'set_primary_contact') {
         $departmentId = (int)($_POST['department_id'] ?? 0);
@@ -177,6 +189,7 @@ try {
             ->execute([$departmentId]);
         $pdo->prepare('UPDATE organization_department_contacts SET is_primary = 1 WHERE department_id = ? AND client_id = ?')
             ->execute([$departmentId, $clientId]);
+        api_v2_directory_record($pdo, 'unit', $departmentId);
         $flag = 'department_contact_primary=1';
     } elseif ($action === 'remove_contact') {
         $departmentId = (int)($_POST['department_id'] ?? 0);
@@ -191,6 +204,7 @@ try {
             WHERE odc.department_id = ? AND odc.client_id = ? AND od.organization_id = ?
         ');
         $stmt->execute([$departmentId, $clientId, $organizationId]);
+        api_v2_directory_record($pdo, 'unit', $departmentId);
         $flag = 'department_contact_removed=1';
     } else {
         throw new RuntimeException('Invalid department action');

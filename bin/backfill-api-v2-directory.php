@@ -18,9 +18,9 @@ foreach (array_slice($argv ?? [], 1) as $argument) {
     elseif ($argument === '--attest') $attest = true;
     else { fwrite(STDERR, "Unknown option.\n"); exit(2); }
 }
-if (!in_array($type, ['all', 'client', 'organization'], true) || !is_string($limit) || preg_match('/^[1-9][0-9]{0,2}$/D', $limit) !== 1
+if (!in_array($type, ['all', 'client', 'organization', 'unit'], true) || !is_string($limit) || preg_match('/^[1-9][0-9]{0,2}$/D', $limit) !== 1
     || (int)$limit > 500 || ($apply && ($dryRunRequested || !$confirmed || !$maintenanceConfirmed))) {
-    fwrite(STDERR, "Usage: php bin/backfill-api-v2-directory.php [--type=all|client|organization] [--cursor=type:local-id] [--limit=1..500] [--dry-run] [--attest]\n");
+    fwrite(STDERR, "Usage: php bin/backfill-api-v2-directory.php [--type=all|organization|client|unit] [--cursor=type:local-id] [--limit=1..500] [--dry-run] [--attest]\n");
     fwrite(STDERR, "Default is dry-run. Apply requires --apply --confirm-api-v2-directory-backfill --maintenance-window-confirmed.\n");
     exit(2);
 }

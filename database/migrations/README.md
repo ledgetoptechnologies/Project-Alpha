@@ -279,3 +279,22 @@ external bindings, immutable bind/create/update/refresh command receipts, and
 local Project backfill attestation storage. It grants no scope, creates no
 binding, and enables no route. Apply it before enabling any Project
 synchronization flag.
+
+Migration `0104_api_v2_directory_units.sql` adds reversible lifecycle state to
+customer departments, widens the generic API v2 directory resource and receipt
+discriminators for `unit`, enforces at most one primary department contact, and
+adds immutable unit profile/contact command receipts. A unit is backed by
+`organization_departments`, never by internal `business_units`; the migration
+enables no route or scope.
+
+Migration `0105_api_v2_directory_receipt_history_epochs.sql` assigns existing
+generic bind, binding-refresh, and create receipts to the current API v2
+history epoch and makes that epoch part of each receipt primary key. This keeps
+old receipts immutable while preventing a command ID from replaying across an
+explicit history-epoch rotation. It enables no route or scope.
+
+Migration `0106_api_v2_directory_profile_receipt_history_epochs.sql` applies
+the same epoch boundary to organization and client profile-command receipts.
+Existing receipts are assigned to the current history epoch during upgrade;
+new epochs can reuse a command ID without replaying a prior epoch's result.
+It enables no route or scope.

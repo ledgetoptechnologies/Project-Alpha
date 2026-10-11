@@ -7,8 +7,8 @@ define('PA_STATELESS_API_NO_SESSION', true);
 require_once __DIR__ . '/../../utils/api_v2_capabilities.php'; require_once __DIR__ . '/../../utils/api_v2_directory_revision.php'; require_once __DIR__ . '/../../utils/api_v2_directory_binding_revision_refresh.php';
 $requestId = api_v2_uuid(); header('X-Request-ID: ' . $requestId);
 $path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
-if (preg_match('#^/api/v2/directory/(clients|organizations)/bindings/revisions/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
-$type = $match[1] === 'clients' ? 'client' : 'organization'; $scope = 'directory.' . $match[1] . '.binding.revision.refresh';
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/bindings/revisions/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
+$type = ['clients'=>'client','organizations'=>'organization','units'=>'unit'][$match[1]]; $scope = 'directory.' . $match[1] . '.binding.revision.refresh';
 if (preg_match('/^application\/json(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/iD', (string)($_SERVER['CONTENT_TYPE'] ?? '')) !== 1) { http_response_code(415); exit; }
 $length = $_SERVER['CONTENT_LENGTH'] ?? null; if ($length !== null && (!ctype_digit((string)$length) || (int)$length > 32 * 1024)) { http_response_code(413); exit; }
 $stream = fopen('php://input', 'rb'); if ($stream === false) { http_response_code(400); exit; } $body = stream_get_contents($stream, 32 * 1024 + 1); fclose($stream);

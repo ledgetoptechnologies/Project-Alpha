@@ -36,6 +36,7 @@ final class ApiV2ReadRouteDefaultsTest extends TestCase
         'APP_API_V2_PROJECTS_WRITE_ENABLED',
         'APP_API_V2_PROJECTS_BINDING_ENABLED',
         'APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED',
+        'APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED',
     ];
 
     protected function setUp(): void
@@ -83,6 +84,18 @@ final class ApiV2ReadRouteDefaultsTest extends TestCase
             self::assertStringContainsString("api_v2_enabled('{$flag}')", $router);
             self::assertStringContainsString("api_v2_enabled('{$flag}')", $capabilities);
         }
+    }
+
+    public function testAdoptionCandidateDiscoveryIsDefaultOffAndExplicitlyAdvertised(): void
+    {
+        $flag='APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED';$previous=getenv($flag);
+        try{putenv($flag);self::assertFalse(api_v2_enabled($flag));putenv($flag.'=true');self::assertTrue(api_v2_enabled($flag));
+            $identity=['source_instance_id'=>'123e4567-e89b-42d3-a456-426614174000','application_id'=>'223e4567-e89b-42d3-a456-426614174000','history_epoch'=>'323e4567-e89b-42d3-a456-426614174000'];$payload=api_v2_capabilities_payload($identity,'423e4567-e89b-42d3-a456-426614174000',['projects.adoption_candidates.read'],['projects_adoption_candidates'=>true]);self::assertContains('projects.adoption_candidates.read',array_column($payload['grantedCapabilities'],'name'));self::assertContains('/api/v2/projects/adoption-candidates',array_column($payload['implementedEndpoints'],'path'));
+            [$disabledStatus]=$this->runRoute('/api/v2/projects/adoption-candidates?limit=1',$flag.'=false');self::assertSame(404,$disabledStatus);
+            [$enabledStatus]=$this->runRoute('/api/v2/projects/adoption-candidates?limit=1',$flag.'=true');self::assertSame(503,$enabledStatus);
+            foreach(['/api/v2/projects/adoption-candidates?limit=0','/api/v2/projects/adoption-candidates?limit=201','/api/v2/projects/adoption-candidates?limit=999999999999999999999999','/api/v2/projects/adoption-candidates?limit=1x','/api/v2/projects/adoption-candidates?cursor=bad','/api/v2/projects/adoption-candidates?unknown=1','/api/v2/projects/adoption-candidates?limit=1&limit=2','/api/v2/projects/adoption-candidates?%6cimit=1&limit=2','/api/v2/projects/adoption-candidates?limit%5B%5D=1','/api/v2/projects/adoption-candidates?cursor%5Bvalue%5D=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']as$invalid){[$status]=$this->runRoute($invalid,$flag.'=true');self::assertSame(400,$status);}
+            [$methodStatus]=$this->runRoute('/api/v2/projects/adoption-candidates?limit=1',$flag.'=true','POST');self::assertSame(405,$methodStatus);
+        }finally{$previous===false?putenv($flag):putenv($flag.'='.$previous);}
     }
 
     public function testReadRoutesPassTheFeatureGateByDefaultAndHonorExplicitFalse(): void
@@ -143,14 +156,14 @@ final class ApiV2ReadRouteDefaultsTest extends TestCase
         ];
     }
 
-    private function runRoute(string $path, ?string $setting = null): array
+    private function runRoute(string $path, ?string $setting = null, string $method = 'GET'): array
     {
         if (!function_exists('proc_open')) {
             self::markTestSkipped('proc_open is required for front-controller gate coverage.');
         }
 
         $root = dirname(__DIR__, 2);
-        $script = '$_SERVER=["REQUEST_URI"=>' . var_export($path, true) . ',"REQUEST_METHOD"=>"GET"];'
+        $script = '$_SERVER=["REQUEST_URI"=>' . var_export($path, true) . ',"REQUEST_METHOD"=>' . var_export($method, true) . '];'
             . 'register_shutdown_function(static function():void{fwrite(STDOUT,"\\n__STATUS__=".http_response_code());});'
             . 'require ' . var_export($root . '/public/index.php', true) . ';';
         $environment = [];
