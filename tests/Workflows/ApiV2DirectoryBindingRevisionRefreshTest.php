@@ -85,4 +85,42 @@ final class ApiV2DirectoryBindingRevisionRefreshTest extends TestCase
         self::assertSame(409,$outcome['status']);self::assertArrayNotHasKey('payload',$outcome);
         self::assertSame('323e4567-e89b-42d3-a456-426614174000',$pdo->query('SELECT history_epoch FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn());
     }
+
+    public function testLockedPreconditionRunsInsideTransactionAndRefusalIsImmutable(): void
+    {
+        $pdo = $this->database();
+        $beforeBinding = $pdo->query('SELECT * FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC);
+        $beforeGeneration = $pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn();
+        $called = false;
+        $outcome = \api_v2_directory_binding_revision_refresh_write(
+            $pdo, 'client', $this->command(), 7, $this->headers(), 'refused',
+            static function (array $context) use (&$called, $pdo): bool {
+                $called = true;
+                self::assertTrue($pdo->inTransaction());
+                self::assertSame('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $context['binding']['public_id']);
+                self::assertSame('1', $context['binding']['resource_revision']);
+                self::assertSame('2', $context['state']['revision']);
+                self::assertSame('1', $context['authorizationGeneration']);
+                return false;
+            }
+        );
+        self::assertTrue($called); self::assertSame(409, $outcome['status']);
+        self::assertSame($beforeBinding, $pdo->query('SELECT * FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($beforeGeneration, $pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn());
+    }
+
+    public function testLockedPreconditionAcceptsAndIsNotReevaluatedForExactReplay(): void
+    {
+        $pdo = $this->database(); $calls = 0;
+        $accepted = \api_v2_directory_binding_revision_refresh_write($pdo, 'client', $this->command(), 7, $this->headers(), 'accepted', static function (array $context) use (&$calls): bool {
+            $calls++;
+            return isset($context['pdo'], $context['identity'], $context['live']) && $context['pdo'] instanceof PDO;
+        });
+        self::assertSame(200, $accepted['status']); self::assertSame(1, $calls);
+        $replay = \api_v2_directory_binding_revision_refresh_write($pdo, 'client', $this->command(), 7, $this->headers(), 'replay', static function (): bool {
+            throw new \LogicException('A durable replay must not rerun a fresh-write precondition.');
+        });
+        self::assertSame(200, $replay['status']); self::assertTrue($replay['payload']['replayed']);
+    }
 }

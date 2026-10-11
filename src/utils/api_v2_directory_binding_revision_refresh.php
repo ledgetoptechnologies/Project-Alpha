@@ -45,7 +45,7 @@ function api_v2_directory_binding_revision_refresh_result(array $identity, array
 }
 
 /** @return array{status:int,payload?:array} */
-function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
+function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId, ?callable $lockedPrecondition = null): array
 {
     if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding revision refresh');
     $pdo->beginTransaction();
@@ -86,6 +86,12 @@ function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type,
         $authStatement->execute([$appPk]); $generation = $authStatement->fetchColumn();
         $generation = is_scalar($generation) ? (string)$generation : '';
         if (!api_v2_directory_binding_revision_refresh_generation($generation) || !hash_equals($generation, $command['expectedAuthorizationGeneration'])) { $pdo->rollBack(); return ['status' => 409]; }
+        if ($lockedPrecondition !== null) {
+            // Maintenance callers may add stricter target predicates. Run them
+            // only after every canonical row is locked and before any write.
+            $accepted = $lockedPrecondition(['pdo' => $pdo, 'identity' => $identity, 'binding' => $binding, 'state' => $state, 'live' => $liveRows[0], 'authorizationGeneration' => $generation]);
+            if ($accepted !== true) { $pdo->rollBack(); return ['status' => 409]; }
+        }
         $resultGeneration = (string)((int)$generation + 1);
         $update = $pdo->prepare('UPDATE api_v2_directory_external_bindings SET resource_revision=?,resource_projection_sha256=? WHERE application_pk=? AND resource_type=? AND external_id=? AND public_id=? AND resource_revision=? AND status=\'active\'');
         $update->execute([$command['expectedLiveRevision'], $state['projection_sha256'], $appPk, $type, $command['externalId'], $binding['public_id'], $command['expectedPriorRevision']]);
