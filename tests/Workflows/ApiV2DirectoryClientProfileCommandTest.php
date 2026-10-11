@@ -64,6 +64,37 @@ final class ApiV2DirectoryClientProfileCommandTest extends TestCase
         $pdo=$this->database(); $command=$this->command(); $command['profile']=['name'=>'Example','email'=>'old@example.test','phone'=>'old','addressLine1'=>'','addressLine2'=>'','city'=>'','state'=>'','postalCode'=>'','country'=>'']; $parsed=\api_v2_directory_client_profile_command_parse(json_encode($command, JSON_THROW_ON_ERROR)); $result=\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$parsed,7,$this->headers(),'523e4567-e89b-42d3-a456-426614174000'); self::assertSame('1',$result['payload']['result']['resource']['revision']);
         $pdo=$this->database(); $command=\api_v2_directory_client_profile_command_parse(json_encode($this->command(), JSON_THROW_ON_ERROR)); \api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$command,7,$this->headers(),'523e4567-e89b-42d3-a456-426614174000'); $pdo->beginTransaction(); $pdo->exec("UPDATE clients SET name='Later change'"); \api_v2_directory_record($pdo,'client',9); $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1'); $pdo->commit(); $replay=\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$command,7,$this->headers(),'623e4567-e89b-42d3-a456-426614174000'); self::assertTrue($replay['payload']['replayed']); self::assertSame('2',$replay['payload']['result']['resource']['revision']); self::assertSame('Later change',$pdo->query('SELECT name FROM clients')->fetchColumn());
     }
+    public function testNoOpAfterUnrelatedGenerationAdvancePreservesRevisionAndAllowsNextEdit(): void
+    {
+        $pdo = $this->database();
+        $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=9');
+        $noOp = $this->command();
+        $noOp['expectedAuthorizationGeneration'] = '9';
+        $noOp['profile'] = ['name'=>'Example','email'=>'old@example.test','phone'=>'old','addressLine1'=>'','addressLine2'=>'','city'=>'','state'=>'','postalCode'=>'','country'=>''];
+        $noOp = \api_v2_directory_client_profile_command_parse(json_encode($noOp, JSON_THROW_ON_ERROR));
+        $first = \api_v2_directory_client_profile_command_write($pdo, str_repeat('a', 32), $noOp, 7, $this->headers(), 'no-op');
+        self::assertSame(200, $first['status']);
+        self::assertSame('1', $first['payload']['result']['resource']['revision']);
+        self::assertSame('9', $first['payload']['result']['authorizationGeneration']);
+
+        $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=10');
+        $edit = $this->command();
+        $edit['commandId'] = '723e4567-e89b-42d3-a456-426614174000';
+        $edit['expectedAuthorizationGeneration'] = '10';
+        $edit = \api_v2_directory_client_profile_command_parse(json_encode($edit, JSON_THROW_ON_ERROR));
+        $second = \api_v2_directory_client_profile_command_write($pdo, str_repeat('a', 32), $edit, 7, $this->headers(), 'next-edit');
+        self::assertSame(200, $second['status']);
+        self::assertSame('2', $second['payload']['result']['resource']['revision']);
+        self::assertSame('10', $second['payload']['result']['authorizationGeneration']);
+
+        $replay = \api_v2_directory_client_profile_command_write($pdo, str_repeat('a', 32), $noOp, 7, $this->headers(), 'no-op-replay');
+        self::assertSame(200, $replay['status']);
+        self::assertTrue($replay['payload']['replayed']);
+        self::assertSame('1', $replay['payload']['result']['resource']['revision']);
+        self::assertSame('9', $replay['payload']['result']['authorizationGeneration']);
+        self::assertSame(2, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_client_profile_command_receipts')->fetchColumn());
+    }
+
     public function testReceiptCannotReplayAcrossHistoryEpochAndCommandIdCanBeReused(): void
     {
         $pdo=$this->database();$first=\api_v2_directory_client_profile_command_parse(json_encode($this->command(),JSON_THROW_ON_ERROR));
