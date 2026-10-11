@@ -85,10 +85,14 @@ one-to-one mapping between its external Project ID and one PA Project public
 ID. An external ID and PA public ID cannot be reused or remapped. Existing PA
 Projects are bound only by a deliberate command carrying the exact public ID,
 revision, canonical projection SHA-256, and generation. A Project created by
-the API is bound atomically and must cite an active, same-application
-organization directory binding; an optional client binding must belong to that
-organization. This keeps the Project eligible for ordinary PA ownership rules
-without guessing from names or email addresses.
+the API is bound atomically and must cite active, same-application directory
+ownership proof in exactly one of three forms: an organization; an organization
+plus a client whose canonical organization matches it; or a standalone client
+whose canonical `organization_id` is null. Both proofs absent, a client linked
+to a different organization, or a stale/inactive proof is rejected without a
+Project, binding, receipt, or generation mutation. This keeps the Project
+eligible for ordinary PA ownership rules without guessing from names or email
+addresses or inventing a synthetic organization.
 
 Create accepts one shared Project name, description, and estimated dates. It
 starts `not_started`, uses neutral per-invoice billing with automatic invoice

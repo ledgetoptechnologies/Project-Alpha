@@ -89,8 +89,9 @@ function api_v2_project_sync_command_parse(string $type, string $json): ?array
         $value['project']=$profile;
     }
     if($type==='create'){
-        $organization=api_v2_project_relation_parse($value['organization'],true);$client=api_v2_project_relation_parse($value['client'],false);
-        if($organization===null||$client===null)return null;$value['organization']=$organization;$value['client']=$client===[]?null:$client;
+        $organization=api_v2_project_relation_parse($value['organization'],false);$client=api_v2_project_relation_parse($value['client'],false);
+        if($organization===null||$client===null||($organization===[]&&$client===[]))return null;
+        $value['organization']=$organization===[]?null:$organization;$value['client']=$client===[]?null:$client;
     }
     return $value;
 }
@@ -188,11 +189,16 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
         if($type==='create'){
             $existing=$pdo->prepare('SELECT 1 FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=?'.$lock);$existing->execute([$appPk,$command['externalId']]);
             if($existing->fetchColumn()!==false){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
-            $organization=api_v2_project_resolve_directory_binding($pdo,$appPk,'organization',$command['organization'],$lock);$client=$command['client']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'client',$command['client'],$lock);
-            if(!$organization||($command['client']!==null&&!$client)||($client&&((int)($client['organization_id']??0)!==(int)$organization['id']))){$pdo->rollBack();return api_v2_project_sync_conflict('relationship_proof_conflict',$requestId,$identity);}
+            $organization=$command['organization']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'organization',$command['organization'],$lock);$client=$command['client']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'client',$command['client'],$lock);
+            $validOrganization=$command['organization']===null||$organization!==null;
+            $validClient=$command['client']===null||$client!==null;
+            $validOwnership=$organization!==null
+                ? $client===null||(int)($client['organization_id']??0)===(int)$organization['id']
+                : $client!==null&&$client['organization_id']===null;
+            if(!$validOrganization||!$validClient||!$validOwnership){$pdo->rollBack();return api_v2_project_sync_conflict('relationship_proof_conflict',$requestId,$identity);}
             $publicId=bin2hex(random_bytes(16));$profile=$command['project'];
             $insert=$pdo->prepare("INSERT INTO projects(public_id,name,description,status,organization_id,client_id,invoice_billing_period,project_invoice_auto_email,portal_publish_enabled,public_project_enabled,estimated_start,estimated_end,source_version,created_by) VALUES(?,?,?,'not_started',?,?,'per_invoice',0,0,0,?,?,?,NULL)");
-            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id'],$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
+            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id']??null,$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
             $projectId=(int)$pdo->lastInsertId();if($projectId<1)throw new RuntimeException('Project identity unavailable.');
             $project=(new ProjectRevisionService($pdo))->initialize($projectId,'create',$appPk,$command['commandId']);
         } elseif($type==='update') {
