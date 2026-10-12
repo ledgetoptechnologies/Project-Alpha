@@ -522,6 +522,27 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString('${{ steps.build-db.outputs.digest }}', $docker);
         self::assertSame(3, substr_count($docker, "exit-code: '1'"));
         self::assertStringContainsString('trivy-cron-report.txt', $docker);
+        foreach ([
+            'web' => 'Run Trivy vulnerability scanner',
+            'cron' => 'Run Trivy cron image scanner',
+            'db' => 'Run Trivy database image scanner',
+        ] as $target => $stepName) {
+            self::assertSame(
+                1,
+                substr_count($docker, "if: always() && steps.build-{$target}.outcome == 'success'"),
+                "{$target} scan must run independently after its image build succeeds."
+            );
+            self::assertMatchesRegularExpression(
+                '/(?m)^      - name: ' . preg_quote($stepName, '/') . "\n"
+                    . "        if: always\(\) && steps\.build-{$target}\.outcome == 'success'\n"
+                    . "        uses: aquasecurity\/trivy-action@v0\.36\.0\n"
+                    . "        with:\n"
+                    . "          image-ref: \\\$\{\{ steps\.tag\.outputs\.{$target}_immutable \}\}/",
+                $docker,
+                "{$target} scan condition must guard that target's immutable image."
+            );
+        }
+        self::assertStringNotContainsString('continue-on-error:', $docker);
         self::assertSame(3, substr_count($docker, 'org.opencontainers.image.source='));
         self::assertSame(3, substr_count($docker, 'org.opencontainers.image.revision='));
         self::assertSame(3, substr_count($docker, 'org.opencontainers.image.version='));
