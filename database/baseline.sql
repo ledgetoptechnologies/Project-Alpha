@@ -869,6 +869,8 @@ CREATE TABLE IF NOT EXISTS project_invoice_recipients (
 -- PROJECT INVOICES
 CREATE TABLE IF NOT EXISTS project_invoices (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT (LOWER(HEX(RANDOM_BYTES(16)))),
+    currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'USD',
     project_id INT NOT NULL,
     organization_id INT NULL,
     primary_client_id INT NULL,
@@ -891,7 +893,10 @@ CREATE TABLE IF NOT EXISTS project_invoices (
     created_by INT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_project_invoices_public_id_shape CHECK (public_id REGEXP '^[0-9a-f]{32}$'),
+    CONSTRAINT chk_project_invoices_currency_shape CHECK (currency REGEXP '^[A-Z]{3}$'),
     UNIQUE KEY uq_project_invoice_period (project_id, billing_period_start, billing_period_end),
+    UNIQUE KEY uq_project_invoices_public_id (public_id),
     INDEX idx_project_invoices_project (project_id),
     INDEX idx_project_invoices_status (status),
     INDEX idx_project_invoices_due (due_date),
@@ -1068,6 +1073,8 @@ CREATE TABLE IF NOT EXISTS quote_items (
 -- CONTRACTS
 CREATE TABLE IF NOT EXISTS contracts (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT (LOWER(HEX(RANDOM_BYTES(16)))),
+    currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'USD',
     quote_id INT NULL,
     client_id INT NOT NULL,
     project_id INT NULL,
@@ -1121,7 +1128,10 @@ CREATE TABLE IF NOT EXISTS contracts (
     document_date_updated_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_contracts_public_id_shape CHECK (public_id REGEXP '^[0-9a-f]{32}$'),
+    CONSTRAINT chk_contracts_currency_shape CHECK (currency REGEXP '^[A-Z]{3}$'),
     INDEX idx_contracts_client (client_id),
+    UNIQUE KEY uq_contracts_public_id (public_id),
     INDEX idx_contracts_project (project_id),
     INDEX idx_contracts_org (organization_id),
     INDEX idx_contracts_status (status),
@@ -1183,6 +1193,8 @@ CREATE TABLE IF NOT EXISTS contract_signatures (
 -- INVOICES
 CREATE TABLE IF NOT EXISTS invoices (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT (LOWER(HEX(RANDOM_BYTES(16)))),
+    currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'USD',
     contract_id INT NULL,
     quote_id INT NULL,
     client_id INT NOT NULL,
@@ -1236,7 +1248,10 @@ CREATE TABLE IF NOT EXISTS invoices (
     generated_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_invoices_public_id_shape CHECK (public_id REGEXP '^[0-9a-f]{32}$'),
+    CONSTRAINT chk_invoices_currency_shape CHECK (currency REGEXP '^[A-Z]{3}$'),
     INDEX idx_invoices_client (client_id),
+    UNIQUE KEY uq_invoices_public_id (public_id),
     INDEX idx_invoices_recipient_presentation (recipient_presentation_mode),
     INDEX idx_invoices_contract (contract_id),
     INDEX idx_invoices_quote (quote_id),
@@ -2360,7 +2375,8 @@ CREATE TABLE IF NOT EXISTS public_links (
     last_accessed_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_public_links_token (token),
-    INDEX idx_public_links_expires (expires_at)
+    INDEX idx_public_links_expires (expires_at),
+    INDEX idx_public_links_financial_latest (document_type,document_id,revoked,created_at,id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- LINK RESOLVER CONFIG

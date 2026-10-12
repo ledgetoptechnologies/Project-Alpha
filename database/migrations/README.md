@@ -306,3 +306,9 @@ the same epoch boundary to organization and client profile-command receipts.
 Existing receipts are assigned to the current history epoch during upgrade;
 new epochs can reuse a command ID without replaying a prior epoch's result.
 It enables no route or scope.
+
+Migration `0107_financial_document_public_ids.sql` records stable immutable public
+identities and currencies for invoices, contracts and project invoices. Its
+backfills preserve existing document timestamps and financial/public-link data.
+It enables no route or scope. See `docs/admin/api-v2-financial-documents.md` for
+the separately gated read-only projection and validation requirements.

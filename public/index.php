@@ -6,6 +6,10 @@ if ($apiV2Path === '/api/v2/capabilities') {
     require __DIR__ . '/../src/controllers/api/capabilities_v2.php';
     exit;
 }
+if ($apiV2Path === '/api/v2/financial-documents') {
+    if (!api_v2_enabled('APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED')) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
+    require __DIR__ . '/../src/controllers/api/financial_feed_v2.php'; exit;
+}
 if ($apiV2Path === '/api/v2/catalog/inventory') {
     if (!api_v2_enabled('APP_API_V2_CATALOG_INVENTORY_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
