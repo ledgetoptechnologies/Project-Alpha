@@ -90,6 +90,14 @@ refresh POST is independently disabled by default through
 replacement for a fresh status read, and real-MySQL concurrency and replay
 tests remain required before enabling it.
 
+Read-only reconciliation of an exact frozen refresh command is independently
+disabled by default through
+`APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED`. It reuses the
+same scoped refresh capability and is available only while the refresh writer
+flag is also enabled. Receipt absence is terminal evidence only after a higher
+authorization generation permanently fences the frozen command and the exact
+binding and live-resource heads still match.
+
 Migration `0093_api_v2_directory_organization_profile_command_receipts.sql`
 adds application-scoped idempotency receipts for conditional organization
 profile updates. The generic command route is independently disabled by

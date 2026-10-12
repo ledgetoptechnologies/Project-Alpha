@@ -71,6 +71,7 @@ to suppress an individual route.
 | `APP_API_V2_BINDING_STATUS_ENABLED` | enabled | `api.capabilities.read` plus the selected `directory.clients.binding_status.read`, `directory.organizations.binding_status.read`, and/or `directory.units.binding_status.read` scopes |
 | `APP_API_V2_DIRECTORY_BINDING_ENABLED` | disabled | `api.capabilities.read` plus the selected `directory.clients.bind`, `directory.organizations.bind`, and/or `directory.units.bind` scopes |
 | `APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED` | disabled | `api.capabilities.read` plus the selected `directory.clients.binding.revision.refresh`, `directory.organizations.binding.revision.refresh`, and/or `directory.units.binding.revision.refresh` scopes |
+| `APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED` | disabled | Same exact scoped refresh capability as the frozen command; the writer flag must also be enabled |
 | `APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.organizations.write` |
 | `APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.clients.write` |
 | `APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED` | disabled | `api.capabilities.read`, `directory.units.write` |

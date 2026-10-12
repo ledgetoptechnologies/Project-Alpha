@@ -37,6 +37,11 @@ function api_v2_directory_binding_revision_refresh_greater_than(string $left, st
     return strlen($left) !== strlen($right) ? strlen($left) > strlen($right) : strcmp($left, $right) > 0;
 }
 
+function api_v2_directory_binding_revision_refresh_request_hash(array $command): string
+{
+    return hash('sha256', json_encode($command, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+}
+
 function api_v2_directory_binding_revision_refresh_result(array $identity, array $command, string $type, string $publicId, string $resultGeneration, string $requestId, bool $replayed): array
 {
     return ['sourceInstanceId' => $identity['source_instance_id'], 'applicationId' => $identity['application_id'], 'historyEpoch' => $identity['history_epoch'], 'requestId' => $requestId, 'replayed' => $replayed,
@@ -56,7 +61,7 @@ function api_v2_directory_binding_revision_refresh_write(PDO $pdo, string $type,
         $identityStatement->execute([$apiKeyId]); $identity = $identityStatement->fetch(PDO::FETCH_ASSOC);
         if (!$identity || !api_v2_identity_is_valid($identity) || !hash_equals((string)$identity['source_instance_id'], (string)($headers['source'] ?? '')) || !hash_equals((string)$identity['application_id'], (string)($headers['application'] ?? '')) || !hash_equals((string)$identity['history_epoch'], (string)($headers['epoch'] ?? ''))) { $pdo->rollBack(); return ['status' => 409]; }
         $appPk = (int)$identity['application_pk'];
-        $requestHash = hash('sha256', json_encode($command, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $requestHash = api_v2_directory_binding_revision_refresh_request_hash($command);
         $receiptStatement = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(expected_prior_revision AS CHAR) expected_prior_revision,CAST(result_revision AS CHAR) result_revision,result_projection_sha256,CAST(expected_authorization_generation AS CHAR) expected_authorization_generation,CAST(result_authorization_generation AS CHAR) result_authorization_generation FROM api_v2_directory_binding_revision_refresh_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?' . $lock);
         $receiptStatement->execute([$appPk, $type, $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash) || !hash_equals((string)$receipt['external_id'], $command['externalId']) || (string)$receipt['expected_prior_revision'] !== $command['expectedPriorRevision'] || (string)$receipt['result_revision'] !== $command['expectedLiveRevision'] || (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration'])) { $pdo->rollBack(); return ['status' => 409]; }

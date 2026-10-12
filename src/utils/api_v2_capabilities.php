@@ -74,6 +74,11 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
             ['directory.organizations.binding.revision.refresh', '/api/v2/directory/organizations/bindings/revisions/commands', 'POST'],
             ['directory.units.binding.revision.refresh', '/api/v2/directory/units/bindings/revisions/commands', 'POST'],
         ],
+        'directory_binding_refresh_reconciliation' => [
+            ['directory.clients.binding.revision.refresh', '/api/v2/directory/clients/bindings/revisions/commands/reconcile', 'POST'],
+            ['directory.organizations.binding.revision.refresh', '/api/v2/directory/organizations/bindings/revisions/commands/reconcile', 'POST'],
+            ['directory.units.binding.revision.refresh', '/api/v2/directory/units/bindings/revisions/commands/reconcile', 'POST'],
+        ],
         'directory_organization_write' => [
             ['directory.organizations.write', '/api/v2/directory/organizations/{publicId}/profile/commands', 'POST'],
         ],
@@ -177,7 +182,7 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
                 'requiresSourceInstanceId' => true, 'requiresApplicationId' => true,
                 'requiresHistoryEpoch' => true,
             ];
-            if (in_array($scope, $keyScopes, true)) $granted[] = ['name' => $scope];
+            if (in_array($scope, $keyScopes, true) && !in_array(['name' => $scope], $granted, true)) $granted[] = ['name' => $scope];
         }
     }
     // Client create can carry an exact organization relationship even when

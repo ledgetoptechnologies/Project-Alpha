@@ -267,7 +267,7 @@ final class ExternalDirectoryManagementPolicyTest extends TestCase
     {
         $root=dirname(__DIR__,2);$router=(string)file_get_contents($root.'/public/index.php');
         self::assertLessThan(strpos($router,'api_v2_directory_management_browser_writers'),strpos($router,"require_once __DIR__ . '/../src/controllers/api/directory_create_command_v2.php'"));
-        foreach(['directory_create_command_v2.php','directory_client_profile_command_v2.php','directory_organization_profile_command_v2.php','directory_unit_profile_command_v2.php','directory_unit_contact_command_v2.php','directory_binding_command_v2.php','directory_binding_revision_refresh_v2.php','directory_lifecycle_command_v2.php','directory_relationship_command_v2.php','directory_binding_revoke_command_v2.php','directory_inventory_v2.php'] as $controller){
+        foreach(['directory_create_command_v2.php','directory_client_profile_command_v2.php','directory_organization_profile_command_v2.php','directory_unit_profile_command_v2.php','directory_unit_contact_command_v2.php','directory_binding_command_v2.php','directory_binding_revision_refresh_v2.php','directory_binding_revision_refresh_reconciliation_v2.php','directory_lifecycle_command_v2.php','directory_relationship_command_v2.php','directory_binding_revoke_command_v2.php','directory_inventory_v2.php'] as $controller){
             self::assertStringNotContainsString('api_v2_directory_management_guard',(string)file_get_contents($root.'/src/controllers/api/'.$controller),$controller);
         }
     }

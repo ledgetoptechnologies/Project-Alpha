@@ -95,6 +95,17 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/rev
     require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_v2.php';
     exit;
 }
+if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/revisions/commands/reconcile$#D', $apiV2Path) === 1) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED')
+        || !api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED')) {
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+    require __DIR__ . '/../src/controllers/api/directory_binding_revision_refresh_reconciliation_v2.php';
+    exit;
+}
 if (preg_match('#^/api/v2/directory/(clients|organizations|units)/commands$#D', $apiV2Path, $apiV2CreateMatch) === 1) {
     $apiV2CreateFlag = match ($apiV2CreateMatch[1]) {
         'clients' => 'APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED',

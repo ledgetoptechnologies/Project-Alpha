@@ -57,6 +57,8 @@ try {
         'binding_status' => api_v2_enabled('APP_API_V2_BINDING_STATUS_ENABLED'),
         'directory_binding' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_ENABLED'),
         'directory_binding_refresh' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED'),
+        'directory_binding_refresh_reconciliation' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED')
+            && api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED'),
         'directory_organization_write' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED'),
         'directory_client_write' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED'),
         'directory_unit_write' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED'),
