@@ -228,6 +228,18 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
         }
     }
 
+    public function testCiRunsTheStrictDisposableFinancialMysqlReleaseSuite(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $runner = (string)file_get_contents($root . '/scripts/run-api-v2-financial-http-mysql.mjs');
+        $workflow = (string)file_get_contents($root . '/.github/workflows/ci.yml');
+        foreach (['ApiV2FinancialHttpMySqlTest.php', 'ApiV2FinancialDocumentMigrationMySqlTest.php',
+            'ApiV2FinancialReleaseMigrationMySqlTest.php', '--fail-on-skipped'] as $required)
+            self::assertStringContainsString($required, $runner);
+        self::assertStringContainsString('API_V2_FINANCIAL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest', $workflow);
+        self::assertStringContainsString('run: node scripts/run-api-v2-financial-http-mysql.mjs', $workflow);
+    }
+
     public function testMigrationAndBaselineDeclareUniquePublicIdsForEveryFinancialDocument(): void
     {
         $root = dirname(__DIR__, 2);
