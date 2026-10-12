@@ -12,8 +12,8 @@ require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_binding_command.php';
 $requestId = api_v2_uuid(); header('X-Request-ID: ' . $requestId);
 $path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
-if (preg_match('#^/api/v2/directory/(clients|organizations)/bindings/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
-$type = $match[1] === 'clients' ? 'client' : 'organization';
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/bindings/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
+$type = ['clients'=>'client','organizations'=>'organization','units'=>'unit'][$match[1]];
 $scope = 'directory.' . $match[1] . '.bind';
 $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? '');
 if (preg_match('/^application\/json(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/iD', $contentType) !== 1) { http_response_code(415); exit; }

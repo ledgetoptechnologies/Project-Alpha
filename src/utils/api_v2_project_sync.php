@@ -89,8 +89,9 @@ function api_v2_project_sync_command_parse(string $type, string $json): ?array
         $value['project']=$profile;
     }
     if($type==='create'){
-        $organization=api_v2_project_relation_parse($value['organization'],true);$client=api_v2_project_relation_parse($value['client'],false);
-        if($organization===null||$client===null)return null;$value['organization']=$organization;$value['client']=$client===[]?null:$client;
+        $organization=api_v2_project_relation_parse($value['organization'],false);$client=api_v2_project_relation_parse($value['client'],false);
+        if($organization===null||$client===null||($organization===[]&&$client===[]))return null;
+        $value['organization']=$organization===[]?null:$organization;$value['client']=$client===[]?null:$client;
     }
     return $value;
 }
@@ -188,11 +189,16 @@ function api_v2_project_sync_write(PDO $pdo,string $type,array $command,int $api
         if($type==='create'){
             $existing=$pdo->prepare('SELECT 1 FROM api_v2_project_external_bindings WHERE application_pk=? AND external_id=?'.$lock);$existing->execute([$appPk,$command['externalId']]);
             if($existing->fetchColumn()!==false){$pdo->rollBack();return api_v2_project_sync_conflict('external_binding_conflict',$requestId,$identity);}
-            $organization=api_v2_project_resolve_directory_binding($pdo,$appPk,'organization',$command['organization'],$lock);$client=$command['client']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'client',$command['client'],$lock);
-            if(!$organization||($command['client']!==null&&!$client)||($client&&((int)($client['organization_id']??0)!==(int)$organization['id']))){$pdo->rollBack();return api_v2_project_sync_conflict('relationship_proof_conflict',$requestId,$identity);}
+            $organization=$command['organization']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'organization',$command['organization'],$lock);$client=$command['client']===null?null:api_v2_project_resolve_directory_binding($pdo,$appPk,'client',$command['client'],$lock);
+            $validOrganization=$command['organization']===null||$organization!==null;
+            $validClient=$command['client']===null||$client!==null;
+            $validOwnership=$organization!==null
+                ? $client===null||(int)($client['organization_id']??0)===(int)$organization['id']
+                : $client!==null&&$client['organization_id']===null;
+            if(!$validOrganization||!$validClient||!$validOwnership){$pdo->rollBack();return api_v2_project_sync_conflict('relationship_proof_conflict',$requestId,$identity);}
             $publicId=bin2hex(random_bytes(16));$profile=$command['project'];
             $insert=$pdo->prepare("INSERT INTO projects(public_id,name,description,status,organization_id,client_id,invoice_billing_period,project_invoice_auto_email,portal_publish_enabled,public_project_enabled,estimated_start,estimated_end,source_version,created_by) VALUES(?,?,?,'not_started',?,?,'per_invoice',0,0,0,?,?,?,NULL)");
-            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id'],$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
+            $insert->execute([$publicId,$profile['name'],$profile['description'],$organization['id']??null,$client['id']??null,$profile['estimatedStart'],$profile['estimatedEnd'],api_v2_project_source_version()]);
             $projectId=(int)$pdo->lastInsertId();if($projectId<1)throw new RuntimeException('Project identity unavailable.');
             $project=(new ProjectRevisionService($pdo))->initialize($projectId,'create',$appPk,$command['commandId']);
         } elseif($type==='update') {
@@ -255,6 +261,65 @@ function api_v2_project_inventory_read(PDO $pdo,?string $cursor,int $limit,int $
         $payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,'authorizationGeneration'=>$identity['authorization_generation'],'projects'=>$resources,'nextCursor'=>$next];
         $pdo->commit();return['status'=>200,'payload'=>$payload];
     }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+}
+
+/**
+ * Bounded, application-scoped discovery for deliberate adoption. This is
+ * separate from the binding inventory: it exposes only canonical, unarchived
+ * Projects that are not already bound to the calling application. Bindings
+ * owned by other applications are neither returned nor described.
+ */
+function api_v2_project_adoption_candidates_read(PDO $pdo,?string $cursor,int $limit,int $apiKeyId,array $headers,string $requestId):array
+{
+    if($limit<1||$limit>200||($cursor!==null&&preg_match('/^[0-9a-f]{32}$/D',$cursor)!==1)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid Project adoption-candidate request.');
+    $pdo->beginTransaction();
+    try{
+        $identity=api_v2_project_sync_identity($pdo,$apiKeyId,$headers,false);
+        if(!$identity){$pdo->rollBack();return['status'=>409];}
+        $params=[(int)$identity['application_pk']];
+        $where=' WHERE project.archived_at IS NULL AND calling_binding.project_public_id IS NULL';
+        if($cursor!==null){$where.=' AND project.public_id>?';$params[]=$cursor;}
+        $statement=$pdo->prepare('SELECT project.*,organization.public_id organization_public_id,client.public_id client_public_id
+            FROM projects project
+            LEFT JOIN api_v2_project_external_bindings calling_binding
+              ON calling_binding.application_pk=? AND calling_binding.project_public_id=project.public_id
+            LEFT JOIN organizations organization ON organization.id=project.organization_id
+            LEFT JOIN clients client ON client.id=project.client_id'.$where.' ORDER BY project.public_id LIMIT '.($limit+1));
+        $statement->execute($params);$rows=$statement->fetchAll(PDO::FETCH_ASSOC);$more=count($rows)>$limit;if($more)array_pop($rows);$resources=[];
+        foreach($rows as$project){
+            $project=api_v2_project_hydrate_relations($pdo,$project);
+            if(!api_v2_project_revision_matches($pdo,$project)){$pdo->rollBack();return['status'=>409];}
+            $resources[]=['publicId'=>(string)$project['public_id'],'revision'=>(string)$project['revision'],
+                'projectionSha256'=>ProjectRevisionService::projectionHash($project),'name'=>(string)$project['name'],
+                'status'=>(string)$project['status'],'archived'=>false,
+                'organizationPublicId'=>$project['organization_public_id']===null?null:(string)$project['organization_public_id'],
+                'clientPublicId'=>$project['client_public_id']===null?null:(string)$project['client_public_id']];
+        }
+        $next=$more&&$rows!==[]?(string)$rows[count($rows)-1]['public_id']:null;
+        $payload=['apiVersion'=>'2','sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],
+            'historyEpoch'=>$identity['history_epoch'],'requestId'=>$requestId,
+            'authorizationGeneration'=>$identity['authorization_generation'],'projects'=>$resources,'nextCursor'=>$next];
+        $pdo->commit();return['status'=>200,'payload'=>$payload];
+    }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+}
+
+/** @return array{cursor:?string,limit:int}|null */
+function api_v2_project_adoption_candidates_query(string $raw):?array
+{
+    $values=[];
+    if($raw!==''){
+        foreach(explode('&',$raw)as$part){
+            if($part===''||substr_count($part,'=')>1)return null;
+            [$encodedKey,$encodedValue]=array_pad(explode('=',$part,2),2,'');
+            $key=rawurldecode($encodedKey);$value=rawurldecode($encodedValue);
+            if(!in_array($key,['cursor','limit'],true)||array_key_exists($key,$values))return null;
+            $values[$key]=$value;
+        }
+    }
+    $cursor=$values['cursor']??null;$limit=$values['limit']??'100';
+    if(($cursor!==null&&preg_match('/^[0-9a-f]{32}$/D',$cursor)!==1)||!is_string($limit)
+        ||strlen($limit)>3||!ctype_digit($limit)||(int)$limit<1||(int)$limit>200)return null;
+    return['cursor'=>$cursor,'limit'=>(int)$limit];
 }
 
 function api_v2_project_binding_status_read(PDO $pdo,string $externalId,int $apiKeyId,array $headers,string $requestId):array

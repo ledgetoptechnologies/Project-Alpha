@@ -75,7 +75,9 @@ final class ApiV2CapabilitiesFoundationTest extends TestCase
         self::assertCount(1, $off['implementedEndpoints']);
         $on = \api_v2_capabilities_payload($identity, $requestId, $scopes, ['directory_read' => true, 'binding_status' => true]);
         self::assertSame(['api.capabilities.read', 'directory.clients.read', 'directory.clients.binding_status.read'], array_column($on['grantedCapabilities'], 'name'));
-        self::assertCount(5, $on['implementedEndpoints']);
+        self::assertCount(7, $on['implementedEndpoints']);
+        self::assertContains('/api/v2/directory/units/{publicId}', array_column($on['implementedEndpoints'], 'path'));
+        self::assertContains('/api/v2/bindings/unit/status/{base64urlExternalId}', array_column($on['implementedEndpoints'], 'path'));
         self::assertSame([
             'method' => 'GET',
             'path' => '/api/v2/directory/clients/{publicId}',

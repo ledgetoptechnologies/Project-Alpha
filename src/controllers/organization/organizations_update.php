@@ -129,7 +129,7 @@ if (!empty($_FILES['tax_exempt_file']) && is_uploaded_file($_FILES['tax_exempt_f
         $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', tax_exempt_file = ?, tax_exempt_uploaded_at = NOW(), source_version = ? WHERE id = ?');
         $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [$filename, portal_projection_source_version(), $id]));
         api_v2_directory_record($pdo, 'organization', $id);
-    }, static fn(): array => $projection->organizationScopes($pdo, $id));
+    }, static fn(): array => $projection->organizationScopes($pdo, $id), false, static fn() => api_v2_directory_management_acquire_shared_gate($pdo));
     $saveReusableAddress();
     
     error_log('ORG_UPDATE_UPLOAD: Database updated with filename: ' . $filename);
@@ -160,7 +160,7 @@ if ($remove_tax) {
         $stmt = $pdo->prepare('UPDATE organizations SET name = ?, general_email = ?, general_phone = ?, notes = ?' . $addressSql . ', tax_exempt_file = NULL, tax_exempt_uploaded_at = NULL, source_version = ? WHERE id = ?');
         $stmt->execute(array_merge([$name, $generalEmail ?: null, $generalPhone ?: null, $notes ?: null], $addressParams, [portal_projection_source_version(), $id]));
         api_v2_directory_record($pdo, 'organization', $id);
-    }, static fn(): array => $projection->organizationScopes($pdo, $id));
+    }, static fn(): array => $projection->organizationScopes($pdo, $id), false, static fn() => api_v2_directory_management_acquire_shared_gate($pdo));
     $saveReusableAddress();
     header('Location: /?page=organization/organizations-edit&id=' . $id . '&updated=1');
     exit;
