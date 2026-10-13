@@ -49,7 +49,7 @@
     <p>We implement commercially reasonable administrative, technical, and physical safeguards to protect your data. However, no method of transmission over the internet or electronic storage is completely secure, and we cannot guarantee absolute security.</p>
 
     <h2>5. Data Sharing</h2>
-    <p>We may share your information with trusted service providers who assist us in operating the Service (such as hosting, payment processing, and email delivery). We may also disclose information if required by law or to protect our rights.</p>
+    <p>We may share your information with trusted service providers who assist us in operating the Service, including: Stripe (payment processing), cloud hosting providers, email delivery providers, and AI service providers (OpenAI and Anthropic) used to assist with document generation, data analysis, and platform features. Our AI providers operate under commercial agreements that prohibit the use of your data for model training. We may also disclose information if required by law or to protect our rights.</p>
 
     <h2>6. Cookies and Tracking</h2>
     <p>The Service uses essential session cookies to maintain your login state and security. We do not use third-party advertising or tracking cookies.</p>
