@@ -4,8 +4,8 @@ header('Content-Type: application/json; charset=UTF-8');header('Cache-Control: n
 if(strtoupper((string)($_SERVER['REQUEST_METHOD']??''))!=='POST'){header('Allow: POST');http_response_code(405);exit;}
 define('PA_STATELESS_API_NO_SESSION',true);require_once __DIR__.'/../../../vendor/autoload.php';require_once __DIR__.'/../../utils/api_v2_capabilities.php';require_once __DIR__.'/../../utils/api_v2_directory_lifecycle_command.php';
 $requestId=api_v2_uuid();header('X-Request-ID: '.$requestId);$path=(string)(parse_url((string)($_SERVER['REQUEST_URI']??'/'),PHP_URL_PATH)?:'/');
-if(preg_match('#^/api/v2/directory/(clients|organizations)/([0-9a-f]{32})/(archive|restore)/commands$#D',$path,$match)!==1){http_response_code(404);exit;}
-$type=$match[1]==='clients'?'client':'organization';$action=$match[3];
+if(preg_match('#^/api/v2/directory/(clients|organizations|units)/([0-9a-f]{32})/(archive|restore)/commands$#D',$path,$match)!==1){http_response_code(404);exit;}
+$type=['clients'=>'client','organizations'=>'organization','units'=>'unit'][$match[1]];$action=$match[3];
 if(preg_match('/^application\/json(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/iD',(string)($_SERVER['CONTENT_TYPE']??''))!==1){http_response_code(415);exit;}
 $length=$_SERVER['CONTENT_LENGTH']??null;if($length!==null&&(!ctype_digit((string)$length)||(int)$length>32*1024)){http_response_code(413);exit;}
 $body=file_get_contents('php://input',false,null,0,32*1024+1);if(!is_string($body)||strlen($body)>32*1024){http_response_code(413);exit;}$command=api_v2_directory_lifecycle_command_parse($body);if($command===null){http_response_code(400);exit;}

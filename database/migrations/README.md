@@ -90,6 +90,14 @@ refresh POST is independently disabled by default through
 replacement for a fresh status read, and real-MySQL concurrency and replay
 tests remain required before enabling it.
 
+Read-only reconciliation of an exact frozen refresh command is independently
+disabled by default through
+`APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED`. It reuses the
+same scoped refresh capability and is available only while the refresh writer
+flag is also enabled. Receipt absence is terminal evidence only after a higher
+authorization generation permanently fences the frozen command and the exact
+binding and live-resource heads still match.
+
 Migration `0093_api_v2_directory_organization_profile_command_receipts.sql`
 adds application-scoped idempotency receipts for conditional organization
 profile updates. The generic command route is independently disabled by
@@ -279,3 +287,28 @@ external bindings, immutable bind/create/update/refresh command receipts, and
 local Project backfill attestation storage. It grants no scope, creates no
 binding, and enables no route. Apply it before enabling any Project
 synchronization flag.
+
+Migration `0104_api_v2_directory_units.sql` adds reversible lifecycle state to
+customer departments, widens the generic API v2 directory resource and receipt
+discriminators for `unit`, enforces at most one primary department contact, and
+adds immutable unit profile/contact command receipts. A unit is backed by
+`organization_departments`, never by internal `business_units`; the migration
+enables no route or scope.
+
+Migration `0105_api_v2_directory_receipt_history_epochs.sql` assigns existing
+generic bind, binding-refresh, and create receipts to the current API v2
+history epoch and makes that epoch part of each receipt primary key. This keeps
+old receipts immutable while preventing a command ID from replaying across an
+explicit history-epoch rotation. It enables no route or scope.
+
+Migration `0106_api_v2_directory_profile_receipt_history_epochs.sql` applies
+the same epoch boundary to organization and client profile-command receipts.
+Existing receipts are assigned to the current history epoch during upgrade;
+new epochs can reuse a command ID without replaying a prior epoch's result.
+It enables no route or scope.
+
+Migration `0107_financial_document_public_ids.sql` records stable immutable public
+identities and currencies for invoices, contracts and project invoices. Its
+backfills preserve existing document timestamps and financial/public-link data.
+It enables no route or scope. See `docs/admin/api-v2-financial-documents.md` for
+the separately gated read-only projection and validation requirements.

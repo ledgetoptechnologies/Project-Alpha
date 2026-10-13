@@ -12,6 +12,7 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
 {
     private PDO $first;
     private PDO $second;
+    private array $migrationEvidence = [];
 
     protected function setUp(): void
     {
@@ -90,6 +91,25 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
         self::assertSame(0, (int) $this->first->query('SELECT COUNT(*) FROM api_v2_directory_organization_profile_command_receipts')->fetchColumn());
     }
 
+    public function testMigrationBackfillsBothLegacyProfileReceiptTablesAndWidensPrimaryKeys(): void
+    {
+        self::assertSame('323e4567-e89b-42d3-a456-426614174000',$this->migrationEvidence['organizationEpoch']);
+        self::assertSame('323e4567-e89b-42d3-a456-426614174000',$this->migrationEvidence['clientEpoch']);
+        self::assertSame('application_pk,history_epoch,command_id',$this->migrationEvidence['organizationPrimary']);
+        self::assertSame('application_pk,history_epoch,command_id',$this->migrationEvidence['clientPrimary']);
+    }
+
+    public function testRealMySqlReceiptsAreScopedToHistoryEpoch(): void
+    {
+        $command=$this->command('423e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200,\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$command,7,$this->headers(),'first')['status']);
+        $nextEpoch='923e4567-e89b-42d3-a456-426614174000';$this->first->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$nextEpoch]);$headers=array_replace($this->headers(),['epoch'=>$nextEpoch]);
+        self::assertSame(409,\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$command,7,$headers,'stale-old-epoch')['status']);
+        $next=$command;$next['expectedRevision']='2';$next['profile']['name']='Second Epoch Org';
+        $result=\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$next,7,$headers,'second');self::assertSame(200,$result['status']);self::assertFalse($result['payload']['replayed']);self::assertSame('3',$result['payload']['result']['resource']['revision']);
+        self::assertSame(2,(int)$this->first->query('SELECT COUNT(DISTINCT history_epoch) FROM api_v2_directory_organization_profile_command_receipts')->fetchColumn());
+    }
+
     private function headers(): array
     {
         return ['source' => '123e4567-e89b-42d3-a456-426614174000', 'application' => '223e4567-e89b-42d3-a456-426614174000', 'epoch' => '323e4567-e89b-42d3-a456-426614174000'];
@@ -104,7 +124,7 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['api_v2_directory_organization_profile_command_receipts', 'api_v2_directory_resource_changes', 'api_v2_directory_resource_state', 'api_v2_directory_authorization_state', 'api_keys', 'api_v2_applications', 'api_v2_history_identity', 'address_assignments', 'addresses', 'organizations', 'app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        foreach (['api_v2_directory_organization_profile_command_receipts', 'api_v2_directory_client_profile_command_receipts', 'api_v2_directory_resource_changes', 'api_v2_directory_resource_state', 'api_v2_directory_authorization_state', 'api_keys', 'api_v2_applications', 'api_v2_history_identity', 'address_assignments', 'addresses', 'organizations', 'app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED NOT NULL PRIMARY KEY, application_id CHAR(36) NOT NULL, name VARCHAR(191) NOT NULL) ENGINE=InnoDB;
             CREATE TABLE api_keys(id BIGINT UNSIGNED NOT NULL PRIMARY KEY, api_v2_application_id BIGINT UNSIGNED NULL, revoked_at DATETIME NULL, CONSTRAINT fk_test_key_application FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
@@ -124,9 +144,19 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
             INSERT INTO addresses VALUES(4,'Private label','old','','','','','','place-hidden','google',NULL,0);
             INSERT INTO address_assignments(address_id,entity_type,entity_id,purpose,is_default) VALUES(4,'organization',9,'billing',1);
             INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0')");
-        $migration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0093_api_v2_directory_organization_profile_command_receipts.sql');
-        self::assertNotFalse($migration);
-        $this->first->exec($migration);
+        foreach (['0093_api_v2_directory_organization_profile_command_receipts.sql','0094_api_v2_directory_client_profile_command_receipts.sql'] as $filename) {
+            $migration=file_get_contents(dirname(__DIR__,2).'/database/migrations/'.$filename);self::assertNotFalse($migration);$this->first->exec($migration);
+        }
+        $hash=str_repeat('a',64);$this->first->prepare('INSERT INTO api_v2_directory_organization_profile_command_receipts(application_pk,command_id,request_sha256,public_id,expected_revision,expected_authorization_generation,result_revision,result_projection_sha256) VALUES(?,?,?,?,?,?,?,?)')->execute([3,'f23e4567-e89b-42d3-a456-426614174000',$hash,str_repeat('a',32),1,0,1,$hash]);
+        $this->first->prepare('INSERT INTO api_v2_directory_client_profile_command_receipts(application_pk,command_id,request_sha256,public_id,expected_revision,expected_authorization_generation,result_revision,result_projection_sha256) VALUES(?,?,?,?,?,?,?,?)')->execute([3,'e23e4567-e89b-42d3-a456-426614174000',$hash,str_repeat('b',32),1,0,1,$hash]);
+        $migration=file_get_contents(dirname(__DIR__,2).'/database/migrations/0106_api_v2_directory_profile_receipt_history_epochs.sql');self::assertNotFalse($migration);$this->first->exec($migration);
+        $this->migrationEvidence=[
+            'organizationEpoch'=>(string)$this->first->query("SELECT history_epoch FROM api_v2_directory_organization_profile_command_receipts WHERE command_id='f23e4567-e89b-42d3-a456-426614174000'")->fetchColumn(),
+            'clientEpoch'=>(string)$this->first->query("SELECT history_epoch FROM api_v2_directory_client_profile_command_receipts WHERE command_id='e23e4567-e89b-42d3-a456-426614174000'")->fetchColumn(),
+            'organizationPrimary'=>(string)$this->first->query("SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='api_v2_directory_organization_profile_command_receipts' AND index_name='PRIMARY'")->fetchColumn(),
+            'clientPrimary'=>(string)$this->first->query("SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='api_v2_directory_client_profile_command_receipts' AND index_name='PRIMARY'")->fetchColumn(),
+        ];
+        $this->first->exec('DELETE FROM api_v2_directory_organization_profile_command_receipts;DELETE FROM api_v2_directory_client_profile_command_receipts');
         $this->first->beginTransaction();
         \api_v2_directory_record($this->first, 'organization', 9);
         $this->first->commit();

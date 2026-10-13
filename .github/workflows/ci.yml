@@ -110,6 +110,11 @@ jobs:
           PORTAL_SCOPE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-portal-scope-mysql-integration.ps1
 
+      - name: MySQL financial HTTP and migration release rehearsal
+        env:
+          API_V2_FINANCIAL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: node scripts/run-api-v2-financial-http-mysql.mjs
+
       - name: MySQL concurrent API-key rate-limit regressions
         shell: pwsh
         env:
@@ -121,6 +126,12 @@ jobs:
         env:
           API_V2_PROJECT_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-api-v2-project-lifecycle-mysql-integration.ps1
+
+      - name: MySQL API v2 catalog and adoption read regressions
+        shell: pwsh
+        env:
+          API_V2_READ_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-api-v2-read-mysql-integration.ps1
 
       - name: MySQL API v2 directory client profile regressions
         shell: pwsh
@@ -139,6 +150,12 @@ jobs:
         env:
           API_V2_ORG_PROFILE_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: ./tools/run-api-v2-organization-profile-mysql-integration.ps1
+
+      - name: MySQL API v2 directory cutover gate regressions
+        shell: pwsh
+        env:
+          DIRECTORY_CUTOVER_GATE_MYSQL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: ./tools/run-directory-cutover-gate-mysql-integration.ps1
 
       - name: Dump logs on failure
         if: failure()

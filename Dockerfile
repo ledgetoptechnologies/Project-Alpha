@@ -130,6 +130,7 @@ COPY ./docker-compose.yml /var/www/docker-compose.yml
 COPY ./Dockerfile /var/www/Dockerfile
 COPY ./php.ini /var/www/php.ini
 COPY ./.github/ /var/www/.github/
+COPY ./scripts/run-api-v2-financial-http-mysql.mjs /var/www/scripts/run-api-v2-financial-http-mysql.mjs
 COPY ./SECURITY.md /var/www/SECURITY.md
 RUN mkdir -p /var/www/config
 COPY ./config/.env.example /var/www/config/.env.example

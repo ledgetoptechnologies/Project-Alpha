@@ -9,8 +9,8 @@ require_once __DIR__ . '/../../utils/api_v2_capabilities.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_create_command.php';
 $requestId = api_v2_uuid(); header('X-Request-ID: ' . $requestId);
 $path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
-if (preg_match('#^/api/v2/directory/(clients|organizations)/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
-$type = $match[1] === 'clients' ? 'client' : 'organization';
+if (preg_match('#^/api/v2/directory/(clients|organizations|units)/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
+$type = ['clients'=>'client','organizations'=>'organization','units'=>'unit'][$match[1]];
 $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? '');
 if (preg_match('/^application\/json(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/iD', $contentType) !== 1) { http_response_code(415); exit; }
 $contentLength = $_SERVER['CONTENT_LENGTH'] ?? null;
@@ -23,11 +23,12 @@ try {
     $pdo = new PDO('mysql:host=' . (getenv('DB_HOST') ?: 'db') . ';dbname=' . (getenv('MYSQL_DATABASE') ?: 'project_alpha') . ';charset=utf8mb4', getenv('MYSQL_USER') ?: 'root', getenv('MYSQL_PASSWORD') ?: getenv('MYSQL_ROOT_PASSWORD') ?: 'rootpass', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
 } catch (Throwable $error) { error_log('[ApiV2DirectoryCreate] database unavailable: ' . get_class($error)); http_response_code(503); exit; }
 require_once __DIR__ . '/../../utils/api_auth.php';
-$scope = $type === 'client' ? 'directory.clients.create' : 'directory.organizations.create';
+$scope = 'directory.' . $match[1] . '.create';
 $key = api_require_key(['api.capabilities.read', $scope], false);
 $scopes = api_normalize_scopes($key['scopes'] ?? '');
 if (in_array('full', $scopes, true)) { http_response_code(403); exit; }
 if ($type === 'client' && $command['organization'] !== null && !in_array('directory.clients.organization.assign', $scopes, true)) { http_response_code(403); exit; }
+if ($type === 'unit' && !in_array('directory.units.organization.assign', $scopes, true)) { http_response_code(403); exit; }
 try {
     $outcome = api_v2_directory_create_command_write($pdo, $type, $command, (int)$key['id'], [
         'source'=>$_SERVER['HTTP_X_PA_SOURCE_INSTANCE_ID'] ?? null,

@@ -45,7 +45,7 @@ $deleted = portal_projection_mutate($pdo, $before, static function () use ($pdo,
     if ($stmt->rowCount() !== 1) throw new DomainException('Organization changed while preparing deletion.');
     foreach ($clientIds as $clientId) api_v2_directory_record($pdo, 'client', $clientId);
     return 1;
-}, static fn(): array => []);
+}, static fn(): array => [], false, static fn() => api_v2_directory_management_acquire_shared_gate($pdo));
 error_log('ORG_DELETE: Organization deleted. Rows affected: ' . (int)$deleted);
 
 header('Location: /?page=organization/organizations-list&deleted=1');

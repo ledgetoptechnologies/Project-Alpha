@@ -6,7 +6,7 @@ require_once __DIR__ . '/api_v2_directory_revision.php';
 /** @return array<string,mixed>|null */
 function api_v2_directory_read(PDO $pdo, string $type, string $publicId, int $keyId, array $headers, string $requestId): ?array
 {
-    if (!in_array($type, ['client', 'organization'], true)
+    if (!in_array($type, ['client', 'organization', 'unit'], true)
         || preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1
         || $keyId < 1 || $pdo->inTransaction()) {
         throw new InvalidArgumentException('Invalid directory read');
@@ -37,7 +37,7 @@ function api_v2_directory_read(PDO $pdo, string $type, string $publicId, int $ke
             $pdo->rollBack();
             return null;
         }
-        $table = $type === 'client' ? 'clients' : 'organizations';
+        $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
         $stmt = $pdo->prepare('SELECT * FROM ' . $table . ' WHERE public_id=?' . $lock);
         $stmt->execute([$publicId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -50,7 +50,7 @@ function api_v2_directory_read(PDO $pdo, string $type, string $publicId, int $ke
             $pdo->rollBack();
             return null;
         }
-        $hash = api_v2_directory_projection_hash($type, $row);
+        $hash = api_v2_directory_canonical_hash($pdo, $type, $row);
         if (!hash_equals((string)$version['projection_sha256'], $hash)) {
             $pdo->rollBack();
             return null;
@@ -63,13 +63,11 @@ function api_v2_directory_read(PDO $pdo, string $type, string $publicId, int $ke
             'postalCode' => $row['postal_code'] ?? null,
             'country' => $row['country'] ?? null,
         ];
-        $data = [
-            'publicId' => $publicId,
-            'name' => (string)$row['name'],
-            'email' => $type === 'client' ? ($row['email'] ?? null) : ($row['general_email'] ?? null),
-            'phone' => $type === 'client' ? ($row['phone'] ?? null) : ($row['general_phone'] ?? null),
-            'address' => $address,
-        ];
+        $data = $type === 'unit'
+            ? ['publicId'=>$publicId, 'name'=>(string)$row['name']]
+            : ['publicId'=>$publicId, 'name'=>(string)$row['name'],
+                'email'=>$type === 'client' ? ($row['email'] ?? null) : ($row['general_email'] ?? null),
+                'phone'=>$type === 'client' ? ($row['phone'] ?? null) : ($row['general_phone'] ?? null), 'address'=>$address];
         if ($type === 'client') {
             $clientType = (string)($row['client_type'] ?? 'unknown');
             if (!in_array($clientType, ['unknown', 'business', 'consumer'], true)) {
@@ -86,6 +84,10 @@ function api_v2_directory_read(PDO $pdo, string $type, string $publicId, int $ke
             }
             $data['clientType'] = $clientType;
             $data['organizationPublicId'] = $organizationPublicId;
+        } elseif ($type === 'unit') {
+            $projection = api_v2_directory_unit_projection($pdo, $row);
+            $data['organizationPublicId'] = $projection['organization_public_id'];
+            $data['contacts'] = $projection['contacts'];
         }
         $result = [
             'apiVersion' => '2',

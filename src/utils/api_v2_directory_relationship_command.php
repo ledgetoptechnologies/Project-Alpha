@@ -43,11 +43,25 @@ function api_v2_directory_relationship_result(array$identity,string$clientPublic
             'organizationPublicId'=>$organizationPublicId,'authorizationGeneration'=>$generation]];
 }
 
+/** @return array{status:409,payload:array} */
+function api_v2_directory_relationship_authorization_generation_conflict(array$identity,string$requestId):array
+{
+    return['status'=>409,'payload'=>[
+        'apiVersion'=>'2',
+        'sourceInstanceId'=>(string)$identity['source_instance_id'],
+        'applicationId'=>(string)$identity['application_id'],
+        'historyEpoch'=>(string)$identity['history_epoch'],
+        'requestId'=>$requestId,
+        'error'=>['code'=>'authorization_generation_conflict'],
+    ]];
+}
+
 function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublicId,string$action,array$command,int$apiKeyId,array$headers,string$requestId):array
 {
     if(preg_match('/^[0-9a-f]{32}$/D',$clientPublicId)!==1||!in_array($action,['assign','remove','move'],true)||$apiKeyId<1||$pdo->inTransaction())throw new InvalidArgumentException('Invalid directory relationship command');
     $pdo->beginTransaction();
     try{
+        api_v2_directory_management_acquire_shared_gate($pdo,false);
         $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
         $identityStatement=$pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL'.$lock);
         $identityStatement->execute([$apiKeyId]);$identity=$identityStatement->fetch(PDO::FETCH_ASSOC);
@@ -71,6 +85,17 @@ function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublic
         $clientStateStatement=$pdo->prepare("SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type='client' AND public_id=?".$lock);
         $clientStateStatement->execute([$clientPublicId]);$clientState=$clientStateStatement->fetch(PDO::FETCH_ASSOC);
         if(!$clientState||(int)$clientState['present']!==1||(string)$clientState['revision']!==$command['expectedClientRevision']||!hash_equals((string)$clientState['projection_sha256'],api_v2_directory_projection_hash('client',$client))){$pdo->rollBack();return['status'=>409];}
+        // A relationship command may advance only the calling application's
+        // already-current active client binding. Missing or tombstoned bindings
+        // are preserved, and bindings owned by other applications remain stale
+        // until their explicitly authorized revision-refresh workflow runs.
+        $clientBindingStatement=$pdo->prepare("SELECT external_id,CAST(resource_revision AS CHAR) resource_revision,resource_projection_sha256,status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type='client' AND public_id=? LIMIT 2".$lock);
+        $clientBindingStatement->execute([$appPk,$clientPublicId]);$clientBindings=$clientBindingStatement->fetchAll(PDO::FETCH_ASSOC);
+        if(count($clientBindings)>1){$pdo->rollBack();return['status'=>409];}
+        $clientBinding=$clientBindings[0]??null;
+        if($clientBinding!==null&&(string)$clientBinding['status']==='active'
+            &&((string)$clientBinding['resource_revision']!==(string)$clientState['revision']
+                ||!hash_equals((string)$clientBinding['resource_projection_sha256'],(string)$clientState['projection_sha256']))){$pdo->rollBack();return['status'=>409];}
         if($targetOrganizationId!==null){
             $organizationStatement=$pdo->prepare('SELECT * FROM organizations WHERE id=? AND public_id=?'.$lock);$organizationStatement->execute([$targetOrganizationId,$targetPublicId]);$organization=$organizationStatement->fetch(PDO::FETCH_ASSOC);
             if(!$organization||(int)($organization['archived']??0)!==0||($organization['deleted_at']??null)!==null){$pdo->rollBack();return['status'=>409];}
@@ -83,16 +108,22 @@ function api_v2_directory_relationship_command_write(PDO$pdo,string$clientPublic
                 ||!hash_equals((string)$binding['resource_projection_sha256'],(string)$organizationState['projection_sha256'])||!hash_equals((string)$organizationState['projection_sha256'],api_v2_directory_projection_hash('organization',$organization))){$pdo->rollBack();return['status'=>409];}
         }
         $authorization=$pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?'.$lock);$authorization->execute([$appPk]);$generation=$authorization->fetchColumn();
-        if($generation===false||(string)$generation!==$command['expectedAuthorizationGeneration']||(string)$generation===PA_API_V2_AUTHORIZATION_GENERATION_MAX){$pdo->rollBack();return['status'=>409];}
+        if($generation===false||!api_v2_directory_lifecycle_generation((string)$generation)||(string)$generation===PA_API_V2_AUTHORIZATION_GENERATION_MAX){$pdo->rollBack();return['status'=>409];}
+        if((string)$generation!==$command['expectedAuthorizationGeneration']){$pdo->rollBack();return api_v2_directory_relationship_authorization_generation_conflict($identity,$requestId);}
         $update=$pdo->prepare('UPDATE clients SET organization_id=?,source_version=? WHERE id=? AND '.($client['organization_id']===null?'organization_id IS NULL':'organization_id=?'));
         $params=[$targetOrganizationId,portal_projection_source_version(),$clientId];if($client['organization_id']!==null)$params[]=(int)$client['organization_id'];$update->execute($params);
         if($update->rowCount()!==1)throw new DomainException('Client organization relationship changed.');
-        if(!api_v2_directory_record($pdo,'client',$clientId))throw new RuntimeException('Client relationship revision unavailable');
+        if(!api_v2_directory_record($pdo,'client',$clientId,false))throw new RuntimeException('Client relationship revision unavailable');
         $after=$projection->clientScopes($pdo,$clientId);$projection->afterMutationProjectionOnly($pdo,array_merge($before,$after));
         api_v2_advance_authorization_generation($pdo,$appPk);
-        $resultState=$pdo->prepare("SELECT CAST(revision AS CHAR) FROM api_v2_directory_resource_state WHERE resource_type='client' AND public_id=?");$resultState->execute([$clientPublicId]);$resultRevision=$resultState->fetchColumn();
+        $resultState=$pdo->prepare("SELECT CAST(revision AS CHAR) revision,projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client' AND public_id=?");$resultState->execute([$clientPublicId]);$resultState=$resultState->fetch(PDO::FETCH_ASSOC);$resultRevision=$resultState['revision']??false;
         $resultGenerationStatement=$pdo->prepare('SELECT CAST(authorization_generation AS CHAR) FROM api_v2_directory_authorization_state WHERE application_pk=?');$resultGenerationStatement->execute([$appPk]);$resultGeneration=$resultGenerationStatement->fetchColumn();
-        if($resultRevision===false||$resultGeneration===false)throw new RuntimeException('Directory relationship result unavailable');
+        if($resultRevision===false||!is_string($resultState['projection_sha256']??null)||$resultGeneration===false)throw new RuntimeException('Directory relationship result unavailable');
+        if($clientBinding!==null&&(string)$clientBinding['status']==='active'){
+            $bindingUpdate=$pdo->prepare("UPDATE api_v2_directory_external_bindings SET resource_revision=?,resource_projection_sha256=? WHERE application_pk=? AND resource_type='client' AND external_id=? AND public_id=? AND resource_revision=? AND resource_projection_sha256=? AND status='active'");
+            $bindingUpdate->execute([$resultRevision,$resultState['projection_sha256'],$appPk,$clientBinding['external_id'],$clientPublicId,$clientState['revision'],$clientState['projection_sha256']]);
+            if($bindingUpdate->rowCount()!==1)throw new DomainException('Client relationship binding changed.');
+        }
         $pdo->prepare('INSERT INTO api_v2_directory_relationship_command_receipts(application_pk,history_epoch,command_id,request_sha256,action_name,client_public_id,expected_client_revision,expected_authorization_generation,result_client_revision,result_authorization_generation) VALUES(?,?,?,?,?,?,?,?,?,?)')
             ->execute([$appPk,$identity['history_epoch'],$command['commandId'],$requestHash,$action,$clientPublicId,$command['expectedClientRevision'],$command['expectedAuthorizationGeneration'],$resultRevision,$resultGeneration]);
         $pdo->commit();return['status'=>200,'payload'=>api_v2_directory_relationship_result($identity,$clientPublicId,$action,$targetPublicId,(string)$resultRevision,(string)$resultGeneration,$requestId,false)];
