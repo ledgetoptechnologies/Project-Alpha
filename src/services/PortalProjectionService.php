@@ -20,6 +20,9 @@ final class PortalProjectionService
         if (empty($profile['enabled']) || empty($profile['portal_projection_enabled'])) throw new DomainException('portal-profile-disabled');
         $workspace = (new PortalWorkspaceAuthorizationService())->requireWorkspace($pdo, $profileId, $workspacePublicId);
         $schemaVersion = $this->portalSchemaVersion($profile);
+        if ($schemaVersion >= 3) {
+            (new PortalProjectionMutationService())->materializeWorkspaceRelations($pdo, $profileId, $workspacePublicId);
+        }
         $generation = self::uuid();
         $sequence = $this->nextSequence($pdo, $profileId, $workspacePublicId, $generation);
         $projection = $this->workspaceProjection($pdo, $workspace, $schemaVersion);
