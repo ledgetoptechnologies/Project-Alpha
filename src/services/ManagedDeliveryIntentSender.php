@@ -326,7 +326,11 @@ final class ManagedDeliveryIntentSender
         $addresses = $this->publicAddresses($host);
         if ($addresses === []) throw new RuntimeException('dns_no_public_address');
         $port = (int)($parts['port'] ?? 443);
-        $ip = $addresses[array_rand($addresses)];
+        // Let libcurl choose a reachable validated address before sending once.
+        $resolve = $host . ':' . $port . ':' . implode(',', array_map(
+            static fn(string $ip): string => str_contains($ip, ':') ? '[' . $ip . ']' : $ip,
+            $addresses,
+        ));
         $responseBody = '';
         $responseTooLarge = false;
         $handle = curl_init($url);
@@ -335,7 +339,7 @@ final class ManagedDeliveryIntentSender
             CURLOPT_RETURNTRANSFER => false, CURLOPT_CONNECTTIMEOUT => min(10, $timeout), CURLOPT_TIMEOUT => $timeout,
             CURLOPT_FOLLOWLOCATION => false, CURLOPT_MAXREDIRS => 0, CURLOPT_PROXY => '', CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_RESOLVE => [$host . ':' . $port . ':' . (str_contains($ip, ':') ? '[' . $ip . ']' : $ip)],
+            CURLOPT_RESOLVE => [$resolve],
             CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$responseBody, &$responseTooLarge): int {
                 $remaining = self::RESPONSE_LIMIT - strlen($responseBody);
                 if (strlen($chunk) > $remaining) $responseTooLarge = true;
