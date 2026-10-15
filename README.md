@@ -76,6 +76,12 @@ Current boundaries include:
    - `MYSQL_PASSWORD`
    - `MYSQL_ROOT_PASSWORD`
 
+   The canonical Compose file is self-contained; no separate `.env` file is
+   required. Application startup initializes its persistent runtime configuration
+   in the named config volume. `config/.env.example` is an optional reference for
+   custom overrides, not an installation step. Published `latest`, `cron-latest`,
+   and `db-latest` image tags remain defined in Compose.
+
 3. Pull and start the stack:
 
    ```bash

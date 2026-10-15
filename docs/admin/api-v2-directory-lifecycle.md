@@ -3,9 +3,11 @@
 This surface is generic and stateless. Read-only directory, binding-status, and
 inventory routes are enabled by default. Tested client/organization create,
 profile, binding, binding-revision-refresh/reconciliation, and client-organization
-relationship commands are also [enabled by default](api-v2-route-defaults.md),
-with explicit disable overrides supported. Directory archive, restore, binding
-revoke, and separate unit-write gates remain default-off. Every route
+relationship commands, client/organization archive and restore, and binding
+revoke are also [enabled by default](api-v2-route-defaults.md), with explicit
+disable overrides supported. Separate unit profile/create/archive/restore/contact
+gates remain default-off; shared binding/read/refresh/revoke routes retain their
+existing resource types and explicit per-type scopes. Every route
 is available only to an application-bound API key with its explicit scope. The legacy `full`
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.

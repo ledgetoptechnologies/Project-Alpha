@@ -19,15 +19,21 @@ APP_API_V2_PROJECTS_RESTORE_ENABLED
 APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED
 APP_API_V2_DIRECTORY_BINDING_ENABLED
 APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED
+APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED
+APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED
+APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED
+APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED
+APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED
+APP_API_V2_PROJECTS_BINDING_ENABLED
 ```
 
-The existing six directory/project profile, binding-status and inventory read gates remain enabled by default. Other gates remain disabled by default, including directory lifecycle/revoke commands, unit writes, existing-project binding, catalog inventory and project adoption candidates. Existing shared directory binding/read routes retain their current supported resource types and explicit per-type scopes.
+The existing six directory/project profile, binding-status and inventory read gates remain enabled by default. Other gates remain disabled by default, including separate unit profile/create/archive/restore/contact gates, catalog inventory and project adoption candidates. Shared directory binding/read/refresh/revoke routes retain their existing supported resource types and explicit per-type scopes.
 
 Route availability grants no authority. Commands still require application-bound keys with explicit scopes, exact source/application/history identities, current revisions and authorization generations, and the existing conflict/idempotency checks. The financial-document endpoint remains read-only and requires `financial.documents.read`; it enables no payments, financial mutations, emails or client grants.
 
 ## Updating an existing installation
 
-Normal database migrations and the existing scoped application keys are still required. The canonical Compose file now omits the approved command overrides, and `.env.example` shows only commented optional `false` values for these defaults.
+Normal database migrations and the existing scoped application keys are still required. The canonical Compose file omits API v2 gate overrides, and `.env.example` shows only commented optional `false` values for these defaults. The standard Compose installation needs no separate `.env` file; its service settings and named volumes are defined directly in `docker-compose.yml`.
 
 Update the application image and restart its web service. If your existing deployment explicitly sets one of these flags to `false`, that deliberate override is preserved: remove that individual override or set it to `true` if you want the enabled default. A newer image cannot override an explicit deployment setting. Preserve all unrelated environment values and credentials.
 
