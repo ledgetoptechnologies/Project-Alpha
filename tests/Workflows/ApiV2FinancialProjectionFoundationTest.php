@@ -198,14 +198,14 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
         self::assertSame('overdue',$aggregate['status']);self::assertSame('https://pa.example.test/?page=stripe-checkout&token=org_only_aggregate_token',$aggregate['actionUrl']);
     }
 
-    public function testEndpointAndCapabilityAreDefaultOffAndUseTheCanonicalContract(): void
+    public function testEndpointAndCapabilityUseApprovedDefaultsAndTheCanonicalContract(): void
     {
         $root=dirname(__DIR__,2);$index=(string)file_get_contents($root.'/public/index.php');$controller=(string)file_get_contents($root.'/src/controllers/api/financial_feed_v2.php');
         self::assertStringContainsString("/api/v2/financial-documents",$index);
         self::assertStringContainsString("APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED",$index);
         self::assertStringContainsString("['selectorType','externalId','cursor','limit']",$controller);
         self::assertStringContainsString("'financial.documents.read'",$controller);
-        self::assertStringContainsString('APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED=false',(string)file_get_contents($root.'/config/.env.example'));
+        self::assertStringContainsString('# APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED=false',(string)file_get_contents($root.'/config/.env.example'));
     }
 
     public function testContractSigningLinkRequiresPendingUnsignedLifecycle(): void

@@ -23,7 +23,7 @@ if (in_array($apiV2Path, ['/api/v2/projects/commands','/api/v2/projects/profile/
         '/api/v2/projects/bindings/revisions/commands' => 'APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED',
         default => 'APP_API_V2_PROJECTS_BINDING_ENABLED',
     };
-    if (!filter_var(getenv($flag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled($flag)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/project_sync_command_v2.php'; exit;
@@ -54,7 +54,7 @@ if (preg_match('#^/api/v2/projects/[0-9a-f]{32}$#D', $apiV2Path) === 1) {
 }
 if (preg_match('#^/api/v2/projects/[0-9a-f]{32}/(complete|cancel|archive|restore)/commands$#D', $apiV2Path, $apiV2ProjectLifecycleMatch) === 1) {
     $apiV2ProjectLifecycleFlag = 'APP_API_V2_PROJECTS_' . strtoupper($apiV2ProjectLifecycleMatch[1]) . '_ENABLED';
-    if (!filter_var(getenv($apiV2ProjectLifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled($apiV2ProjectLifecycleFlag)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/project_lifecycle_command_v2.php'; exit;
@@ -80,7 +80,7 @@ if (preg_match('#^/api/v2/bindings/(?:client|organization|unit)/status(?:/|$)#D'
     exit;
 }
 if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
         http_response_code(404);
@@ -90,7 +90,7 @@ if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/com
     exit;
 }
 if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/revisions/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
         http_response_code(404);
@@ -116,47 +116,47 @@ if (preg_match('#^/api/v2/directory/(clients|organizations|units)/commands$#D', 
         'organizations' => 'APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED',
         'units' => 'APP_API_V2_DIRECTORY_UNITS_CREATE_ENABLED',
     };
-    if (!filter_var(getenv($apiV2CreateFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled($apiV2CreateFlag)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_create_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/organizations/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_organization_profile_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store');
         http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_client_profile_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/units/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED')) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
     require __DIR__ . '/../src/controllers/api/directory_unit_profile_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/units/[0-9a-f]{32}/contacts/(?:assign|remove|set-primary)/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED')) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit; }
     require __DIR__ . '/../src/controllers/api/directory_unit_contact_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/(clients|organizations|units)/[0-9a-f]{32}/(archive|restore)/commands$#D', $apiV2Path, $apiV2LifecycleMatch) === 1) {
     $apiV2LifecycleFlag = 'APP_API_V2_DIRECTORY_' . strtoupper($apiV2LifecycleMatch[1]) . '_' . strtoupper($apiV2LifecycleMatch[2]) . '_ENABLED';
-    if (!filter_var(getenv($apiV2LifecycleFlag) ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled($apiV2LifecycleFlag)) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_lifecycle_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/organization/(?:assign|remove|move)/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_relationship_command_v2.php'; exit;
 }
 if (preg_match('#^/api/v2/directory/(?:clients|organizations|units)/bindings/revoke/commands$#D', $apiV2Path) === 1) {
-    if (!filter_var(getenv('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN)) {
+    if (!api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); http_response_code(404); exit;
     }
     require __DIR__ . '/../src/controllers/api/directory_binding_revoke_command_v2.php'; exit;

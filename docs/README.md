@@ -21,7 +21,8 @@ Important operator references:
 | [Recurring Invoices](RECURRING_INVOICES_SETUP.md) | Operators | Long-term contract scheduling and invoice generation |
 | [Migration Safety](MIGRATION_SAFETY.md) | Operators and developers | Safe schema updates, backups, and recovery |
 | [Internal Notification Relay](NOTIFICATION_RELAY.md) | Operators and integrators | Disabled-by-default transactional notification relay setup and security controls |
-| [API v2 directory backfill and command release gate](admin/api-v2-directory-backfill.md) | Operators and integrators | Local directory backfill and disabled-by-default generic API v2 command gate |
+| [API v2 directory backfill and command release gate](admin/api-v2-directory-backfill.md) | Operators and integrators | Local directory backfill and command cutover prerequisites |
+| [Tested Ops API v2 route defaults](admin/api-v2-route-defaults.md) | Operators and integrators | Enabled routes, explicit disable overrides, and existing deployment updates |
 | [API v2 application key binding](admin/api-v2-application-key-binding.md) | Operators and integrators | Safely add an explicit-scope key to an existing API v2 application |
 | [API v2 cutover and rollback evidence template](admin/api-v2-cutover-evidence-template.md) | Operators and integrators | Per-instance, non-secret migration, cutover, retirement, and rollback evidence record |
 | [Backup and Recovery](BACKUP_RECOVERY.md) | Operators | Database/full backups, encryption, restore testing, and key custody |

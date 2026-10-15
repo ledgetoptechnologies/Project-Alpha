@@ -14,7 +14,8 @@ Project Alpha keeps the authoritative Project record. The optional API exposes
 exact reads, reversible lifecycle commands, and application-scoped Project
 synchronization to explicitly provisioned API v2 applications. Every route is
 generic. Read, binding-status, and inventory routes are enabled by default;
-every command remains disabled by default. Nothing selects a Project, client, or
+tested create/profile/lifecycle/revision-refresh commands are also enabled by default
+(see [route defaults](api-v2-route-defaults.md)); existing-project binding remains opt-in. Nothing selects a Project, client, or
 organization by name or email, creates portal membership, publishes documents,
 enables a public link, activates delivery, or inherits access from a legacy
 `full` key.
@@ -191,7 +192,9 @@ explicit `projects.bind` command with exact immutable evidence is still required
 
 ## Release gate
 
-Keep every `APP_API_V2_PROJECTS_*_ENABLED` flag false while preparing a release.
+For an installation that needs a staged cutover, explicitly set the applicable
+`APP_API_V2_PROJECTS_*_ENABLED` flags false while preparing the release; tested
+command routes otherwise use the [enabled defaults](api-v2-route-defaults.md).
 After migrations 0100 through 0102, run bounded dry runs and then apply during a confirmed
 maintenance window:
 

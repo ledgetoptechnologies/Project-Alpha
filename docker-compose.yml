@@ -42,31 +42,15 @@ services:
       # Optional. Defaults to the origin hostname.
       WEBAUTHN_RP_ID: ""
       AUTOPAY_BETA_ENABLED: "false"
-      # API v2 commands remain opt-in until an instance-specific, reviewed cutover.
-      # Read-only directory and Project routes are enabled in code by default and
-      # require no Compose configuration. Set their documented flags to false only
-      # when an installation needs to suppress those routes.
-      APP_API_V2_DIRECTORY_BINDING_ENABLED: "false"
-      APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED: "false"
-      APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED: "false"
-      APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED: "false"
+      # Tested Ops API v2 routes use their code defaults; see
+      # docs/admin/api-v2-route-defaults.md for optional false overrides.
+      # The remaining command gates below are separate opt-in features.
       APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED: "false"
       APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED: "false"
       APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED: "false"
       APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED: "false"
       APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED: "false"
-      APP_API_V2_PROJECTS_COMPLETE_ENABLED: "false"
-      APP_API_V2_PROJECTS_CANCEL_ENABLED: "false"
-      APP_API_V2_PROJECTS_ARCHIVE_ENABLED: "false"
-      APP_API_V2_PROJECTS_RESTORE_ENABLED: "false"
-      APP_API_V2_PROJECTS_CREATE_ENABLED: "false"
-      APP_API_V2_PROJECTS_WRITE_ENABLED: "false"
       APP_API_V2_PROJECTS_BINDING_ENABLED: "false"
-      APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED: "false"
       # Optional inbound portal adapter credentials. Outbound portal events use
       # the External Operations connection saved in administrator settings.
       PORTAL_INTEGRATION_HMAC_SECRETS_JSON: ""
