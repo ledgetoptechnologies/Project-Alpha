@@ -1,5 +1,7 @@
 # API v2 directory backfill
 
+Current tested Ops command defaults are documented in [API v2 route defaults](api-v2-route-defaults.md). The default-off instructions below describe the initial cutover; explicit disable overrides remain supported, and the backfill prerequisites still apply.
+
 `bin/backfill-api-v2-directory.php` is a local database-only operator tool for seeding the API v2 directory revision foundation from existing organizations, clients, and customer units (`organization_departments`), in that dependency order. It makes no network calls and never emits credentials, names, addresses, emails, phone numbers, contact identities, or public IDs.
 
 It defaults to dry-run. Run bounded batches (at most 500 records), retain the returned non-secret local resume cursor, and inspect aggregate counts before applying the same cursor/batch. Start with an explicit dry run:

@@ -5,7 +5,7 @@ description: Assignment-driven synchronization from Project Alpha to a deploymen
 
 # External Operations Integration
 
-This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Operations, Tasks, teams, and assignments. Separately scoped, default-off API v2 Project commands may create or update an explicitly bound Project after migration, backfill attestation, credential provisioning, and deployment review; this repository does not claim that any deployment has enabled them.
+This optional module projects operational records into a separate, authenticated, read-only application. Project Alpha remains the only editor for Operations, Tasks, teams, and assignments. Separately scoped API v2 Project create, profile, lifecycle, and binding-revision-refresh commands are [enabled by default](api-v2-route-defaults.md), with explicit disable overrides supported; existing-Project binding remains opt-in. Their migration, backfill attestation, credential provisioning, and deployment-review prerequisites still apply.
 
 ## Reviewed project-management link
 

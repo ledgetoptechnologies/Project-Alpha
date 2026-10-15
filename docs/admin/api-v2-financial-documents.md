@@ -5,7 +5,7 @@ This read-only projection lets an application display eligible financial documen
 ## Deployment gate
 
 - Apply normal database migrations, including `0107_financial_document_public_ids.sql`, before enabling this endpoint.
-- `APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED` defaults to `false`. Disabled requests return 404.
+- `APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED` defaults to `true`; an explicit process-environment `false` suppresses the route with 404. See [route defaults](api-v2-route-defaults.md).
 - Use a bound application API key explicitly granted both `api.capabilities.read` and `financial.documents.read`. Legacy `full` access is not accepted.
 - Verify application/source/history identity, current binding revision and projection, and recipient authorization in the consuming application. A successful application API read does not itself authorize a portal recipient.
 

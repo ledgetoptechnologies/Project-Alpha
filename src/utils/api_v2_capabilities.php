@@ -29,8 +29,10 @@ function api_v2_enabled(string $name): bool
         return filter_var($configured, FILTER_VALIDATE_BOOLEAN);
     }
 
-    // These endpoints are read-only and still require an application-bound,
-    // explicitly scoped key. Commands stay opt-in by default.
+    // Tested Ops routes share their defaults with the stateless dispatcher.
+    // Route availability is not authorization: every request still requires
+    // its application-bound key, explicit scopes and exact identity fences.
+    // An explicit environment value (including false) overrides this list.
     return in_array($name, [
         'APP_API_V2_DIRECTORY_READ_ENABLED',
         'APP_API_V2_BINDING_STATUS_ENABLED',
@@ -38,6 +40,22 @@ function api_v2_enabled(string $name): bool
         'APP_API_V2_PROJECTS_READ_ENABLED',
         'APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED',
         'APP_API_V2_PROJECTS_INVENTORY_ENABLED',
+        'APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED',
+        'APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED',
+        'APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED',
+        'APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED',
+        'APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED',
+        'APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED',
+        'APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED',
+        'APP_API_V2_PROJECTS_CREATE_ENABLED',
+        'APP_API_V2_PROJECTS_WRITE_ENABLED',
+        'APP_API_V2_PROJECTS_COMPLETE_ENABLED',
+        'APP_API_V2_PROJECTS_CANCEL_ENABLED',
+        'APP_API_V2_PROJECTS_ARCHIVE_ENABLED',
+        'APP_API_V2_PROJECTS_RESTORE_ENABLED',
+        'APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED',
+        'APP_API_V2_DIRECTORY_BINDING_ENABLED',
+        'APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED',
     ], true);
 }
 

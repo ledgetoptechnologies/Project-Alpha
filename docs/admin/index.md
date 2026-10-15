@@ -22,7 +22,7 @@ PA administration is mostly handled from Settings plus the deployment environmen
 | Workforce | Employee PA accounts, employment state, pay rates, and project assignments |
 | Timekeeping and Approvals | Timers, breaks, review, correction revisions, and immutable approval snapshots |
 | Custom integrations | Optional, deployment-specific entitlements, operations, tasks, and read-only synchronization |
-| Project lifecycle API | Default-on exact Project reads; revision-checked complete, cancel, archive, and restore commands remain default-off |
+| Project lifecycle API | [Default-on](api-v2-route-defaults.md) exact Project reads and revision-checked create, profile, complete, cancel, archive, restore, and binding-revision-refresh commands; explicit disable overrides supported |
 
 ## Recommended Order
 
