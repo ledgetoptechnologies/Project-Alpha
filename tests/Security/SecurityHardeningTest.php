@@ -280,7 +280,7 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString("STATUS_KEY='Component_status'", $healthcheck);
         self::assertStringContainsString('@@global.binlog_encryption=1', $healthcheck);
         self::assertStringContainsString('target: db', $publishWorkflow);
-        self::assertStringContainsString('db_tag=db-latest', $publishWorkflow);
+        self::assertStringContainsString('db_tag="db-latest"', $publishWorkflow);
 
         $migrator = $this->read('docker/migrate.sh');
         $encryption = $this->read('docker/enable-mysql-encryption.sh');
@@ -489,6 +489,63 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringNotContainsString('pull_request_target:', $docker);
         self::assertStringNotContainsString('github.event.pull_request', $docker);
         self::assertSame(3, substr_count($docker, 'cache-to: type=gha,mode=max,ignore-error=true'));
+    }
+
+    public function testManualCandidatePublishingCannotMoveSharedChannelTags(): void
+    {
+        $docker = str_replace(["\r\n", "\r"], "\n", $this->read('.github/workflows/docker-publish.yml'));
+
+        self::assertStringContainsString('if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]', $docker);
+        self::assertStringNotContainsString('inputs.publish_mode', $docker);
+        $candidateStart = strpos($docker, 'if [[ "${{ github.event_name }}"');
+        $standardStart = strpos($docker, 'else', $candidateStart);
+        self::assertNotFalse($candidateStart);
+        self::assertNotFalse($standardStart);
+        $candidateBlock = substr($docker, $candidateStart, $standardStart - $candidateStart);
+        self::assertStringContainsString('web_tags="$web_immutable"', $candidateBlock);
+        self::assertStringContainsString('cron_tags="$cron_immutable"', $candidateBlock);
+        self::assertStringContainsString('db_tags="$db_immutable"', $candidateBlock);
+        foreach ([':dev', ':cron', ':db-dev', ':latest', ':cron-latest', ':db-latest'] as $mutableTag) {
+            self::assertStringNotContainsString($mutableTag, $candidateBlock);
+        }
+
+        self::assertStringContainsString('tag="latest"', $docker);
+        self::assertStringContainsString('tag="dev"', $docker);
+        self::assertStringContainsString('tags: ${{ steps.tag.outputs.web_tags }}', $docker);
+        self::assertStringContainsString('tags: ${{ steps.tag.outputs.cron_tags }}', $docker);
+        self::assertStringContainsString('tags: ${{ steps.tag.outputs.db_tags }}', $docker);
+        self::assertStringContainsString('image-ref: ${{ steps.tag.outputs.web_immutable }}', $docker);
+        self::assertStringContainsString('image-ref: ${{ steps.tag.outputs.cron_immutable }}', $docker);
+        self::assertStringContainsString('image-ref: ${{ steps.tag.outputs.db_immutable }}', $docker);
+        self::assertStringContainsString('${{ steps.build-web.outputs.digest }}', $docker);
+        self::assertStringContainsString('${{ steps.build-cron.outputs.digest }}', $docker);
+        self::assertStringContainsString('${{ steps.build-db.outputs.digest }}', $docker);
+        self::assertSame(3, substr_count($docker, "exit-code: '1'"));
+        self::assertStringContainsString('trivy-cron-report.txt', $docker);
+        foreach ([
+            'web' => 'Run Trivy vulnerability scanner',
+            'cron' => 'Run Trivy cron image scanner',
+            'db' => 'Run Trivy database image scanner',
+        ] as $target => $stepName) {
+            self::assertSame(
+                1,
+                substr_count($docker, "if: always() && steps.build-{$target}.outcome == 'success'"),
+                "{$target} scan must run independently after its image build succeeds."
+            );
+            self::assertMatchesRegularExpression(
+                '/(?m)^      - name: ' . preg_quote($stepName, '/') . "\n"
+                    . "        if: always\(\) && steps\.build-{$target}\.outcome == 'success'\n"
+                    . "        uses: aquasecurity\/trivy-action@v0\.36\.0\n"
+                    . "        with:\n"
+                    . "          image-ref: \\\$\{\{ steps\.tag\.outputs\.{$target}_immutable \}\}/",
+                $docker,
+                "{$target} scan condition must guard that target's immutable image."
+            );
+        }
+        self::assertStringNotContainsString('continue-on-error:', $docker);
+        self::assertSame(3, substr_count($docker, 'org.opencontainers.image.source='));
+        self::assertSame(3, substr_count($docker, 'org.opencontainers.image.revision='));
+        self::assertSame(3, substr_count($docker, 'org.opencontainers.image.version='));
     }
 
     public function testNavigationDiagnosticsDoNotTreatExternalInputAsCodeOrMarkup(): void

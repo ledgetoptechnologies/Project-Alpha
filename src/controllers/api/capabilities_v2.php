@@ -57,14 +57,21 @@ try {
         'binding_status' => api_v2_enabled('APP_API_V2_BINDING_STATUS_ENABLED'),
         'directory_binding' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_ENABLED'),
         'directory_binding_refresh' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED'),
+        'directory_binding_refresh_reconciliation' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_ENABLED')
+            && api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REFRESH_RECONCILIATION_ENABLED'),
         'directory_organization_write' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED'),
         'directory_client_write' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED'),
+        'directory_unit_write' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED'),
         'directory_organization_create' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED'),
         'directory_client_create' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'),
+        'directory_unit_create' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_CREATE_ENABLED'),
         'directory_client_archive' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED'),
         'directory_client_restore' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED'),
         'directory_organization_archive' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED'),
         'directory_organization_restore' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED'),
+        'directory_unit_archive' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_ARCHIVE_ENABLED'),
+        'directory_unit_restore' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_RESTORE_ENABLED'),
+        'directory_unit_contacts_write' => api_v2_enabled('APP_API_V2_DIRECTORY_UNIT_CONTACTS_WRITE_ENABLED'),
         'directory_relationship_write' => api_v2_enabled('APP_API_V2_DIRECTORY_RELATIONSHIPS_WRITE_ENABLED'),
         'directory_binding_revoke' => api_v2_enabled('APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED'),
         'directory_inventory' => api_v2_enabled('APP_API_V2_DIRECTORY_INVENTORY_ENABLED'),
@@ -79,6 +86,9 @@ try {
         'projects_binding_refresh' => api_v2_enabled('APP_API_V2_PROJECTS_BINDING_REFRESH_ENABLED'),
         'projects_binding_status' => api_v2_enabled('APP_API_V2_PROJECTS_BINDING_STATUS_ENABLED'),
         'projects_inventory' => api_v2_enabled('APP_API_V2_PROJECTS_INVENTORY_ENABLED'),
+        'projects_adoption_candidates' => api_v2_enabled('APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED'),
+        'catalog_inventory' => api_v2_enabled('APP_API_V2_CATALOG_INVENTORY_ENABLED'),
+        'financial_documents' => api_v2_enabled('APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED'),
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

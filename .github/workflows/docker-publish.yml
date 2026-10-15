@@ -42,37 +42,69 @@ jobs:
         id: image
         run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - name: Determine image tag
+      - name: Determine image tags
         id: tag
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-            echo "tag=${version}" >> $GITHUB_OUTPUT
-            echo "cron_tag=cron-${version}" >> $GITHUB_OUTPUT
-            echo "db_tag=db-${version}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
-            echo "cron_tag=cron-latest" >> $GITHUB_OUTPUT
-            echo "db_tag=db-latest" >> $GITHUB_OUTPUT
+          web_immutable="${REGISTRY}/${{ steps.image.outputs.name }}:sha-${{ steps.source.outputs.sha }}"
+          cron_immutable="${REGISTRY}/${{ steps.image.outputs.name }}:cron-sha-${{ steps.source.outputs.sha }}"
+          db_immutable="${REGISTRY}/${{ steps.image.outputs.name }}:db-sha-${{ steps.source.outputs.sha }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            web_tags="$web_immutable"
+            cron_tags="$cron_immutable"
+            db_tags="$db_immutable"
           else
-            echo "tag=dev" >> $GITHUB_OUTPUT
-            echo "cron_tag=cron" >> $GITHUB_OUTPUT
-            echo "db_tag=db-dev" >> $GITHUB_OUTPUT
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              version="${GITHUB_REF_NAME#v}"
+              tag="$version"
+              cron_tag="cron-${version}"
+              db_tag="db-${version}"
+            elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              tag="latest"
+              cron_tag="cron-latest"
+              db_tag="db-latest"
+            else
+              tag="dev"
+              cron_tag="cron"
+              db_tag="db-dev"
+            fi
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "cron_tag=$cron_tag" >> "$GITHUB_OUTPUT"
+            echo "db_tag=$db_tag" >> "$GITHUB_OUTPUT"
+            web_tags="${REGISTRY}/${{ steps.image.outputs.name }}:${tag}"$'\n'"$web_immutable"
+            cron_tags="${REGISTRY}/${{ steps.image.outputs.name }}:${cron_tag}"$'\n'"$cron_immutable"
+            db_tags="${REGISTRY}/${{ steps.image.outputs.name }}:${db_tag}"$'\n'"$db_immutable"
           fi
+          {
+            echo "web_immutable=$web_immutable"
+            echo "cron_immutable=$cron_immutable"
+            echo "db_immutable=$db_immutable"
+            echo "web_tags<<EOF"
+            echo "$web_tags"
+            echo "EOF"
+            echo "cron_tags<<EOF"
+            echo "$cron_tags"
+            echo "EOF"
+            echo "db_tags<<EOF"
+            echo "$db_tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Compute version
         id: ver
         run: echo "version=$(git describe --tags --always 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push web image
+        id: build-web
         uses: docker/build-push-action@v7
         with:
           context: .
           target: web
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.tag.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:sha-${{ steps.source.outputs.sha }}
+          tags: ${{ steps.tag.outputs.web_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
           build-args: |
             APP_VERSION=${{ steps.ver.outputs.version }}
           cache-from: type=gha
@@ -81,35 +113,53 @@ jobs:
           cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Build and push cron image
+        id: build-cron
         uses: docker/build-push-action@v7
         with:
           context: .
           target: cron
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.tag.outputs.cron_tag }}
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:cron-sha-${{ steps.source.outputs.sha }}
+          tags: ${{ steps.tag.outputs.cron_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
           build-args: |
             APP_VERSION=${{ steps.ver.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Build and push encrypted database image
+        id: build-db
         uses: docker/build-push-action@v7
         with:
           context: .
           target: db
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.tag.outputs.db_tag }}
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:db-sha-${{ steps.source.outputs.sha }}
+          tags: ${{ steps.tag.outputs.db_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
+      - name: Record immutable image identities
+        run: |
+          {
+            echo "### Published image identities"
+            echo '| Target | Immutable tag | Digest |'
+            echo '| --- | --- | --- |'
+            echo '| web | `${{ steps.tag.outputs.web_immutable }}` | `${{ steps.build-web.outputs.digest }}` |'
+            echo '| cron | `${{ steps.tag.outputs.cron_immutable }}` | `${{ steps.build-cron.outputs.digest }}` |'
+            echo '| db | `${{ steps.tag.outputs.db_immutable }}` | `${{ steps.build-db.outputs.digest }}` |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run Trivy vulnerability scanner
+        if: always() && steps.build-web.outcome == 'success'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.tag.outputs.tag }}
+          image-ref: ${{ steps.tag.outputs.web_immutable }}
           format: table
           output: trivy-report.txt
           exit-code: '1'
@@ -119,11 +169,25 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Run Trivy database image scanner
+        if: always() && steps.build-db.outcome == 'success'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.tag.outputs.db_tag }}
+          image-ref: ${{ steps.tag.outputs.db_immutable }}
           format: table
           output: trivy-db-report.txt
+          exit-code: '1'
+          ignore-unfixed: true
+          scanners: 'vuln'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy cron image scanner
+        if: always() && steps.build-cron.outcome == 'success'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.tag.outputs.cron_immutable }}
+          format: table
+          output: trivy-cron-report.txt
           exit-code: '1'
           ignore-unfixed: true
           scanners: 'vuln'
@@ -143,6 +207,11 @@ jobs:
           else
             echo "Database Trivy report was not generated."
           fi
+          if [ -f trivy-cron-report.txt ]; then
+            cat trivy-cron-report.txt
+          else
+            echo "Cron Trivy report was not generated."
+          fi
 
       - name: Upload Trivy report
         if: always()
@@ -152,3 +221,4 @@ jobs:
           path: |
             trivy-report.txt
             trivy-db-report.txt
+            trivy-cron-report.txt

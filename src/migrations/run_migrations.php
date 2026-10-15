@@ -145,6 +145,13 @@ try {
     migration_validate_history($files, $ledger);
     $pending = array_diff_key($files, $ledger);
 
+    // Validate every non-transactional legacy-data invariant before applying
+    // any pending DDL. This keeps a refused migration's schema and ledger
+    // exactly as they were at runner entry.
+    foreach ($pending as $file) {
+        migration_preflight($pdo, (int)$file['version']);
+    }
+
     if ($dryRun) {
         foreach ($pending as $file) {
             $sql = file_get_contents($file['path']);

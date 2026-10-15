@@ -5,6 +5,11 @@ title: API v2 Project lifecycle
 
 # API v2 Project lifecycle
 
+`projects.department_id` remains owned by Project Alpha's Project domain in the
+first generic unit release. The directory `unit` contract governs unit identity
+and contact assignments; it does not make Project-to-unit assignment an
+Operations-owned directory relationship.
+
 Project Alpha keeps the authoritative Project record. The optional API exposes
 exact reads, reversible lifecycle commands, and application-scoped Project
 synchronization to explicitly provisioned API v2 applications. Every route is
@@ -53,6 +58,7 @@ route capability, and matching `X-PA-Source-Instance-ID`,
 - `POST /api/v2/projects/bindings/revisions/commands` requires `projects.binding.revision.refresh`.
 - `GET /api/v2/projects/bindings/status/{base64urlExternalId}` requires `projects.binding_status.read`.
 - `GET /api/v2/projects/inventory?limit=100&cursor=...` requires `projects.inventory.read`.
+- `GET /api/v2/projects/adoption-candidates?limit=100&cursor=...` requires `projects.adoption_candidates.read` and the default-off `APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED` gate.
 
 Lifecycle command bodies have exactly two fields:
 
@@ -79,10 +85,14 @@ one-to-one mapping between its external Project ID and one PA Project public
 ID. An external ID and PA public ID cannot be reused or remapped. Existing PA
 Projects are bound only by a deliberate command carrying the exact public ID,
 revision, canonical projection SHA-256, and generation. A Project created by
-the API is bound atomically and must cite an active, same-application
-organization directory binding; an optional client binding must belong to that
-organization. This keeps the Project eligible for ordinary PA ownership rules
-without guessing from names or email addresses.
+the API is bound atomically and must cite active, same-application directory
+ownership proof in exactly one of three forms: an organization; an organization
+plus a client whose canonical organization matches it; or a standalone client
+whose canonical `organization_id` is null. Both proofs absent, a client linked
+to a different organization, or a stale/inactive proof is rejected without a
+Project, binding, receipt, or generation mutation. This keeps the Project
+eligible for ordinary PA ownership rules without guessing from names or email
+addresses or inventing a synthetic organization.
 
 Create accepts one shared Project name, description, and estimated dates. It
 starts `not_started`, uses neutral per-invoice billing with automatic invoice
@@ -164,6 +174,20 @@ is current. At most one external ID is returned per request. Missing or corrupt
 canonical history still produces a bare `409`. These responses contain no
 billing, budget, invoice, payment, document, portal URL, public action link, or
 other financial/publishing content.
+
+Adoption-candidate discovery is a separate, default-off contract and does not
+change bound inventory semantics. It is ordered by permanent Project public ID,
+uses that public ID as an exclusive cursor, and returns at most 200 canonical,
+unarchived Projects not already bound to the calling application. Each row is
+limited to public ID, revision, projection hash, name, workflow status, the
+constant `archived: false` assertion, and organization/client public IDs needed
+for explicit relationship review. The envelope includes the calling
+application lineage and current Project authorization generation. A canonical
+history failure rejects the whole page. A binding owned by another application
+does not reveal that application's external ID or binding state; the Project
+remains an ordinary candidate for the caller. Discovery never binds, matches,
+publishes, enables a public link, or activates portal delivery. A separate
+explicit `projects.bind` command with exact immutable evidence is still required.
 
 ## Release gate
 

@@ -36,12 +36,75 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_revision.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_binding_status.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_binding_command.php';
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_binding_revision_refresh.php';
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_binding_revision_refresh_reconciliation.php';
         $this->resetSchema();
     }
 
     protected function tearDown(): void
     {
         foreach ([$this->first ?? null, $this->second ?? null] as $pdo) if ($pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
+    }
+
+    public function testRevisionRefreshLockedPreconditionIsAtomicOnMySql(): void
+    {
+        $this->first->exec("UPDATE clients SET name='Revised' WHERE id=9");
+        $this->first->beginTransaction(); \api_v2_directory_record($this->first, 'client', 9); $this->first->commit();
+        $command = ['commandId'=>'623e4567-e89b-42d3-a456-426614174000','externalId'=>'old/external','expectedPriorRevision'=>'1','expectedLiveRevision'=>'2','expectedAuthorizationGeneration'=>'0'];
+        $before = $this->first->query('SELECT resource_revision,resource_projection_sha256 FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC);
+        $refused = \api_v2_directory_binding_revision_refresh_write($this->first, 'client', $command, 7, $this->headers(), 'refused', static function (array $context): bool {
+            self::assertTrue($context['pdo']->inTransaction());
+            self::assertSame('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $context['binding']['public_id']);
+            return hash_equals('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', (string)$context['binding']['public_id']);
+        });
+        self::assertSame(409, $refused['status']);
+        self::assertSame($before, $this->first->query('SELECT resource_revision,resource_projection_sha256 FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn());
+        self::assertSame(200, \api_v2_directory_binding_revision_refresh_write($this->first, 'client', $command, 7, $this->headers(), 'accepted', static fn(array $context): bool => $context['authorizationGeneration'] === '0')['status']);
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn());
+        $receipt = $this->first->query('SELECT command_id,public_id,expected_prior_revision,result_revision,expected_authorization_generation,result_authorization_generation FROM api_v2_directory_binding_revision_refresh_receipts')->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(['command_id'=>$command['commandId'],'public_id'=>'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','expected_prior_revision'=>1,'result_revision'=>2,'expected_authorization_generation'=>0,'result_authorization_generation'=>1], $receipt);
+        $reconciled = \api_v2_directory_binding_revision_refresh_reconcile($this->first, 'client', $command, 7, $this->headers(), 'reconciled');
+        self::assertSame('acknowledged', $reconciled['payload']['status']);
+        self::assertTrue($reconciled['payload']['acknowledgement']['replayed']);
+        self::assertSame(409, \api_v2_directory_binding_revision_refresh_reconcile($this->first, 'client', array_replace($command, ['expectedAuthorizationGeneration'=>'1']), 7, $this->headers(), 'receipt-collision')['status']);
+    }
+
+    public function testRefreshReconciliationLocksAndReturnsReadOnlyTerminalConflictOnMySql(): void
+    {
+        $this->first->exec("UPDATE clients SET name='Revised' WHERE id=9");
+        $this->first->beginTransaction(); \api_v2_directory_record($this->first, 'client', 9); $this->first->commit();
+        $command = ['commandId'=>'623e4567-e89b-42d3-a456-426614174000','externalId'=>'old/external','expectedPriorRevision'=>'1','expectedLiveRevision'=>'2','expectedAuthorizationGeneration'=>'0'];
+        $equal = \api_v2_directory_binding_revision_refresh_reconcile($this->first, 'client', $command, 7, $this->headers(), 'equal-generation');
+        self::assertSame('unresolved', $equal['payload']['status']); self::assertNull($equal['payload']['acknowledgement']);
+        $this->first->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+        $before = [
+            'binding' => $this->first->query('SELECT * FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC),
+            'generation' => $this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn(),
+            'receipts' => $this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn(),
+        ];
+        $outcome = \api_v2_directory_binding_revision_refresh_reconcile($this->first, 'client', $command, 7, $this->headers(), 'terminal');
+        self::assertSame(200, $outcome['status']); self::assertSame('terminal_conflict', $outcome['payload']['status']);
+        self::assertNotSame($outcome['payload']['observation']['resource']['projectionSha256'], $outcome['payload']['observation']['binding']['projectionSha256']);
+        self::assertSame($before['binding'], $this->first->query('SELECT * FROM api_v2_directory_external_bindings')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($before['generation'], $this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame($before['receipts'], $this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_revision_refresh_receipts')->fetchColumn());
+
+        $this->first->exec("UPDATE api_keys SET scopes='api.capabilities.read'");
+        self::assertSame(409, \api_v2_directory_binding_revision_refresh_reconcile($this->first, 'client', $command, 7, $this->headers(), 'scope-removed')['status']);
+        $this->first->exec("UPDATE api_keys SET scopes='api.capabilities.read,directory.clients.binding.revision.refresh'");
+
+        $this->first->beginTransaction();
+        $this->first->query('SELECT id FROM api_keys WHERE id=7 FOR UPDATE')->fetchColumn();
+        try {
+            \api_v2_directory_binding_revision_refresh_reconcile($this->second, 'client', $command, 7, $this->headers(), 'blocked');
+            self::fail('Expected reconciliation to wait behind the API-key authority lock.');
+        } catch (PDOException $error) {
+            self::assertSame(1205, (int)($error->errorInfo[1] ?? 0), $error->getMessage());
+        } finally {
+            if ($this->first->inTransaction()) $this->first->rollBack();
+            if ($this->second->inTransaction()) $this->second->rollBack();
+        }
     }
 
     public function testDeleteStatusDenialRestoreAndExternalIdReservationAreAtomic(): void
@@ -244,18 +307,19 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['api_v2_directory_binding_lifecycle_repairs','api_v2_directory_binding_command_receipts','api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        foreach (['api_v2_directory_binding_lifecycle_repairs','api_v2_directory_binding_revision_refresh_receipts','api_v2_directory_binding_command_receipts','api_v2_directory_external_bindings','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','clients'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED PRIMARY KEY,application_id CHAR(36) NOT NULL,name VARCHAR(191) NOT NULL) ENGINE=InnoDB;
-            CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL,FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
+            CREATE TABLE api_keys(id BIGINT UNSIGNED PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED,revoked_at DATETIME NULL,scopes TEXT NOT NULL,FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_history_identity(singleton TINYINT UNSIGNED PRIMARY KEY,source_instance_id CHAR(36) NOT NULL,history_epoch CHAR(36) NOT NULL) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_authorization_state(application_pk BIGINT UNSIGNED PRIMARY KEY,authorization_generation BIGINT UNSIGNED NOT NULL,FOREIGN KEY(application_pk) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_resource_state(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,revision BIGINT UNSIGNED NOT NULL,projection_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,present TINYINT(1) NOT NULL,PRIMARY KEY(resource_type,public_id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_resource_changes(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,revision BIGINT UNSIGNED NOT NULL,action ENUM('upsert','delete') NOT NULL,PRIMARY KEY(resource_type,public_id,revision),FOREIGN KEY(resource_type,public_id) REFERENCES api_v2_directory_resource_state(resource_type,public_id)) ENGINE=InnoDB;
             CREATE TABLE api_v2_directory_external_bindings(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,resource_revision BIGINT UNSIGNED NOT NULL,resource_projection_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,status ENUM('active','tombstoned') NOT NULL,tombstoned_at DATETIME(6) NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE KEY uq_binding_public(application_pk,resource_type,public_id),FOREIGN KEY(resource_type,public_id) REFERENCES api_v2_directory_resource_state(resource_type,public_id)) ENGINE=InnoDB;
-            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,command_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,request_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,resource_revision BIGINT UNSIGNED NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),PRIMARY KEY(application_pk,resource_type,command_id),FOREIGN KEY(application_pk) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
+            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,history_epoch CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,command_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,request_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,resource_revision BIGINT UNSIGNED NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),PRIMARY KEY(application_pk,resource_type,history_epoch,command_id),FOREIGN KEY(application_pk) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
+            CREATE TABLE api_v2_directory_binding_revision_refresh_receipts(application_pk BIGINT UNSIGNED NOT NULL,resource_type ENUM('client','organization') NOT NULL,history_epoch CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,command_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,request_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,external_id VARBINARY(764) NOT NULL,public_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,expected_prior_revision BIGINT UNSIGNED NOT NULL,result_revision BIGINT UNSIGNED NOT NULL,result_projection_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,expected_authorization_generation BIGINT UNSIGNED NOT NULL,result_authorization_generation BIGINT UNSIGNED NOT NULL,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id)) ENGINE=InnoDB;
             CREATE TABLE clients(id INT PRIMARY KEY,public_id CHAR(32) NOT NULL UNIQUE,name VARCHAR(150),email VARCHAR(255),phone VARCHAR(50),client_type VARCHAR(50),organization_id INT,address_line1 VARCHAR(255),address_line2 VARCHAR(255),city VARCHAR(100),state VARCHAR(100),postal_code VARCHAR(32),country VARCHAR(100)) ENGINE=InnoDB;
-            INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','Disposable'); INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_directory_authorization_state VALUES(3,0); INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Example',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)");
+            INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','Disposable'); INSERT INTO api_keys VALUES(7,3,NULL,'api.capabilities.read,directory.clients.binding.revision.refresh'); INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_directory_authorization_state VALUES(3,0); INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Example',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)");
         $this->first->beginTransaction();
         \api_v2_directory_record($this->first, 'client', 9);
         $this->first->commit();

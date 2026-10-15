@@ -35,6 +35,18 @@ final class PortalProjectionMutationService
         $this->queueWorkspaces($pdo, $ids);
     }
 
+    /** Materialize only an authorized workspace's canonical graph, without
+     * provisioning portal authority or queuing ordinary projection events. */
+    public function materializeWorkspaceRelations(PDO $pdo, int $profileId, string $workspacePublicId): void
+    {
+        $this->requireTransaction($pdo);
+        $workspace = (new PortalWorkspaceAuthorizationService())->requireWorkspace($pdo, $profileId, $workspacePublicId);
+        $this->reconcileRelations($pdo, [[
+            'root_type' => (string)$workspace['root_type'],
+            'root_public_id' => (string)$workspace['root_public_id'],
+        ]]);
+    }
+
     /** @return list<array{root_type:string,root_public_id:string}> */
     public function organizationScopes(PDO$pdo,int$id):array{$s=$pdo->prepare('SELECT public_id FROM organizations WHERE id=?');$s->execute([$id]);$public=(string)($s->fetchColumn()?:'');return$public!==''?[['root_type'=>'organization','root_public_id'=>$public]]:[];}
     /** @return list<array{root_type:string,root_public_id:string}> */

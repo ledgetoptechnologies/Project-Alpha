@@ -34,6 +34,7 @@ if ($name === '') {
 
 try {
   $pdo->beginTransaction();
+  api_v2_directory_management_acquire_shared_gate($pdo);
   $stmt = $pdo->prepare('INSERT INTO clients (name, email, phone, organization_id, notes, address_line1, address_line2, city, state, postal_code, country, source_version, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
   $stmt->execute([
     $name,

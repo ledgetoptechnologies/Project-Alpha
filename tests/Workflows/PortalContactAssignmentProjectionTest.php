@@ -281,7 +281,7 @@ CREATE TABLE projects(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,organizati
 CREATE TABLE organization_department_contacts(id INTEGER PRIMARY KEY,department_id INTEGER,client_id INTEGER,role TEXT,is_primary INTEGER);
 CREATE TABLE project_clients(id INTEGER PRIMARY KEY,project_id INTEGER,client_id INTEGER,department_id INTEGER,role TEXT,is_primary_billing INTEGER,send_project_invoices INTEGER,can_view_invoice_links INTEGER,sort_order INTEGER);
 CREATE TABLE portal_v2_contacts(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,client_id INTEGER UNIQUE,display_name TEXT,source_version TEXT,active INTEGER);
-CREATE TABLE portal_v2_relations(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT,relation_type TEXT,from_type TEXT,from_public_id TEXT,to_type TEXT,to_public_id TEXT,source_version TEXT,active INTEGER);
+CREATE TABLE portal_v2_relations(id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE DEFAULT (lower(hex(randomblob(16)))),relation_type TEXT,from_type TEXT,from_public_id TEXT,to_type TEXT,to_public_id TEXT,source_version TEXT,active INTEGER,UNIQUE(relation_type,from_type,from_public_id,to_type,to_public_id));
 CREATE TABLE portal_principals(id INTEGER PRIMARY KEY,public_id TEXT,email_hint TEXT,display_name TEXT,source_version TEXT,enabled INTEGER,revoked_at TEXT);
 CREATE TABLE portal_principal_clients(portal_principal_id INTEGER,client_id INTEGER);
 CREATE TABLE portal_identity_bindings(id INTEGER PRIMARY KEY,portal_principal_id INTEGER,issuer TEXT,subject_hash TEXT,enabled INTEGER);

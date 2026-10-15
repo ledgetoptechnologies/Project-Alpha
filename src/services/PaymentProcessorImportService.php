@@ -5,6 +5,7 @@
 require_once __DIR__ . '/../utils/invoice_lifecycle.php';
 require_once __DIR__ . '/../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../utils/api_v2_directory_management.php';
 
 class PaymentProcessorImportService
 {
@@ -41,6 +42,10 @@ class PaymentProcessorImportService
 
     public static function importStandalone(PDO $pdo, array $appConfig, array $transaction): array
     {
+        // The denied-identity fallback creates a financial payment in its own
+        // transaction. A caller-owned transaction could not be safely rolled
+        // back and restarted here without corrupting the caller's atomicity.
+        if ($pdo->inTransaction()) throw new LogicException('Standalone processor import requires a top-level transaction.');
         self::ensureSchema($pdo);
         $provider = self::cleanProvider((string)($transaction['provider'] ?? ''));
         $providerPaymentId = trim((string)($transaction['provider_payment_id'] ?? ''));
@@ -77,13 +82,41 @@ class PaymentProcessorImportService
             return ['status' => 'failed', 'reason' => 'missing_net_or_fee', 'payment_id' => null, 'transaction_id' => $ledgerId];
         }
 
+        // Identity lookup, enrichment, and creation are one local-authority
+        // transaction.  The sentinel shared lock is intentionally first, so
+        // an activation cannot slip between lookup and the source mutation.
         $clientId = null;
-        if (self::autoCreateClientsEnabled($appConfig)) {
-            $clientId = self::matchOrCreateClient($pdo, $transaction);
+        $directoryOwnershipBlocksClientIdentity = false;
+        $owns = !$pdo->inTransaction();
+        try {
+            if ($owns) $pdo->beginTransaction();
+            api_v2_directory_management_acquire_shared_gate($pdo);
+            if (self::autoCreateClientsEnabled($appConfig)) {
+                $clientId = self::matchOrCreateClient($pdo, $transaction);
+            }
+            $paymentId = self::insertStandalonePayment($pdo, $transaction, $ledgerId, $clientId);
+            self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
+            if ($owns) $pdo->commit();
+        } catch (DomainException $error) {
+            if ($error->getMessage() !== API_V2_DIRECTORY_MANAGEMENT_LABEL) throw $error;
+            if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+            // A denied Directory mutation must never discard processor money:
+            // retain a clearly unassigned financial record for review.
+            $directoryOwnershipBlocksClientIdentity = true;
+            $owns = !$pdo->inTransaction();
+            try {
+                if ($owns) $pdo->beginTransaction();
+                $paymentId = self::insertStandalonePayment($pdo, $transaction, $ledgerId, null, true);
+                self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
+                if ($owns) $pdo->commit();
+            } catch (Throwable $financialError) {
+                if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+                throw $financialError;
+            }
+        } catch (Throwable $error) {
+            if ($owns && $pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
         }
-
-        $paymentId = self::insertStandalonePayment($pdo, $transaction, $ledgerId, $clientId);
-        self::markLedger($pdo, $ledgerId, 'imported', null, $paymentId);
 
         return ['status' => 'imported', 'reason' => null, 'payment_id' => $paymentId, 'transaction_id' => $ledgerId];
     }
@@ -285,6 +318,43 @@ class PaymentProcessorImportService
         } catch (Throwable$error) {if($owns&&$pdo->inTransaction())$pdo->rollBack();throw$error;}
     }
 
+    /** @return array{0:?int,1:bool} client ID and whether manual assignment is required */
+    private static function clientIdentityForStandaloneImport(PDO $pdo, array $appConfig, array $tx): array
+    {
+        // Processor jobs have no browser session and must not use the auditing
+        // browser-write guard. A managed Directory is authoritative for client
+        // identity, so retain the financial import but leave its client unset.
+        $manualReviewRequired = self::directoryOwnershipBlocksClientIdentity($pdo);
+        if ($manualReviewRequired || !self::autoCreateClientsEnabled($appConfig)) {
+            return [null, $manualReviewRequired];
+        }
+
+        return [self::matchOrCreateClient($pdo, $tx), false];
+    }
+
+    /**
+     * Background imports are not local directory writers.  Read status without
+     * recording a browser/audit transition, and fail closed if that read cannot
+     * establish that local client identity is available.
+     */
+    private static function directoryOwnershipBlocksClientIdentity(PDO $pdo): bool
+    {
+        try {
+            $status = api_v2_directory_management_status($pdo, false);
+            if (!is_array($status) || !array_key_exists('effective', $status) || !is_bool($status['effective'])) {
+                return true;
+            }
+
+            // A missing managed-directory schema is a legacy-local install,
+            // but a sentinel=0 plus a failed policy/health query is not proof
+            // that identity writes are safe.
+            return $status['effective']
+                || in_array((string)($status['reason'] ?? ''), ['managed_degraded', 'health_unavailable'], true);
+        } catch (Throwable) {
+            return true;
+        }
+    }
+
     private static function enrichClient(PDO $pdo, int $clientId, array $tx): void
     {
         $owns = !$pdo->inTransaction();
@@ -318,7 +388,7 @@ class PaymentProcessorImportService
         }
     }
 
-    private static function insertStandalonePayment(PDO $pdo, array $tx, int $ledgerId, ?int $clientId): int
+    private static function insertStandalonePayment(PDO $pdo, array $tx, int $ledgerId, ?int $clientId, bool $manualReviewRequired = false): int
     {
         $paidAt = self::dateTimeOrNull($tx['paid_at'] ?? null);
         $paymentDate = $paidAt ? substr($paidAt, 0, 10) : date('Y-m-d');
@@ -331,6 +401,9 @@ class PaymentProcessorImportService
         if ($notes === '') {
             $notes = ucfirst($provider) . ' standalone processor income';
         }
+        if ($manualReviewRequired) {
+            $notes .= ' Client assignment requires manual review because automatic identity matching is unavailable.';
+        }
 
         $insert = $pdo->prepare(
             'INSERT INTO payments
@@ -338,7 +411,7 @@ class PaymentProcessorImportService
                  processor_provider, processor_payment_id, processor_transaction_id,
                  processor_gross_amount, processor_fee_amount, processor_net_amount, processor_fee_policy, processor_fee_source,
                  stripe_payment_intent_id, reference_number, notes, status, payment_date, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())'
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
         );
         $insert->execute([
             $clientId,
