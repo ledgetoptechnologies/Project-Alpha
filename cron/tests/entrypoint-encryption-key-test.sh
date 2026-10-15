@@ -209,6 +209,46 @@ cron_environment_keeps_verified_application_key() {
   fi
 }
 
+cron_environment_preserves_base64_padding_and_all_value_bytes() {
+  local environment_file="${TEST_DIR}/cron-padded-environment" expected
+  for expected in \
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' \
+    'AAAAAAAAAAAAAAAAAAAAAA==' \
+    'prefix=embedded=value===' \
+    ' leading=value=with spaces== ' \
+    ''; do
+    export APP_ENCRYPTION_KEY="$expected"
+    cron_write_runtime_environment "$environment_file"
+    if ! env -i PATH="$PATH" bash -c 'source "$1"; [ "${APP_ENCRYPTION_KEY-}" = "$2" ] || exit 1; php -r "exit(getenv(\"APP_ENCRYPTION_KEY\") === \$argv[1] ? 0 : 1);" "$2"' _ "$environment_file" "$expected" >/dev/null 2>&1; then
+      fail 'cron changed a padded, embedded-separator, whitespace, or empty environment value before PHP received it'
+    fi
+  done
+}
+
+cron_environment_preserves_other_approved_families_and_excludes_unapproved_values() {
+  local environment_file="${TEST_DIR}/cron-environment-families"
+  export MYSQL_CRON_TEST='mysql=value=='
+  export DB_CRON_TEST='database=value='
+  export STRIPE_CRON_TEST='stripe=value=='
+  export SMTP_CRON_TEST='smtp=value==='
+  export BACKUP_CRON_TEST='backup=value=='
+  export NOTIFICATION_RELAY_CRON_TEST='relay=value='
+  export PA_UNAPPROVED_CRON_TEST='must not be exported='
+  cron_write_runtime_environment "$environment_file"
+  if ! env -i PATH="$PATH" bash -c '
+    source "$1"
+    [ "$MYSQL_CRON_TEST" = "mysql=value==" ] &&
+    [ "$DB_CRON_TEST" = "database=value=" ] &&
+    [ "$STRIPE_CRON_TEST" = "stripe=value==" ] &&
+    [ "$SMTP_CRON_TEST" = "smtp=value===" ] &&
+    [ "$BACKUP_CRON_TEST" = "backup=value==" ] &&
+    [ "$NOTIFICATION_RELAY_CRON_TEST" = "relay=value=" ] &&
+    [ "${PA_UNAPPROVED_CRON_TEST+x}" != x ]
+  ' _ "$environment_file" >/dev/null 2>&1; then
+    fail 'cron changed an approved environment family or exported an unapproved variable'
+  fi
+}
+
 explicit_key_is_persisted_atomically_when_absent
 matching_explicit_key_is_accepted
 broad_persisted_key_is_restricted_for_web_and_cron
@@ -221,4 +261,6 @@ missing_or_empty_key_fails_without_leaking_a_key
 generated_and_persisted_key_is_reused
 web_and_cron_share_one_volume_contract
 cron_environment_keeps_verified_application_key
+cron_environment_preserves_base64_padding_and_all_value_bytes
+cron_environment_preserves_other_approved_families_and_excludes_unapproved_values
 echo 'PASS: cron encryption-key resolution'
