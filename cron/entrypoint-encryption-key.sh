@@ -174,9 +174,13 @@ cron_load_app_encryption_key() {
 # variable families into a shell-readable file so scheduled PHP processes keep
 # the verified shared application key without exposing it in logs.
 cron_write_runtime_environment() {
-  local environment_file="$1" name value
+  local environment_file="$1" entry name value
   : > "$environment_file" || return 1
-  while IFS='=' read -r name value; do
+  while IFS= read -r entry; do
+    # read with IFS='=' discards trailing '=' padding from the last field.
+    # Split only the first separator so the verified key reaches PHP unchanged.
+    name="${entry%%=*}"
+    value="${entry#*=}"
     case "$name" in
       MYSQL_*|DB_*|APP_*|STRIPE_*|SMTP_*|BACKUP_*|NOTIFICATION_RELAY_*)
         printf 'export %s=%q\n' "$name" "$value" >> "$environment_file" || return 1
