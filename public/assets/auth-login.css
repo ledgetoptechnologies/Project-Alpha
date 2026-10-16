@@ -27,6 +27,17 @@ body { min-height: 100%; background: #eef3f6; }
 .login-field { display: grid; gap: 7px; color: #334155; font-size: 13px; font-weight: 650; }
 .login-input { width: 100%; padding: 12px 13px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; color: #0f172a; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s; }
 .login-input:focus { border-color: var(--nav-accent); box-shadow: 0 0 0 4px rgba(46,163,214,.13); }
+.login-field > label { color: inherit; }
+.login-password { position: relative; }
+.login-password .login-input { padding-right: 50px; }
+/* The page provides one labelled toggle; hide Edge's unlabelled built-in reveal. */
+.login-password .login-input::-ms-reveal, .login-password .login-input::-ms-clear { display: none; }
+.login-password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #475569; cursor: pointer; }
+.login-password-toggle:hover { background: #f1f5f9; color: #0f172a; }
+.login-password-toggle:focus-visible { outline: 3px solid var(--nav-accent); outline-offset: 1px; }
+.login-password-toggle[hidden] { display: none; }
+.login-password-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.login-password-toggle[aria-pressed="true"] .login-password-icon--show, .login-password-toggle:not([aria-pressed="true"]) .login-password-icon--hide { display: none; }
 .login-help { margin: -4px 0 0; color: #64748b; font-size: 12px; line-height: 1.5; }
 .login-actions { display: grid; gap: 15px; margin-top: 6px; }
 .login-submit { width: 100%; padding: 12px 18px; border: 0; border-radius: 10px; color: #fff; background: linear-gradient(135deg, #1684b4, var(--nav-accent)); box-shadow: 0 10px 24px rgba(46,163,214,.24); font: inherit; font-weight: 700; cursor: pointer; }
