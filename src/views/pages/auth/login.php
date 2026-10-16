@@ -19,6 +19,12 @@ $resetAvailable = password_reset_email_is_configured($appConfig);
 $brandName = (string)($appConfig['brand_name'] ?? 'Project Alpha');
 $brandLogo = trim((string)($appConfig['logo_path'] ?? '')) ?: '/assets/auth-logo.png';
 $h = static fn(mixed $value): string => htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+// Hidden until password-visibility.js runs, so no-JS sign-in keeps a plain field.
+$passwordToggle = static fn(string $inputId): string => '<button type="button" class="login-password-toggle" data-password-toggle'
+    . ' aria-controls="' . htmlspecialchars($inputId, ENT_QUOTES, 'UTF-8') . '" aria-pressed="false" aria-label="Show password" title="Show password" hidden>'
+    . '<svg class="login-password-icon login-password-icon--show" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>'
+    . '<svg class="login-password-icon login-password-icon--hide" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+    . '</button>';
 ?>
 
 <link rel="stylesheet" href="<?php echo $h(asset_url('/assets/auth-login.css')); ?>">
@@ -60,15 +66,21 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)$value, ENT_QUO
               <input required class="login-input" minlength="3" maxlength="50" pattern="[A-Za-z0-9._-]+" type="text" name="username" autocomplete="username">
             </label>
           <?php endif; ?>
-          <label class="login-field">
-            <span>Password</span>
-            <input required class="login-input" minlength="8" type="password" name="password" autocomplete="<?php echo $noUsers ? 'new-password' : 'current-password'; ?>">
-          </label>
+          <div class="login-field">
+            <label for="login-password">Password</label>
+            <div class="login-password">
+              <input required class="login-input" id="login-password" minlength="8" type="password" name="password" autocomplete="<?php echo $noUsers ? 'new-password' : 'current-password'; ?>">
+              <?php echo $passwordToggle('login-password'); ?>
+            </div>
+          </div>
           <?php if ($noUsers): ?>
-            <label class="login-field">
-              <span>Confirm password</span>
-              <input required class="login-input" minlength="8" type="password" name="password2" autocomplete="new-password">
-            </label>
+            <div class="login-field">
+              <label for="login-password-confirm">Confirm password</label>
+              <div class="login-password">
+                <input required class="login-input" id="login-password-confirm" minlength="8" type="password" name="password2" autocomplete="new-password">
+                <?php echo $passwordToggle('login-password-confirm'); ?>
+              </div>
+            </div>
             <p class="login-help">This creates PA's first administrator. No default or Compose-managed login exists.</p>
           <?php endif; ?>
           <div class="login-actions">
@@ -76,6 +88,7 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)$value, ENT_QUO
             <?php if (!$noUsers && $resetAvailable): ?><a href="/?page=reset-password" class="login-reset">Forgot your password?</a><?php endif; ?>
           </div>
         </form>
+        <script src="<?php echo $h(asset_url('/assets/js/password-visibility.js')); ?>" defer></script>
         <?php if (!$noUsers): ?>
           <div class="login-divider"><span>or</span></div>
           <button type="button" id="passkey-login-button" class="login-passkey" data-passkey-login data-csrf="<?php echo $h($passkeyCsrf); ?>" data-options-url="/?page=passkey-options" data-complete-url="/?page=passkey-complete" data-status-id="passkey-login-status">Sign in with a passkey</button>
