@@ -8,6 +8,11 @@ function api_scope_catalog(): array
             'description' => 'Read the identity and implemented capabilities of a bound application. Explicit grant required; legacy full access does not inherit this scope.',
             'endpoints' => [], // Routed before the interactive front controller.
         ],
+        'financial.summary.read' => [
+            'label' => 'API v2 company financial summary',
+            'description' => 'Read company-wide aggregate financial metrics without customer details or document links. Explicit grant required.',
+            'endpoints' => [],
+        ],
         'financial.documents.read' => [
             'label' => 'API v2 financial documents',
             'description' => 'Read a bounded financial projection for one exact current application-bound customer or Project.',

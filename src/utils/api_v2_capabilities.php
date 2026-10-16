@@ -206,6 +206,9 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'catalog_inventory' => [
             ['catalog.inventory.read', '/api/v2/catalog/inventory'],
         ],
+        'financial_summary' => [
+            ['financial.summary.read', '/api/v2/financial-summary'],
+        ],
         'financial_documents' => [
             ['financial.documents.read', '/api/v2/financial-documents'],
         ],

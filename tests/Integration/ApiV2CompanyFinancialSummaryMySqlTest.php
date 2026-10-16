@@ -1,0 +1,92 @@
+<?php
+declare(strict_types=1);
+namespace Tests\Integration;
+use PDO;
+use PHPUnit\Framework\TestCase;
+/** Real HTTP and PDO against a guarded disposable loopback MySQL database. */
+final class ApiV2CompanyFinancialSummaryMySqlTest extends TestCase
+{
+    public function testCompanyAggregateAuthenticationExactAmountsAndReadOnlyCoverage(): void
+    {
+        $db=(string)getenv('API_V2_FINANCIAL_MYSQL_DATABASE');$dsn=(string)getenv('API_V2_FINANCIAL_MYSQL_DSN');
+        if($dsn==='')self::markTestSkipped('Use scripts/run-api-v2-company-financial-summary-mysql.mjs.');
+        if(getenv('API_V2_FINANCIAL_MYSQL_ALLOW_DESTRUCTIVE')!=='isolated-disposable-only'||!preg_match('/^api_v2_financial_test_[a-f0-9]{32}$/D',$db)||!str_starts_with($dsn,'mysql:host=127.0.0.1;port='))throw new \RuntimeException('Disposable loopback database required.');
+        $pdo=new PDO($dsn,'root',(string)getenv('API_V2_FINANCIAL_MYSQL_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+        self::assertSame($db,$pdo->query('SELECT DATABASE()')->fetchColumn());self::assertSame([],$pdo->query('SHOW TABLES')->fetchAll());
+        require_once dirname(__DIR__,2).'/src/utils/api_keys_schema.php';require_once dirname(__DIR__,2).'/src/utils/api_v2_financial_summary.php';
+        \pa_ensure_api_keys_schema($pdo);
+        $pdo->exec("ALTER TABLE api_keys ADD COLUMN api_v2_application_id BIGINT NULL;
+CREATE TABLE api_v2_applications(id BIGINT PRIMARY KEY,application_id CHAR(36));
+CREATE TABLE api_v2_history_identity(singleton TINYINT PRIMARY KEY,source_instance_id CHAR(36),history_epoch CHAR(36));
+INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
+INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
+CREATE TABLE invoices(id INT PRIMARY KEY,currency CHAR(3),balance_due DECIMAL(20,2),due_date DATE,status VARCHAR(32),collection_mode VARCHAR(32));
+CREATE TABLE contracts(id INT PRIMARY KEY,currency CHAR(3));
+CREATE TABLE app_config(organization_id INT,config_key VARCHAR(100),config_value TEXT NULL,UNIQUE KEY uq_config(organization_id,config_key));
+CREATE TABLE project_invoices(id INT PRIMARY KEY,currency CHAR(3),balance_due DECIMAL(20,2),due_date DATE,status VARCHAR(32));
+CREATE TABLE project_invoice_items(project_invoice_id INT,invoice_id INT);
+CREATE TABLE project_invoice_payments(id INT PRIMARY KEY,project_invoice_id INT,amount DECIMAL(20,2),status VARCHAR(32),payment_date DATE);
+CREATE TABLE payments(id INT PRIMARY KEY,invoice_id INT NULL,contract_id INT NULL,project_invoice_payment_id INT NULL,amount DECIMAL(20,2),status VARCHAR(32),payment_date DATE,refunded_amount DECIMAL(20,2) DEFAULT 0,disputed_amount DECIMAL(20,2) DEFAULT 0,surcharge_paid DECIMAL(20,2) DEFAULT 0,surcharge_refunded TINYINT DEFAULT 0,surcharge_refund_amount DECIMAL(20,2),processor_net_amount DECIMAL(20,2),processor_gross_amount DECIMAL(20,2),processor_fee_amount DECIMAL(20,2),processor_fee_source VARCHAR(32));
+CREATE TABLE expenses(id INT PRIMARY KEY,status VARCHAR(32),expense_date DATE,total_amount DECIMAL(20,2),amount DECIMAL(20,2));
+INSERT INTO invoices VALUES(1,'USD',20.01,'2025-01-01','partial','direct'),(2,'USD',99,'2025-01-01','unpaid','project_aggregate'),(3,'CAD',5,'2025-01-01','unpaid','direct'),(4,'USD',900,'2025-01-01','draft','direct'),(5,'USD',800,'2025-01-01','void','direct'),(6,'USD',44,'2025-01-01','unpaid','direct');
+INSERT INTO project_invoices VALUES(10,'USD',30.02,'2025-01-01','partial'),(11,'USD',700,'2025-01-01','draft');
+INSERT INTO project_invoice_items VALUES(10,2),(10,6);
+INSERT INTO contracts VALUES(1,'USD');
+INSERT INTO project_invoice_payments VALUES(10,10,100,'succeeded','2026-01-08');
+INSERT INTO payments(id,invoice_id,project_invoice_payment_id,amount,status,payment_date,processor_fee_source) VALUES(1,1,NULL,9007199254740993.01,'succeeded','2026-01-01','unknown'),(2,2,10,100,'succeeded','2026-01-08','actual'),(3,3,NULL,10,'succeeded','2026-01-08','estimated'),(4,1,NULL,500,'failed','2026-01-08','unknown'),(5,1,NULL,600,'reversed','2026-01-08','unknown'),(6,1,NULL,700,'succeeded','2025-12-31','unknown');
+UPDATE payments SET refunded_amount=1.01,disputed_amount=2,processor_fee_amount=3 WHERE id=2;
+INSERT INTO expenses VALUES(1,'pending','2026-01-03',12,10),(2,'confirmed','2026-01-04',20,20),(3,'reimbursed','2026-01-05',8,8),(4,'void','2026-01-04',999,999);");
+        foreach([['correct','api.capabilities.read,financial.summary.read',3],['docs','api.capabilities.read,financial.documents.read',3],['unbound','api.capabilities.read,financial.summary.read',null],['legacy','full,api.capabilities.read,financial.summary.read',3]] as [$token,$scopes,$app])$pdo->prepare("INSERT INTO api_keys(name,key_prefix,key_hash,scopes,api_v2_application_id) VALUES('synthetic',?,?,?,?)")->execute([$token,hash('sha256',$token),$scopes,$app]);
+        $tables=['app_config','payments','expenses','invoices','project_invoice_payments','api_v2_history_identity'];$before=[];foreach($tables as $table)$before[$table]=$pdo->query('SELECT * FROM '.$table.' ORDER BY 1')->fetchAll();
+        $this->withServer(true,function(string $base)use($pdo,$tables,$before):void{
+            self::assertSame(405,$this->get($base,'correct','from=2026-01-01&to=2026-01-31',false,'/api/v2/financial-summary','POST')['status']);self::assertSame(401,$this->get($base,null)['status']);self::assertSame(403,$this->get($base,'docs')['status']);self::assertSame(403,$this->get($base,'legacy')['status']);self::assertSame(409,$this->get($base,'unbound')['status']);self::assertSame(409,$this->get($base,'correct','from=2026-01-01&to=2026-01-31',true)['status']);
+            foreach(['from=2026-02-30&to=2026-03-01','from=2026-02-01&to=2026-01-01','from=2025-01-01&to=2026-12-31','from[]=2026-01-01&to=2026-01-31','from=2026-01-01&from=2026-01-02&to=2026-01-31','from=2026-01-01&to=2026-01-31&all=1'] as $query)self::assertSame(400,$this->get($base,'correct',$query)['status']);
+            $response=$this->get($base,'correct');self::assertSame(200,$response['status'],$response['body']);self::assertStringContainsString('no-store',$response['headers']['cache-control']);self::assertArrayNotHasKey('set-cookie',$response['headers']);$body=json_decode($response['body'],true,512,JSON_THROW_ON_ERROR);
+            self::assertSame('company',$body['scope']);self::assertSame($response['headers']['x-request-id'],$body['requestId']);self::assertSame(['CAD','USD'],array_column($body['currencies'],'currency'));$usd=$body['currencies'][1];
+            self::assertSame('9007199254741093.01',$usd['payments']['received']);self::assertSame('9007199254741087.00',$usd['payments']['adjustedNetIncome']);self::assertSame(2,$usd['payments']['count']);self::assertSame('50.03',$usd['receivables']['outstanding']);self::assertSame('50.03',$usd['receivables']['overdue']);self::assertSame(2,$usd['receivables']['count']);self::assertNull($usd['expenses']['count']);self::assertNull($usd['recordedOperatingResult']);self::assertSame(['total'=>3,'pending'=>1,'confirmed'=>1,'reimbursed'=>1,'other'=>0],$body['coverage']['recordedExpenseCounts']);self::assertFalse($body['coverage']['complete']);self::assertSame(0,$body['coverage']['unallocatedProjectPaymentCount']);
+            self::assertStringNotContainsString('documentUrl',$response['body']);self::assertStringNotContainsString('actionUrl',$response['body']);self::assertStringNotContainsString('customer',$response['body']);
+            $again=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame($body['snapshotSha256'],$again['snapshotSha256']);
+            foreach($tables as $table)self::assertSame($before[$table],$pdo->query('SELECT * FROM '.$table.' ORDER BY 1')->fetchAll());
+            $pdo->exec("INSERT INTO app_config VALUES(0,'financial_base_currency','USD')");$configured=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertTrue($configured['coverage']['complete']);self::assertSame('explicit-company-base-and-linked-document-currency',$configured['coverage']['currencyPolicy']);self::assertSame('USD',$configured['coverage']['baseCurrency']);self::assertTrue($configured['coverage']['expenseCurrencyKnown']);self::assertSame(['count'=>3,'total'=>'40.00','pending'=>'12.00','confirmed'=>'20.00','reimbursed'=>'8.00'],$configured['currencies'][1]['expenses']);self::assertSame('9007199254741047.00',$configured['currencies'][1]['recordedOperatingResult']);self::assertSame(['count'=>0,'total'=>'0.00','pending'=>'0.00','confirmed'=>'0.00','reimbursed'=>'0.00'],$configured['currencies'][0]['expenses']);self::assertSame('10.00',$configured['currencies'][0]['recordedOperatingResult']);
+            foreach($tables as $table)if($table!=='app_config')self::assertSame($before[$table],$pdo->query('SELECT * FROM '.$table.' ORDER BY 1')->fetchAll());
+            $pdo->exec("UPDATE app_config SET config_value='EUR' WHERE config_key='financial_base_currency'");$expenseOnly=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(['CAD','EUR','USD'],array_column($expenseOnly['currencies'],'currency'));self::assertSame('-40.00',$expenseOnly['currencies'][1]['recordedOperatingResult']);self::assertSame('40.00',$expenseOnly['currencies'][1]['expenses']['total']);
+            $pdo->exec("UPDATE app_config SET config_value='usd' WHERE config_key='financial_base_currency'");self::assertSame(503,$this->get($base,'correct')['status']);$pdo->exec("DELETE FROM app_config WHERE config_key='financial_base_currency'");
+            $pdo->exec("INSERT INTO payments(id,amount,status,payment_date) VALUES(7,77,'succeeded','2026-01-09');INSERT INTO project_invoice_payments VALUES(11,10,123,'succeeded','2026-01-09')");$partial=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(1,$partial['coverage']['unknownPaymentCurrencyCount']);self::assertSame(1,$partial['coverage']['unallocatedProjectPaymentCount']);self::assertNotSame($body['snapshotSha256'],$partial['snapshotSha256']);
+            $pdo->exec("INSERT INTO app_config VALUES(0,'financial_base_currency','USD')");$fallback=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(1,$fallback['coverage']['unknownPaymentCurrencyCount']);self::assertSame('9007199254741093.01',$fallback['currencies'][1]['payments']['received']);$pdo->exec("UPDATE project_invoices SET currency='usd' WHERE id=10");$noGuess=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(2,$noGuess['coverage']['unknownPaymentCurrencyCount']);$pdo->exec("UPDATE project_invoices SET currency='USD' WHERE id=10;DELETE FROM app_config WHERE config_key='financial_base_currency'");
+            $pdo->exec("UPDATE invoices SET currency='CAD' WHERE id=2");$conflict=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(2,$conflict['coverage']['unknownPaymentCurrencyCount']);$pdo->exec("UPDATE invoices SET currency='USD' WHERE id=2");
+            $pdo->exec("UPDATE invoices SET currency='usd' WHERE id=1");$lower=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(2,$lower['coverage']['unknownPaymentCurrencyCount']);self::assertSame(1,$lower['coverage']['unknownReceivableCurrencyCount']);self::assertSame('30.02',$lower['currencies'][1]['receivables']['outstanding']);self::assertSame(['CAD','USD'],array_column($lower['currencies'],'currency'));$pdo->exec("UPDATE invoices SET currency='USD' WHERE id=1");
+            $pdo->exec("UPDATE project_invoices SET currency='usd' WHERE id=10");$caseConflict=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame(2,$caseConflict['coverage']['unknownPaymentCurrencyCount']);self::assertSame(1,$caseConflict['coverage']['unknownReceivableCurrencyCount']);self::assertSame('20.01',$caseConflict['currencies'][1]['receivables']['outstanding']);$pdo->exec("UPDATE project_invoices SET currency='USD' WHERE id=10");
+            $pdo->exec("UPDATE payments SET refunded_amount=5.01 WHERE id=2");$refund=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame('9007199254741083.00',$refund['currencies'][1]['payments']['adjustedNetIncome']);
+            $caps=$this->get($base,'correct','',false,'/api/v2/capabilities');self::assertSame(200,$caps['status']);$caps=json_decode($caps['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame([['method'=>'GET','path'=>'/api/v2/financial-summary','requiredCapability'=>'financial.summary.read','requiresSourceInstanceId'=>true,'requiresApplicationId'=>true,'requiresHistoryEpoch'=>true]],array_values(array_filter($caps['implementedEndpoints'],fn($e)=>$e['path']==='/api/v2/financial-summary')));
+            // One repeatable-read snapshot must not mix later expense/payment changes.
+            $pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');$pdo->beginTransaction();
+            $identity=['source_instance_id'=>'123e4567-e89b-42d3-a456-426614174000','application_id'=>'223e4567-e89b-42d3-a456-426614174000','history_epoch'=>'323e4567-e89b-42d3-a456-426614174000'];
+            $period=\api_v2_financial_summary_period('from=2026-01-01&to=2026-01-31');
+            $snapshot=\api_v2_financial_summary_read($pdo,$identity,$period,'snapshot-before');
+            $other=new PDO((string)getenv('API_V2_FINANCIAL_MYSQL_DSN'),'root',(string)getenv('API_V2_FINANCIAL_MYSQL_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+            $other->exec("INSERT INTO expenses VALUES(5,'confirmed','2026-01-20',100,100);UPDATE payments SET refunded_amount=9.01 WHERE id=2");
+            $same=\api_v2_financial_summary_read($pdo,$identity,$period,'snapshot-after');
+            self::assertSame($snapshot['snapshotSha256'],$same['snapshotSha256']);$pdo->rollBack();
+            $latest=json_decode($this->get($base,'correct')['body'],true,512,JSON_THROW_ON_ERROR);self::assertNotSame($snapshot['snapshotSha256'],$latest['snapshotSha256']);self::assertSame(4,$latest['coverage']['recordedExpenseCounts']['total']);
+            // All identity dimensions are mandatory, even with the new explicit scope.
+            $keyId=(int)$pdo->query("SELECT id FROM api_keys WHERE key_prefix='correct'")->fetchColumn();
+            $headers=['sourceInstanceId'=>$identity['source_instance_id'],'applicationId'=>$identity['application_id'],'historyEpoch'=>$identity['history_epoch']];
+            foreach(array_keys($headers) as $name){$pdo->beginTransaction();$wrong=$headers;$wrong[$name]='wrong';self::assertNull(\api_v2_financial_summary_identity($pdo,$keyId,$wrong));$pdo->rollBack();}
+            $pdo->exec("UPDATE api_keys SET revoked_at=NOW() WHERE key_prefix='correct'");self::assertSame(401,$this->get($base,'correct')['status']);
+        });
+    }
+    private function withServer(bool $enabled,callable $test):void
+    {
+        $socket=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);if(!$socket)throw new \RuntimeException('Loopback reservation failed');$address=stream_socket_get_name($socket,false);fclose($socket);
+        preg_match('/port=([0-9]+)/',(string)getenv('API_V2_FINANCIAL_MYSQL_DSN'),$port);
+        $env=getenv();$env['DB_HOST']='127.0.0.1;port='.$port[1];$env['MYSQL_DATABASE']=(string)getenv('API_V2_FINANCIAL_MYSQL_DATABASE');$env['MYSQL_USER']='root';$env['MYSQL_PASSWORD']=(string)getenv('API_V2_FINANCIAL_MYSQL_PASSWORD');$env['APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED']=$enabled?'true':'false';$env['APP_SKIP_DB_CONFIG']='1';$env['APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED']='true';
+        $log=tmpfile();$process=proc_open([PHP_BINARY,'-S',$address,'-t','public','public/index.php'],[0=>['pipe','r'],1=>$log,2=>$log],$pipes,dirname(__DIR__,2),$env,['bypass_shell'=>true]);if(!is_resource($process))throw new \RuntimeException('Local PHP server unavailable');fclose($pipes[0]);
+        try{$ready=false;for($i=0;$i<50;$i++){if(!proc_get_status($process)['running'])break;$probe=@stream_socket_client('tcp://'.$address,$errno,$error,0.1);if($probe){fclose($probe);$ready=true;break;}usleep(100000);}self::assertTrue($ready,'Loopback server did not start');$test('http://'.$address);}
+        finally{proc_terminate($process);proc_close($process);fclose($log);}
+    }
+    private function get(string $base,?string $token,string $query='from=2026-01-01&to=2026-01-31',bool $wrongIdentity=false,string $path='/api/v2/financial-summary',string $method='GET'):array
+    {
+        $headers=['X-PA-Source-Instance-ID: '.($wrongIdentity?'wrong':'123e4567-e89b-42d3-a456-426614174000'),'X-PA-Application-ID: 223e4567-e89b-42d3-a456-426614174000','X-PA-History-Epoch: 323e4567-e89b-42d3-a456-426614174000'];if($token!==null)$headers[]='Authorization: Bearer '.$token;
+        $body=file_get_contents($base.$path.'?'.$query,false,stream_context_create(['http'=>['method'=>$method,'header'=>implode("\r\n",$headers),'ignore_errors'=>true,'follow_location'=>0,'timeout'=>5]]));$raw=$http_response_header;preg_match('/\s([0-9]{3})\s/',$raw[0],$status);$parsed=[];foreach(array_slice($raw,1)as$line){if(str_contains($line,':')){[$key,$value]=explode(':',$line,2);$parsed[strtolower($key)]=trim($value);}}return['status'=>(int)$status[1],'headers'=>$parsed,'body'=>$body];
+    }
+}

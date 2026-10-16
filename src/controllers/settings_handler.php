@@ -2,6 +2,7 @@
 // src/controllers/settings_handler.php
 // Save settings and handle logo upload, then redirect (PRG)
 require_once __DIR__ . '/../utils/payment_methods.php';
+require_once __DIR__ . '/../utils/financial_reporting_currency.php';
 
 // Route specific tabs to dedicated handlers
 $tab = $_POST['tab'] ?? $_GET['tab'] ?? '';
@@ -65,6 +66,17 @@ if ($tab !== 'account' && ($uid <= 0 || !user_can($pdo,$uid,'settings.manage',0)
 if ($isSystemTab && !in_array((string)($_SESSION['user']['role'] ?? ''), ['admin','owner'], true)) {
     http_response_code(403);
     exit('Only an installation administrator can change integration settings.');
+}
+if (array_key_exists('financial_base_currency', $_POST)) {
+    require_once __DIR__ . '/../utils/csrf.php';
+    try {
+        $financialReportingCurrency = financial_reporting_currency_change($_POST['financial_base_currency'], $isSystemTab,
+            $uid > 0 && user_can($pdo, $uid, 'settings.manage', 0), (string)($_SESSION['user']['role'] ?? ''), csrf_validate());
+    } catch (InvalidArgumentException $error) {
+        http_response_code(400); exit(htmlspecialchars($error->getMessage(), ENT_QUOTES, 'UTF-8'));
+    } catch (RuntimeException) {
+        http_response_code(403); exit('Reporting currency settings access denied.');
+    }
 }
 require_once __DIR__ . '/../utils/upload_validator.php';
 
@@ -200,6 +212,10 @@ try {
     }
 } catch (Throwable $e) {
     // app_config may not exist on a fresh install; settings.json remains the fallback.
+}
+
+if (array_key_exists('financial_base_currency', $_POST)) {
+    $settings['financial_base_currency'] = $financialReportingCurrency;
 }
 
 // Prepare target and existing file contents early so we can ensure an encryption key
@@ -507,6 +523,7 @@ if (!empty($smtpConfigKeys)) {
 
 // General UI settings persistence: store all non-secret settings in app_config DB
 $generalConfigKeys = [
+    'financial_base_currency',
     'brand_name', 'logo_path', 'from_company', 'from_name', 'from_address_line1', 'from_address_line2',
     'from_city', 'from_state', 'from_postal', 'from_country', 'from_email', 'from_phone',
     'app_host', 'public_links_in_email', 'primary_state', 'timezone',
