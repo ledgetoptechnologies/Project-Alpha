@@ -28,12 +28,12 @@ type FinancialSummary = {
   accountingBasis: "payment-date-current-adjustments-and-recorded-expense-date";
   coverage: {
     complete: boolean;
-    currencyPolicy: "linked-document-currency-only";
-    baseCurrency: null;
+    currencyPolicy: "linked-document-currency-only" | "explicit-company-base-and-linked-document-currency";
+    baseCurrency: string | null;
     unknownPaymentCurrencyCount: number;
     unknownReceivableCurrencyCount: number;
     unallocatedProjectPaymentCount: number;
-    expenseCurrencyKnown: false;
+    expenseCurrencyKnown: boolean;
     recordedExpenseCounts: {
       total: number; pending: number; confirmed: number;
       reimbursed: number; other: number;
@@ -86,10 +86,20 @@ in sent/unpaid/partial/overdue states. Draft, cancelled, void, and paid invoices
 are excluded. Overdue means `due_date` before the database's current calendar
 date. Quotes and contracts are never counted as income or receivables.
 
-PA expenses have no stored currency or explicit company financial base currency.
-Non-void expenses in the selected expense-date period are reported once in
-`recordedExpenseCounts`. Currency-specific expense counts/amounts and the
-operating result are null until such a policy exists; zero would be misleading.
+PA expenses have no stored per-row currency. An installation administrator can
+explicitly declare their currency in **Settings → Business & installation →
+Company financial reporting** (`financial_base_currency`). The default is
+unset; no environment variable or Compose edit is needed. This reporting
+declaration never converts amounts or rewrites financial history. It must be
+confirmed against the actual currency of existing expenses.
+When unset, expense counts are reported once in `recordedExpenseCounts`, while
+currency-specific expense fields and operating results are null. When set, all
+non-void period expense counts/amounts belong to exactly the declared base
+currency; other currency buckets have zero expenses. Operating results use
+exact SQL DECIMAL subtraction. This expense declaration never assigns a
+currency to standalone payments. Income requires agreeing linked document
+currencies; missing, malformed, or conflicting currencies stay unknown. Invalid stored policy fails closed.
+The setting is read in the same repeatable snapshot as the aggregates.
 Known currency buckets remain useful with incomplete coverage. `decimalScale:2`
 describes PA's actual DECIMAL storage, not an invented ISO currency minor-unit
 exponent. Currencies are never summed together.

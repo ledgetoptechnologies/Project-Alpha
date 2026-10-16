@@ -22,6 +22,15 @@ if ($googleCallbackBase === '') {
 $googleEmailCallback = rtrim($googleCallbackBase, '/') . '/?page=settings/gmail-oauth&action=callback';
 ?>
 <fieldset>
+  <legend>Company financial reporting</legend>
+  <label>
+    <div>Expense reporting currency</div>
+    <input type="text" name="financial_base_currency" maxlength="3" pattern="[A-Z]{3}|" value="<?php echo htmlspecialchars((string)($appConfig['financial_base_currency'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" placeholder="Not configured" autocomplete="off">
+  </label>
+  <p>Enter an uppercase three-letter currency code only after confirming the currency of existing expenses. This declares their reporting currency; it does not change amounts, convert currencies, or rewrite historical records. Leave blank to keep their currency unknown in company summaries. Income retains linked document currencies; payments without a currency remain unknown.</p>
+</fieldset>
+
+<fieldset>
   <legend>Domain &amp; Public Access</legend>
   
   <label style="display:block;margin-bottom:12px">

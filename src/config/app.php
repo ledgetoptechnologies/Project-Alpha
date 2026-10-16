@@ -34,6 +34,7 @@ $appConfig = [
     'cron_enabled' => 1,
     'timezone' => 'UTC',
     'workforce_currency' => 'USD',
+    'financial_base_currency' => null,
     'workforce_default_hourly_rate' => null,
     'workforce_default_billing_rate' => null,
     'workforce_require_project' => 0,
@@ -199,6 +200,7 @@ try {
     }
     if (isset($pdo)) {
         $appConfigKeys = [
+            'financial_base_currency',
             // Stripe + SMTP (already loaded from DB)
             'stripe_publishable_key', 'stripe_secret_key_enc', 'stripe_webhook_secret_enc',
             'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_username', 'smtp_password_enc',
