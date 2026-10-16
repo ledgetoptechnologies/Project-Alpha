@@ -5,25 +5,46 @@ function api_v2_directory_binding_command_parse(string $json): ?array
 {
     if (strlen($json) > 32 * 1024) return null;
     try { $value = json_decode($json, true, 8, JSON_THROW_ON_ERROR); } catch (Throwable) { return null; }
-    if (!is_array($value) || count($value) !== 4
-        || array_diff(array_keys($value), ['commandId', 'externalId', 'expectedPublicId', 'expectedRevision']) !== []
-        || array_diff(['commandId', 'externalId', 'expectedPublicId', 'expectedRevision'], array_keys($value)) !== []) return null;
+    if (!is_array($value)) return null;
+    $fields = ['commandId', 'externalId', 'expectedPublicId', 'expectedRevision'];
+    if (array_key_exists('expectedAuthorizationGeneration', $value)) $fields[] = 'expectedAuthorizationGeneration';
+    if (count($value) !== count($fields)
+        || array_diff(array_keys($value), $fields) !== []
+        || array_diff($fields, array_keys($value)) !== []) return null;
     foreach ($value as $item) if (!is_string($item)) return null;
     if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $value['commandId']) !== 1
         || preg_match('/^[0-9a-f]{32}$/D', $value['expectedPublicId']) !== 1
         || preg_match('/^[1-9][0-9]{0,18}$/D', $value['expectedRevision']) !== 1
         || (strlen($value['expectedRevision']) === 19 && strcmp($value['expectedRevision'], '9223372036854775807') > 0)
+        || (isset($value['expectedAuthorizationGeneration']) && !api_v2_directory_binding_command_generation($value['expectedAuthorizationGeneration']))
         || $value['externalId'] === '' || strlen($value['externalId']) > 764
         || preg_match('//u', $value['externalId']) !== 1 || preg_match('/\p{C}/u', $value['externalId']) === 1) return null;
     $characters = preg_match_all('/./us', $value['externalId']);
     return $characters !== false && $characters >= 1 && $characters <= 191
-        ? ['commandId' => $value['commandId'], 'externalId' => $value['externalId'], 'expectedPublicId' => $value['expectedPublicId'], 'expectedRevision' => $value['expectedRevision']]
+        ? array_replace(array_fill_keys($fields, ''), $value)
         : null;
 }
 
-function api_v2_directory_binding_command_result(array $identity, array $command, string $type, string $requestId, bool $replayed): array
+function api_v2_directory_binding_command_generation(string $value): bool
 {
-    return [
+    return preg_match('/^(0|[1-9][0-9]{0,18})$/D', $value) === 1
+        && (strlen($value) !== 19 || strcmp($value, '9223372036854775807') < 0);
+}
+
+function api_v2_directory_binding_command_stored_generation(string $value): bool
+{
+    return preg_match('/^[1-9][0-9]{0,18}$/D', $value) === 1
+        && (strlen($value) !== 19 || strcmp($value, '9223372036854775807') <= 0);
+}
+
+function api_v2_directory_binding_command_greater_than(string $left, string $right): bool
+{
+    return strlen($left) !== strlen($right) ? strlen($left) > strlen($right) : strcmp($left, $right) > 0;
+}
+
+function api_v2_directory_binding_command_result(array $identity, array $command, string $type, string $requestId, bool $replayed, ?string $resultGeneration = null): array
+{
+    $payload = [
         'sourceInstanceId' => $identity['source_instance_id'],
         'applicationId' => $identity['application_id'],
         'historyEpoch' => $identity['history_epoch'],
@@ -34,12 +55,18 @@ function api_v2_directory_binding_command_result(array $identity, array $command
             'binding' => ['publicId' => $command['expectedPublicId']],
         ],
     ];
+    // Preserve the legacy four-field response. Modern acknowledgements carry
+    // the exact durable result generation, never a later live watermark.
+    if ($resultGeneration !== null) $payload['result']['authorizationGeneration'] = $resultGeneration;
+    return $payload;
 }
 
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
     if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid directory binding command');
+    $modern = array_key_exists('expectedAuthorizationGeneration', $command);
+    if ($modern && (!is_string($command['expectedAuthorizationGeneration']) || !api_v2_directory_binding_command_generation($command['expectedAuthorizationGeneration']))) return ['status' => 409];
     $pdo->beginTransaction();
     try {
         api_v2_directory_management_acquire_shared_gate($pdo, false);
@@ -59,12 +86,14 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
         }
         $appPk = (int)$identity['application_pk'];
         $requestHash = hash('sha256', json_encode($command, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        $receiptStmt = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(resource_revision AS CHAR) resource_revision FROM api_v2_directory_binding_command_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?');
+        $generationColumns = $modern ? ',CAST(expected_authorization_generation AS CHAR) expected_authorization_generation,CAST(result_authorization_generation AS CHAR) result_authorization_generation' : '';
+        $receiptStmt = $pdo->prepare('SELECT request_sha256,external_id,public_id,CAST(resource_revision AS CHAR) resource_revision' . $generationColumns . ' FROM api_v2_directory_binding_command_receipts WHERE application_pk=? AND resource_type=? AND history_epoch=? AND command_id=?');
         $receiptStmt->execute([$appPk, $type, $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStmt->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash)
             || !hash_equals((string)$receipt['external_id'], $command['externalId'])
             || (string)$receipt['public_id'] !== $command['expectedPublicId']
-            || (string)$receipt['resource_revision'] !== $command['expectedRevision'])) {
+            || (string)$receipt['resource_revision'] !== $command['expectedRevision']
+            || ($modern && (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration']))) {
             $pdo->rollBack(); return ['status' => 409];
         }
         $table = match ($type) { 'client'=>'clients', 'organization'=>'organizations', 'unit'=>'organization_departments' };
@@ -85,15 +114,23 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
         $bindingStmt = $pdo->prepare('SELECT external_id,public_id,resource_revision,resource_projection_sha256,status FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type=? AND (external_id=? OR public_id=?)' . $lock);
         $bindingStmt->execute([$appPk, $type, $command['externalId'], $command['expectedPublicId']]);
         $bindings = $bindingStmt->fetchAll(PDO::FETCH_ASSOC);
+        $auth = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
+        $auth->execute([$appPk]); $generation = $auth->fetchColumn();
+        $generation = is_scalar($generation) ? (string)$generation : '';
         if ($receipt) {
+            $resultGeneration = $modern ? (string)$receipt['result_authorization_generation'] : null;
             if (count($bindings) !== 1 || (string)$bindings[0]['status'] !== 'active'
                 || !hash_equals((string)$bindings[0]['external_id'], $command['externalId'])
                 || (string)$bindings[0]['public_id'] !== $command['expectedPublicId']
                 || (string)$bindings[0]['resource_revision'] !== $command['expectedRevision']
-                || !hash_equals((string)$bindings[0]['resource_projection_sha256'], (string)$state['projection_sha256'])) {
+                || !hash_equals((string)$bindings[0]['resource_projection_sha256'], (string)$state['projection_sha256'])
+                || ($modern && (!api_v2_directory_binding_command_stored_generation($resultGeneration)
+                    || $resultGeneration !== (string)((int)$command['expectedAuthorizationGeneration'] + 1)
+                    || (!api_v2_directory_binding_command_generation($generation) && $generation !== '9223372036854775807')
+                    || api_v2_directory_binding_command_greater_than($resultGeneration, $generation)))) {
                 $pdo->rollBack(); return ['status' => 409];
             }
-            $pdo->commit(); return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, true)];
+            $pdo->commit(); return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, true, $resultGeneration)];
         }
         // A resource delete keeps its tombstone so status reads can return
         // 410.  After a restore, only a new command ID may explicitly rebind
@@ -105,12 +142,11 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             && hash_equals((string)$bindings[0]['external_id'], $command['externalId'])
             && (string)$bindings[0]['public_id'] === $command['expectedPublicId'];
         if ($bindings !== [] && !$rebind) { $pdo->rollBack(); return ['status' => 409]; }
-        $auth = $pdo->prepare('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock);
-        $auth->execute([$appPk]); $generation = $auth->fetchColumn();
-        if ($generation === false || !preg_match('/^(0|[1-9][0-9]{0,18})$/D', (string)$generation)
-            || (strlen((string)$generation) === 19 && strcmp((string)$generation, '9223372036854775807') >= 0)) {
+        if (!api_v2_directory_binding_command_generation($generation)
+            || ($modern && !hash_equals($generation, $command['expectedAuthorizationGeneration']))) {
             $pdo->rollBack(); return ['status' => 409];
         }
+        $resultGeneration = $modern ? (string)((int)$generation + 1) : null;
         if ($rebind) {
             $reactivate = $pdo->prepare("UPDATE api_v2_directory_external_bindings
                 SET resource_revision=?,resource_projection_sha256=?,status='active',tombstoned_at=NULL,created_at=CURRENT_TIMESTAMP
@@ -121,11 +157,16 @@ function api_v2_directory_binding_command_write(PDO $pdo, string $type, array $c
             $pdo->prepare("INSERT INTO api_v2_directory_external_bindings(application_pk,resource_type,external_id,public_id,resource_revision,resource_projection_sha256,status) VALUES(?,?,?,?,?,?,'active')")
                 ->execute([$appPk, $type, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision'], $state['projection_sha256']]);
         }
-        $pdo->prepare('INSERT INTO api_v2_directory_binding_command_receipts(application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,resource_revision) VALUES(?,?,?,?,?,?,?,?)')
-            ->execute([$appPk, $type, $identity['history_epoch'], $command['commandId'], $requestHash, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision']]);
-        $pdo->prepare('UPDATE api_v2_directory_authorization_state SET authorization_generation=authorization_generation+1 WHERE application_pk=?')->execute([$appPk]);
+        $receiptColumns = $modern ? ',expected_authorization_generation,result_authorization_generation' : '';
+        $receiptValues = [$appPk, $type, $identity['history_epoch'], $command['commandId'], $requestHash, $command['externalId'], $command['expectedPublicId'], $command['expectedRevision']];
+        if ($modern) array_push($receiptValues, $command['expectedAuthorizationGeneration'], $resultGeneration);
+        $pdo->prepare('INSERT INTO api_v2_directory_binding_command_receipts(application_pk,resource_type,history_epoch,command_id,request_sha256,external_id,public_id,resource_revision' . $receiptColumns . ') VALUES(?,?,?,?,?,?,?,?' . ($modern ? ',?,?' : '') . ')')
+            ->execute($receiptValues);
+        $advance = $pdo->prepare('UPDATE api_v2_directory_authorization_state SET authorization_generation=authorization_generation+1 WHERE application_pk=? AND authorization_generation=?');
+        $advance->execute([$appPk, $generation]);
+        if ($advance->rowCount() !== 1) { $pdo->rollBack(); return ['status' => 409]; }
         $pdo->commit();
-        return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, false)];
+        return ['status' => 200, 'payload' => api_v2_directory_binding_command_result($identity, $command, $type, $requestId, false, $resultGeneration)];
     } catch (Throwable $error) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         if ($error instanceof PDOException && $error->getCode() === '23000') return ['status' => 409];

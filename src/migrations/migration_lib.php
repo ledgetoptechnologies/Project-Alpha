@@ -444,7 +444,8 @@ function migration_required_columns_for_version(array $requiredColumns, int $thr
             'application_pk' => 91, 'resource_type' => 91, 'command_id' => 91,
             'history_epoch' => 105,
             'request_sha256' => 91, 'external_id' => 91, 'public_id' => 91,
-            'resource_revision' => 91, 'created_at' => 91,
+            'resource_revision' => 91, 'expected_authorization_generation' => 108,
+            'result_authorization_generation' => 108, 'created_at' => 91,
         ],
         'api_v2_directory_binding_revision_refresh_receipts' => [
             'application_pk' => 92, 'resource_type' => 92, 'command_id' => 92,
@@ -668,7 +669,7 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_resource_changes' => ['resource_type', 'public_id', 'revision', 'action'],
         'api_v2_directory_authorization_state' => ['application_pk', 'authorization_generation'],
         'api_v2_directory_external_bindings' => ['application_pk', 'resource_type', 'external_id', 'public_id', 'resource_revision', 'resource_projection_sha256', 'status', 'created_at', 'tombstoned_at'],
-        'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'created_at'],
+        'api_v2_directory_binding_command_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'resource_revision', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
         'api_v2_directory_binding_revision_refresh_receipts' => ['application_pk', 'resource_type', 'history_epoch', 'command_id', 'request_sha256', 'external_id', 'public_id', 'expected_prior_revision', 'result_revision', 'result_projection_sha256', 'expected_authorization_generation', 'result_authorization_generation', 'created_at'],
         'api_v2_directory_organization_profile_command_receipts' => ['application_pk', 'history_epoch', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],
         'api_v2_directory_client_profile_command_receipts' => ['application_pk', 'history_epoch', 'command_id', 'request_sha256', 'public_id', 'expected_revision', 'expected_authorization_generation', 'result_revision', 'result_projection_sha256', 'created_at'],

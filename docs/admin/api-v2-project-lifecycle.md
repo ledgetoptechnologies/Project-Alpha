@@ -15,7 +15,7 @@ exact reads, reversible lifecycle commands, and application-scoped Project
 synchronization to explicitly provisioned API v2 applications. Every route is
 generic. Read, binding-status, and inventory routes are enabled by default;
 tested create/profile/lifecycle/revision-refresh commands are also enabled by default
-(see [route defaults](api-v2-route-defaults.md)); existing-project binding remains opt-in. Nothing selects a Project, client, or
+(see [route defaults](api-v2-route-defaults.md)), as is existing-project binding. Nothing selects a Project, client, or
 organization by name or email, creates portal membership, publishes documents,
 enables a public link, activates delivery, or inherits access from a legacy
 `full` key.

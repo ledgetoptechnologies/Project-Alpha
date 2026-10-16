@@ -3,12 +3,25 @@
 This surface is generic and stateless. Read-only directory, binding-status, and
 inventory routes are enabled by default. Tested client/organization create,
 profile, binding, binding-revision-refresh/reconciliation, and client-organization
-relationship commands are also [enabled by default](api-v2-route-defaults.md),
-with explicit disable overrides supported. Directory archive, restore, binding
-revoke, and separate unit-write gates remain default-off. Every route
+relationship commands, client/organization archive and restore, and binding
+revoke are also [enabled by default](api-v2-route-defaults.md), with explicit
+disable overrides supported. Separate unit profile/create/archive/restore/contact
+gates remain default-off; shared binding/read/refresh/revoke routes retain their
+existing resource types and explicit per-type scopes. Every route
 is available only to an application-bound API key with its explicit scope. The legacy `full`
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
+
+Existing-directory binding accepts the modern five-field envelope
+`commandId`, `externalId`, `expectedPublicId`, `expectedRevision`, and
+`expectedAuthorizationGeneration`. The last field fences the application
+generation and is acknowledged as the stored `result.authorizationGeneration`
+after its single increment. Replaying the same command returns that original
+generation, even if other authorized operations have advanced the live value.
+Migration `0108_api_v2_directory_binding_generation_fence.sql` adds the nullable
+receipt fields without inventing evidence for historical commands. Legacy
+four-field binding callers retain their original response shape. Both forms
+still require the existing exact resource, binding, identity and scope checks.
 
 Command receipts are scoped to that history epoch. Rotation preserves prior
 receipts as audit history, but a command ID from an earlier epoch can never

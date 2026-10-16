@@ -70,6 +70,10 @@ administrator.
 `docker-compose.yml` is the only tracked deployment definition. It contains the
 production image tags, port, service settings, and named volumes directly.
 Environment-specific copies belong to the deployment host, not the repository.
+No separate `.env` file is required for this Compose installation. Startup
+initializes runtime configuration in the persistent config volume; the example
+environment file is optional reference material for custom overrides. The
+published `latest`, `cron-latest`, and `db-latest` image tags remain the defaults.
 
 The optional External Operations module is disabled by default. Deployments
 that use it configure the one connection from the administrator-only **Custom

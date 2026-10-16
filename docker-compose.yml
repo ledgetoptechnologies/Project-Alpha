@@ -44,13 +44,6 @@ services:
       AUTOPAY_BETA_ENABLED: "false"
       # Tested Ops API v2 routes use their code defaults; see
       # docs/admin/api-v2-route-defaults.md for optional false overrides.
-      # The remaining command gates below are separate opt-in features.
-      APP_API_V2_DIRECTORY_CLIENTS_ARCHIVE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_CLIENTS_RESTORE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_ORGANIZATIONS_ARCHIVE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_ORGANIZATIONS_RESTORE_ENABLED: "false"
-      APP_API_V2_DIRECTORY_BINDING_REVOKE_ENABLED: "false"
-      APP_API_V2_PROJECTS_BINDING_ENABLED: "false"
       # Optional inbound portal adapter credentials. Outbound portal events use
       # the External Operations connection saved in administrator settings.
       PORTAL_INTEGRATION_HMAC_SECRETS_JSON: ""

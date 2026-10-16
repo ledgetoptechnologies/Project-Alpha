@@ -89,7 +89,7 @@ final class ApiV2CapabilitiesFoundationTest extends TestCase
         self::assertFalse(\api_key_has_scope('full', 'directory.clients.read', false));
     }
 
-    public function testBindingCommandsRequireTheirOwnDefaultOffFeatureAndScope(): void
+    public function testBindingCommandsRequireTheirOwnEnabledFeatureAndScope(): void
     {
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_capabilities.php';
         require_once dirname(__DIR__, 2) . '/src/utils/api_scopes.php';
@@ -110,6 +110,8 @@ final class ApiV2CapabilitiesFoundationTest extends TestCase
             'requiresSourceInstanceId' => true,
             'requiresApplicationId' => true,
             'requiresHistoryEpoch' => true,
+            'requiresExpectedRevision' => true,
+            'requiresExpectedPublicId' => true,
         ], $on['implementedEndpoints'][1]);
         self::assertFalse(\api_key_has_scope('full', 'directory.clients.bind', false));
         self::assertStringContainsString('APP_API_V2_DIRECTORY_BINDING_ENABLED', (string)file_get_contents(dirname(__DIR__, 2) . '/public/index.php'));

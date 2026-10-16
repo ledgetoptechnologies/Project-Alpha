@@ -23,7 +23,7 @@ final class ApiV2DirectoryBindingCommandTest extends TestCase
             CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id));
             CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision));
             CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER,resource_type TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,resource_projection_sha256 TEXT,status TEXT,PRIMARY KEY(application_pk,resource_type,external_id),UNIQUE(application_pk,resource_type,public_id));
-            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
+            CREATE TABLE api_v2_directory_binding_command_receipts(application_pk INTEGER,resource_type TEXT,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,external_id BLOB,public_id TEXT,resource_revision INTEGER,expected_authorization_generation INTEGER,result_authorization_generation INTEGER,PRIMARY KEY(application_pk,resource_type,history_epoch,command_id));
             CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT);
             INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
@@ -99,4 +99,66 @@ final class ApiV2DirectoryBindingCommandTest extends TestCase
         self::assertSame(409,$outcome['status']);self::assertArrayNotHasKey('payload',$outcome);
         self::assertSame('323e4567-e89b-42d3-a456-426614174000',$pdo->query('SELECT history_epoch FROM api_v2_directory_binding_command_receipts')->fetchColumn());
     }
+    public function testModernOpsCommandParsesWhileLegacyFourFieldCommandsRemainValid(): void
+    {
+        require_once dirname(__DIR__, 2) . '/src/utils/api_v2_directory_binding_command.php';
+        $modern = $this->command() + ['expectedAuthorizationGeneration'=>'0'];
+        self::assertSame($modern, \api_v2_directory_binding_command_parse(json_encode(array_reverse($modern, true), JSON_THROW_ON_ERROR)));
+        self::assertSame($this->command(), \api_v2_directory_binding_command_parse(json_encode($this->command(), JSON_THROW_ON_ERROR)));
+        foreach (['01', '-1', '9223372036854775807', 0, null] as $invalid) {
+            self::assertNull(\api_v2_directory_binding_command_parse(json_encode(array_replace($modern, ['expectedAuthorizationGeneration'=>$invalid]), JSON_THROW_ON_ERROR)));
+        }
+    }
+
+    public function testModernBindingAcknowledgesDurableNextGenerationAndReplaysItAfterLaterChanges(): void
+    {
+        $pdo = $this->database(); $command = $this->command() + ['expectedAuthorizationGeneration'=>'0'];
+        $first = \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), '523e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200, $first['status']);
+        self::assertSame('1', $first['payload']['result']['authorizationGeneration']);
+        self::assertSame(['0','1'], $pdo->query('SELECT CAST(expected_authorization_generation AS TEXT),CAST(result_authorization_generation AS TEXT) FROM api_v2_directory_binding_command_receipts')->fetch(PDO::FETCH_NUM));
+        $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=2');
+        $again = \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), '623e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200, $again['status']); self::assertTrue($again['payload']['replayed']);
+        self::assertSame('1', $again['payload']['result']['authorizationGeneration']);
+        self::assertSame('2', (string)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame(1, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame(409, \api_v2_directory_binding_command_write($pdo, 'client', array_replace($command, ['expectedAuthorizationGeneration'=>'2']), 7, $this->headers(), 'changed-command')['status']);
+    }
+
+    public function testModernStaleGenerationAndFailedAdvanceLeaveNoBindingOrReceipt(): void
+    {
+        foreach (['stale','failed-advance'] as $failure) {
+            $pdo = $this->database(); $command = $this->command() + ['expectedAuthorizationGeneration'=>'0'];
+            if ($failure === 'stale') $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+            else $pdo->exec("CREATE TRIGGER stop_modern_generation BEFORE UPDATE ON api_v2_directory_authorization_state BEGIN SELECT RAISE(ABORT, 'blocked'); END");
+            self::assertSame(409, \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), 'failure')['status']);
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
+            self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+            self::assertSame($failure === 'stale' ? '1' : '0', (string)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        }
+    }
+
+    public function testModernGenerationMaximumAdvancesOnceAndReplaysWithoutOverflow(): void
+    {
+        $pdo = $this->database(); $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=9223372036854775806');
+        $command = $this->command() + ['expectedAuthorizationGeneration'=>'9223372036854775806'];
+        $first = \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), 'maximum');
+        self::assertSame(200, $first['status']); self::assertSame('9223372036854775807', $first['payload']['result']['authorizationGeneration']);
+        $again = \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), 'maximum-replay');
+        self::assertSame(200, $again['status']); self::assertTrue($again['payload']['replayed']);
+        self::assertSame('9223372036854775807', $again['payload']['result']['authorizationGeneration']);
+    }
+
+    public function testModernReplayWithoutDurableGenerationEvidenceFailsClosed(): void
+    {
+        $pdo = $this->database(); $command = $this->command() + ['expectedAuthorizationGeneration'=>'0'];
+        self::assertSame(200, \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), 'first')['status']);
+        $pdo->exec('UPDATE api_v2_directory_binding_command_receipts SET expected_authorization_generation=NULL,result_authorization_generation=NULL');
+        self::assertSame(409, \api_v2_directory_binding_command_write($pdo, 'client', $command, 7, $this->headers(), 'missing-evidence')['status']);
+        self::assertSame('1', (string)$pdo->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame(1, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+    }
+
 }

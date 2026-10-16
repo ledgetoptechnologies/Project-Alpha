@@ -22,6 +22,12 @@ final class ApiV2ApprovedRouteDefaultsTest extends TestCase
         ['PROJECTS_CREATE', 'projects_create', '/api/v2/projects/commands', 'projects.create'],
         ['PROJECTS_WRITE', 'projects_write', '/api/v2/projects/profile/commands', 'projects.write'],
         ['PROJECTS_BINDING_REFRESH', 'projects_binding_refresh', '/api/v2/projects/bindings/revisions/commands', 'projects.binding.revision.refresh'],
+        ['DIRECTORY_CLIENTS_ARCHIVE', 'directory_client_archive', '/api/v2/directory/clients/{publicId}/archive/commands', 'directory.clients.archive'],
+        ['DIRECTORY_CLIENTS_RESTORE', 'directory_client_restore', '/api/v2/directory/clients/{publicId}/restore/commands', 'directory.clients.restore'],
+        ['DIRECTORY_ORGANIZATIONS_ARCHIVE', 'directory_organization_archive', '/api/v2/directory/organizations/{publicId}/archive/commands', 'directory.organizations.archive'],
+        ['DIRECTORY_ORGANIZATIONS_RESTORE', 'directory_organization_restore', '/api/v2/directory/organizations/{publicId}/restore/commands', 'directory.organizations.restore'],
+        ['DIRECTORY_BINDING_REVOKE', 'directory_binding_revoke', '/api/v2/directory/organizations/bindings/revoke/commands', 'directory.organizations.unbind'],
+        ['PROJECTS_BINDING', 'projects_binding', '/api/v2/projects/bindings/commands', 'projects.bind'],
         ['FINANCIAL_DOCUMENTS', 'financial_documents', '/api/v2/financial-documents', 'financial.documents.read'],
     ];
 
@@ -30,9 +36,9 @@ final class ApiV2ApprovedRouteDefaultsTest extends TestCase
         require_once dirname(__DIR__, 2) . '/src/utils/api_v2_capabilities.php';
     }
 
-    public function testExactlyTheApprovedSixteenDefaultsHonorExplicitDisableAndInvalidValues(): void
+    public function testExactlyTheApprovedTwentyTwoDefaultsHonorExplicitDisableAndInvalidValues(): void
     {
-        self::assertCount(16, self::ROUTES);
+        self::assertCount(22, self::ROUTES);
         foreach (self::ROUTES as [$name]) {
             $flag = 'APP_API_V2_' . $name . '_ENABLED';
             $previous = getenv($flag);
@@ -54,9 +60,7 @@ final class ApiV2ApprovedRouteDefaultsTest extends TestCase
     public function testUnapprovedGatesRemainOffWithoutConfiguration(): void
     {
         foreach (['DIRECTORY_UNITS_WRITE', 'DIRECTORY_UNITS_CREATE', 'DIRECTORY_UNITS_ARCHIVE',
-            'DIRECTORY_UNITS_RESTORE', 'DIRECTORY_UNIT_CONTACTS_WRITE', 'DIRECTORY_CLIENTS_ARCHIVE',
-            'DIRECTORY_CLIENTS_RESTORE', 'DIRECTORY_ORGANIZATIONS_ARCHIVE', 'DIRECTORY_ORGANIZATIONS_RESTORE',
-            'DIRECTORY_BINDING_REVOKE', 'PROJECTS_BINDING', 'PROJECTS_ADOPTION_CANDIDATES',
+            'DIRECTORY_UNITS_RESTORE', 'DIRECTORY_UNIT_CONTACTS_WRITE', 'PROJECTS_ADOPTION_CANDIDATES',
             'CATALOG_INVENTORY', 'UNKNOWN'] as $name) {
             $flag = 'APP_API_V2_' . $name . '_ENABLED'; $previous = getenv($flag);
             try { putenv($flag); self::assertFalse(api_v2_enabled($flag), $flag); }
@@ -100,6 +104,16 @@ final class ApiV2ApprovedRouteDefaultsTest extends TestCase
             self::assertDoesNotMatchRegularExpression('/^' . preg_quote($flag, '/') . '=/m', $example);
             self::assertStringContainsString('# ' . $flag . '=false', $example);
         }
+    }
+
+    public function testStandaloneComposeDoesNotRequireAnEnvironmentFileOrHostVariables(): void
+    {
+        $compose = (string) file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
+        self::assertDoesNotMatchRegularExpression('/^\\s*env_file\\s*:/m', $compose);
+        self::assertDoesNotMatchRegularExpression('/\\$\\{[^}]*\\?[^}]*\\}/', $compose);
+        self::assertDoesNotMatchRegularExpression('/^\\s*-\\s*[^#\\r\\n]*\\.env(?::|$)/m', $compose);
+        self::assertStringContainsString('services:', $compose);
+        self::assertStringContainsString('ghcr.io/ledgetoptechnologies/project-alpha:latest', $compose);
     }
 
     public function testDefaultDispatchAndExplicitFalseAgreeWithCapabilities(): void
