@@ -336,7 +336,8 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         $this->second->beginTransaction();
         $this->second->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3 FOR UPDATE')->fetchColumn();
         $command = $this->modernBindingCommand();
-        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'locked')['status']);
+        try { \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'locked'); self::fail('Expected the authorization row lock to block the command.'); }
+        catch (PDOException $error) { self::assertSame(1205, (int)($error->errorInfo[1] ?? 0)); }
         self::assertFalse($this->first->inTransaction());
         self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
         self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
@@ -352,7 +353,8 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
     {
         $this->applyBindingGenerationMigration(); $this->first->exec('DELETE FROM api_v2_directory_external_bindings');
         $this->first->exec("CREATE TRIGGER fail_modern_receipt BEFORE INSERT ON api_v2_directory_binding_command_receipts FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic receipt failure'");
-        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', $this->modernBindingCommand(), 7, $this->headers(), 'failure')['status']);
+        try { \api_v2_directory_binding_command_write($this->first, 'client', $this->modernBindingCommand(), 7, $this->headers(), 'failure'); self::fail('Expected the synthetic receipt failure.'); }
+        catch (PDOException $error) { self::assertSame(1644, (int)($error->errorInfo[1] ?? 0)); }
         self::assertFalse($this->first->inTransaction());
         self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
         self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
