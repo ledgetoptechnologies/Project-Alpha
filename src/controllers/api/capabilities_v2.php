@@ -62,7 +62,7 @@ try {
         'directory_organization_write' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_WRITE_ENABLED'),
         'directory_client_write' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED'),
         'directory_client_contact_write' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED')
-            && \App\Services\PortalContactIdentityPolicy::available($pdo),
+            && api_v2_client_contact_profile_available($pdo),
         'directory_unit_write' => api_v2_enabled('APP_API_V2_DIRECTORY_UNITS_WRITE_ENABLED'),
         'directory_organization_create' => api_v2_enabled('APP_API_V2_DIRECTORY_ORGANIZATIONS_CREATE_ENABLED'),
         'directory_client_create' => api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_CREATE_ENABLED'),

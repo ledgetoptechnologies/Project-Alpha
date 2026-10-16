@@ -1,6 +1,13 @@
 <?php
 declare(strict_types=1);
 
+/** Capability discovery also runs before the application's Composer bootstrap. */
+function api_v2_client_contact_profile_available(PDO $pdo): bool
+{
+    require_once __DIR__ . '/../services/PortalContactIdentityPolicy.php';
+    return \App\Services\PortalContactIdentityPolicy::available($pdo);
+}
+
 function api_v2_uuid(): string
 {
     $bytes = random_bytes(16);
