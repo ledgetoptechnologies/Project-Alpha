@@ -852,6 +852,8 @@ final class PortalClientProvisioningService
     private function reconcileClient(PDO $pdo, array $client, array $scope, bool $rootActive, int $actorId): string
     {
         $clientId=(int)$client['id'];$existing=$this->eligibility($pdo,$clientId);$manual=(string)($existing['manual_state']??'automatic');
+        $protected=PortalContactIdentityPolicy::forClient($pdo,$clientId);
+        if($protected)return $this->reconcileProtectedContactIdentity($pdo,$client,$existing,$protected,$rootActive,$actorId);
         $active=empty($client['archived'])&&empty($client['deleted_at']);
         $email=strtolower(trim((string)($client['email']??'')));$reason='none';$status='eligible';
         if(!$active){$status='review_required';$reason='client_inactive';}
@@ -891,7 +893,39 @@ final class PortalClientProvisioningService
         return$status;
     }
 
-    private function emailCount(PDO $pdo,string $email):int{$s=$pdo->prepare('SELECT COUNT(*) FROM clients WHERE archived=0 AND deleted_at IS NULL AND LOWER(TRIM(email))=?');$s->execute([$email]);return(int)$s->fetchColumn();}
+    /** Neutral contact writes must not migrate login authority during later
+     * cron/browser reconciliation. Explicit revocations still take effect. */
+    private function reconcileProtectedContactIdentity(PDO $pdo,array $client,array|false $existing,array $protected,bool $rootActive,int $actorId):string
+    {
+        if(!$existing)return 'review_required'; // locked NONE; no enrollment
+        $manual=(string)$existing['manual_state'];
+        $reason=null;
+        if(!empty($client['archived'])||!empty($client['deleted_at']))$reason='client_inactive';
+        elseif(!$rootActive)$reason='root_revoked';
+        elseif($manual==='revoked')$reason='none';
+        if($reason!==null){
+            $principalId=$existing['portal_principal_id']!==null?(int)$existing['portal_principal_id']:null;
+            if($principalId)$this->revokeClientAssociation($pdo,$principalId,(int)$client['id'],(string)$client['public_id'],$actorId);
+            $status=$reason==='client_inactive'?'review_required':'revoked';
+            $version=PortalSourceVersion::from(['clientPublicId'=>(string)$client['public_id'],'contactIdentityPolicy'=>'preserve_existing','status'=>$status,'reason'=>$reason,'manualState'=>$manual]);
+            $this->saveEligibility($pdo,(int)$client['id'],$principalId,$manual,$status,$reason,$existing['canonical_email'],$version,$actorId);
+            return$status;
+        }
+        // No activation, association repair, defaults, or new principal. A
+        // revoked identity remains revoked even after a root is restored.
+        if($protected['portal_principal_id']===null)return 'review_required';
+        if((string)$protected['portal_principal_id']!==(string)($existing['portal_principal_id']??'')
+            || !hash_equals((string)$protected['login_email'],(string)($existing['canonical_email']??'')))return 'review_required';
+        return (string)$existing['eligibility_status'];
+    }
+
+    private function emailCount(PDO $pdo,string $email):int
+    {
+        $sql=PortalContactIdentityPolicy::available($pdo)
+            ? 'SELECT COUNT(*) FROM clients client LEFT JOIN portal_client_contact_identity_policy policy ON policy.client_id=client.id WHERE client.archived=0 AND client.deleted_at IS NULL AND LOWER(TRIM(CASE WHEN policy.client_id IS NULL THEN client.email ELSE policy.login_email END))=?'
+            : 'SELECT COUNT(*) FROM clients WHERE archived=0 AND deleted_at IS NULL AND LOWER(TRIM(email))=?';
+        $s=$pdo->prepare($sql);$s->execute([$email]);return(int)$s->fetchColumn();
+    }
     private function eligibility(PDO$pdo,int$clientId):array|false{$s=$pdo->prepare('SELECT * FROM portal_client_login_eligibility WHERE client_id=?');$s->execute([$clientId]);return$s->fetch(PDO::FETCH_ASSOC);}
     private function rootControl(PDO$pdo,string$type,string$id):array|false{$s=$pdo->prepare('SELECT * FROM portal_client_access_roots WHERE root_type=? AND root_public_id=?');$s->execute([$type,$id]);return$s->fetch(PDO::FETCH_ASSOC);}
 

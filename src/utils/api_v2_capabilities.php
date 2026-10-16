@@ -109,6 +109,9 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
         'directory_client_write' => [
             ['directory.clients.write', '/api/v2/directory/clients/{publicId}/profile/commands', 'POST'],
         ],
+        'directory_client_contact_write' => [
+            ['directory.clients.write', '/api/v2/directory/clients/{publicId}/contact-profile/commands', 'POST'],
+        ],
         'directory_unit_write' => [
             ['directory.units.write', '/api/v2/directory/units/{publicId}/profile/commands', 'POST'],
         ],
@@ -205,7 +208,7 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
     // uses prior/live revisions; relationship/contact commands use typed revisions.
     $revisionFeatures = [
         'directory_binding', 'directory_binding_refresh', 'directory_binding_refresh_reconciliation',
-        'directory_organization_write', 'directory_client_write', 'directory_unit_write',
+        'directory_organization_write', 'directory_client_write', 'directory_client_contact_write', 'directory_unit_write',
         'directory_client_archive', 'directory_client_restore', 'directory_organization_archive',
         'directory_organization_restore', 'directory_unit_archive', 'directory_unit_restore',
         'directory_unit_contacts_write', 'directory_relationship_write', 'directory_binding_revoke',

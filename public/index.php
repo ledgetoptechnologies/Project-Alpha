@@ -127,7 +127,7 @@ if (preg_match('#^/api/v2/directory/organizations/[0-9a-f]{32}/profile/commands$
     }
     require __DIR__ . '/../src/controllers/api/directory_organization_profile_command_v2.php'; exit;
 }
-if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/profile/commands$#D', $apiV2Path) === 1) {
+if (preg_match('#^/api/v2/directory/clients/[0-9a-f]{32}/(?:profile|contact-profile)/commands$#D', $apiV2Path) === 1) {
     if (!api_v2_enabled('APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED')) {
         header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store');
         http_response_code(404); exit;

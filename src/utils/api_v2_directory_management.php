@@ -309,7 +309,8 @@ function api_v2_directory_management_code_digest(): string
          'src/utils/api_v2_directory_relationship_command.php','src/utils/api_v2_directory_binding_revoke_command.php',
          'src/utils/api_v2_directory_inventory.php','src/utils/api_v2_directory_unit_profile_command.php',
          'src/utils/api_v2_directory_unit_contact_command.php','src/utils/api_v2_directory_backfill.php',
-         'src/utils/api_v2_directory_release_safety.php']
+         'src/utils/api_v2_directory_release_safety.php','src/services/PortalContactIdentityPolicy.php',
+         'database/migrations/0109_portal_contact_identity_policy.sql']
     )));
     foreach(range(88,106) as $version){$match=glob($root.'/database/migrations/'.str_pad((string)$version,4,'0',STR_PAD_LEFT).'_*.sql');if(count($match)!==1)return '';$paths[]=str_replace('\\','/',substr($match[0],strlen($root)+1));}
     $paths=array_values(array_unique($paths));
