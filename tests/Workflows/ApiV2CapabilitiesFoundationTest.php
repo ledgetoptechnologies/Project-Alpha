@@ -7,6 +7,24 @@ use PHPUnit\Framework\TestCase;
 
 final class ApiV2CapabilitiesFoundationTest extends TestCase
 {
+    public function testContactDiscoveryLoadsItsDependencyWithoutApplicationAutoload(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $script = 'require ' . var_export($root . '/src/utils/api_v2_capabilities.php', true) . ';'
+            . '$pdo=new PDO("sqlite::memory:");'
+            . '$unloaded=!class_exists("App\\\\Services\\\\PortalContactIdentityPolicy", false);'
+            . '$before=api_v2_client_contact_profile_available($pdo);'
+            . '$pdo->exec("CREATE TABLE portal_client_contact_identity_policy(client_id INTEGER PRIMARY KEY)");'
+            . 'echo json_encode([$unloaded,$before,api_v2_client_contact_profile_available($pdo)]);';
+        $process = proc_open([PHP_BINARY, '-r', $script], [['pipe','r'],['pipe','w'],['pipe','w']], $pipes, $root);
+        self::assertIsResource($process);
+        fclose($pipes[0]);
+        $output = stream_get_contents($pipes[1]); $error = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        self::assertSame(0, proc_close($process), $error);
+        self::assertSame([true,false,true], json_decode($output, true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function testExplicitScopeDoesNotPassThroughLegacyFullAccessAndCanBeCombined(): void
     {
         require_once dirname(__DIR__, 2) . '/src/utils/api_scopes.php';
