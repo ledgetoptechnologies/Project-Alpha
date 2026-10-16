@@ -9,7 +9,8 @@ require_once __DIR__ . '/../../utils/api_v2_capabilities.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_client_profile_command.php';
 $requestId = api_v2_uuid(); header('X-Request-ID: ' . $requestId);
 $path = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
-if (preg_match('#^/api/v2/directory/clients/([0-9a-f]{32})/profile/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
+if (preg_match('#^/api/v2/directory/clients/([0-9a-f]{32})/(profile|contact-profile)/commands$#D', $path, $match) !== 1) { http_response_code(404); exit; }
+$preservePortalIdentity=$match[2]==='contact-profile';
 $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? ''); if (preg_match('/^application\/json(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/iD', $contentType) !== 1) { http_response_code(415); exit; }
 $contentLength = $_SERVER['CONTENT_LENGTH'] ?? null; if ($contentLength !== null && (!ctype_digit((string)$contentLength) || (int)$contentLength > 32 * 1024)) { http_response_code(413); exit; }
 $stream = fopen('php://input', 'rb'); if ($stream === false) { http_response_code(400); exit; } $body = stream_get_contents($stream, 32 * 1024 + 1); fclose($stream);
@@ -20,5 +21,6 @@ catch (Throwable $error) { error_log('[ApiV2ClientProfile] database unavailable:
 require_once __DIR__ . '/../../utils/api_auth.php';
 $key = api_require_key(['api.capabilities.read', 'directory.clients.write'], false);
 if (in_array('full', api_normalize_scopes($key['scopes'] ?? ''), true)) { http_response_code(403); exit; }
-try { $outcome = api_v2_directory_client_profile_command_write($pdo, $match[1], $command, (int)$key['id'], ['source'=>$_SERVER['HTTP_X_PA_SOURCE_INSTANCE_ID'] ?? null, 'application'=>$_SERVER['HTTP_X_PA_APPLICATION_ID'] ?? null, 'epoch'=>$_SERVER['HTTP_X_PA_HISTORY_EPOCH'] ?? null], $requestId); if ($outcome['status'] !== 200) { http_response_code($outcome['status']); exit; } $json = json_encode($outcome['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR); if (strlen($json) > 64 * 1024) throw new RuntimeException('Client profile response limit'); echo $json; }
+try { if($preservePortalIdentity&&!\App\Services\PortalContactIdentityPolicy::available($pdo)){http_response_code(404);exit;}
+    $outcome = api_v2_directory_client_profile_command_write($pdo, $match[1], $command, (int)$key['id'], ['source'=>$_SERVER['HTTP_X_PA_SOURCE_INSTANCE_ID'] ?? null, 'application'=>$_SERVER['HTTP_X_PA_APPLICATION_ID'] ?? null, 'epoch'=>$_SERVER['HTTP_X_PA_HISTORY_EPOCH'] ?? null], $requestId, $preservePortalIdentity); if ($outcome['status'] !== 200) { http_response_code($outcome['status']); exit; } $json = json_encode($outcome['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR); if (strlen($json) > 64 * 1024) throw new RuntimeException('Client profile response limit'); echo $json; }
 catch (Throwable $error) { error_log('[ApiV2ClientProfile] command unavailable: ' . get_class($error)); http_response_code(503); }

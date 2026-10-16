@@ -24,7 +24,7 @@ final class ClientProfileMutationService
     /**
      * @param array{name:string,email?:?string,phone?:?string,organization_id?:?int,notes?:?string,address?:array<string,mixed>,google_place_id?:?string,address_label?:?string,address_id?:?int,actor_id?:?int} $profile
      */
-    public function mutate(PDO $pdo, int $clientId, array $profile, bool $localDirectoryAuthority = true): void
+    public function mutate(PDO $pdo, int $clientId, array $profile, bool $localDirectoryAuthority = true, bool $preservePortalAuthority = false): void
     {
         if ($clientId < 1 || trim((string) ($profile['name'] ?? '')) === '') {
             throw new \InvalidArgumentException('A valid client profile is required.');
@@ -73,7 +73,8 @@ final class ClientProfileMutationService
             },
             static fn(): array => $projection->clientScopes($pdo, $clientId),
             true,
-            static fn() => \api_v2_directory_management_acquire_shared_gate($pdo, $localDirectoryAuthority)
+            static fn() => \api_v2_directory_management_acquire_shared_gate($pdo, $localDirectoryAuthority),
+            $preservePortalAuthority
         );
     }
 }

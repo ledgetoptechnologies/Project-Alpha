@@ -43,7 +43,7 @@ function api_v2_directory_client_profile_result(array $identity, string $publicI
 }
 
 /** @return array{status:int,payload?:array} */
-function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicId, array $command, int $apiKeyId, array $headers, string $requestId): array
+function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicId, array $command, int $apiKeyId, array $headers, string $requestId, bool $preservePortalIdentity = false): array
 {
     if (preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1 || $apiKeyId < 1 || $pdo->inTransaction()) throw new InvalidArgumentException('Invalid client profile command');
     $pdo->beginTransaction();
@@ -53,7 +53,9 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         $identityStatement = $pdo->prepare('SELECT history.source_instance_id,history.history_epoch,app.application_id,app.id application_pk FROM api_keys api_key JOIN api_v2_applications app ON app.id=api_key.api_v2_application_id JOIN api_v2_history_identity history ON history.singleton=1 WHERE api_key.id=? AND api_key.revoked_at IS NULL' . $lock);
         $identityStatement->execute([$apiKeyId]); $identity = $identityStatement->fetch(PDO::FETCH_ASSOC);
         if (!$identity || !api_v2_identity_is_valid($identity) || !hash_equals((string)$identity['source_instance_id'], (string)($headers['source'] ?? '')) || !hash_equals((string)$identity['application_id'], (string)($headers['application'] ?? '')) || !hash_equals((string)$identity['history_epoch'], (string)($headers['epoch'] ?? ''))) { $pdo->rollBack(); return ['status'=>409]; }
-        $requestHash = hash('sha256', json_encode($command, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $requestHash = hash('sha256', json_encode($preservePortalIdentity
+            ? ['contactIdentityPolicy'=>'preserve_existing_portal_identity_v1','command'=>$command] : $command,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $receiptStatement = $pdo->prepare('SELECT request_sha256,public_id,CAST(expected_revision AS CHAR) expected_revision,CAST(expected_authorization_generation AS CHAR) expected_authorization_generation,CAST(result_revision AS CHAR) result_revision,result_projection_sha256 FROM api_v2_directory_client_profile_command_receipts WHERE application_pk=? AND history_epoch=? AND command_id=?' . $lock);
         $receiptStatement->execute([(int)$identity['application_pk'], $identity['history_epoch'], $command['commandId']]); $receipt = $receiptStatement->fetch(PDO::FETCH_ASSOC);
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash) || !hash_equals((string)$receipt['public_id'], $publicId) || (string)$receipt['expected_revision'] !== $command['expectedRevision'] || (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration'])) { $pdo->rollBack(); return ['status'=>409]; }
@@ -77,12 +79,18 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'client\' AND public_id=?' . $lock); $stateStatement->execute([$publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$live || !$state || (int)$state['present'] !== 1 || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash('client', $live))) { $pdo->rollBack(); return ['status'=>409]; }
         if ((string)$state['revision'] !== $command['expectedRevision']) { $pdo->rollBack(); return ['status'=>409]; }
+        if ($preservePortalIdentity) {
+            $binding=$pdo->prepare("SELECT external_id FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type='client' AND public_id=? AND status='active' AND resource_revision=? AND resource_projection_sha256=?".$lock);
+            $binding->execute([(int)$identity['application_pk'],$publicId,$command['expectedRevision'],$state['projection_sha256']]);
+            if ($binding->fetchColumn()===false) { $pdo->rollBack(); return ['status'=>409]; }
+            \App\Services\PortalContactIdentityPolicy::preserveExisting($pdo,(int)$live['id'],$identity,$command['commandId'],$requestHash);
+        }
         $profile = $command['profile'];
         $profileFields = ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']];
         $hasProfileChange = false;
         foreach ($profileFields as $field => $value) if ((string)($live[$field] ?? '') !== $value) { $hasProfileChange = true; break; }
         if ($hasProfileChange) {
-            (new ClientProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'organization_id'=>(int)($live['organization_id'] ?? 0), 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'address_id'=>(int)($currentAddress['id'] ?? 0), 'actor_id'=>0], false);
+            (new ClientProfileMutationService())->mutate($pdo, (int)$live['id'], ['name'=>$profile['name'], 'email'=>$profile['email'], 'phone'=>$profile['phone'], 'organization_id'=>(int)($live['organization_id'] ?? 0), 'notes'=>(string)($live['notes'] ?? ''), 'address'=>['address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']], 'google_place_id'=>(string)($currentAddress['google_place_id'] ?? ''), 'address_label'=>(string)($currentAddress['label'] ?? 'Billing address'), 'address_id'=>(int)($currentAddress['id'] ?? 0), 'actor_id'=>0], false, $preservePortalIdentity);
         }
         $resultStateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'client\' AND public_id=?' . $lock); $resultStateStatement->execute([$publicId]); $result = $resultStateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$result || (int)$result['present'] !== 1 || !api_v2_directory_client_profile_positive((string)$result['revision'])) throw new RuntimeException('Client directory result unavailable');
