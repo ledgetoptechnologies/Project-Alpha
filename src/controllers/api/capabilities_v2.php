@@ -91,6 +91,7 @@ try {
         'projects_adoption_candidates' => api_v2_enabled('APP_API_V2_PROJECTS_ADOPTION_CANDIDATES_ENABLED'),
         'catalog_inventory' => api_v2_enabled('APP_API_V2_CATALOG_INVENTORY_ENABLED'),
         'financial_documents' => api_v2_enabled('APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED'),
+        'financial_summary' => true,
     ];
     echo json_encode(api_v2_capabilities_payload($identity, $requestId, api_normalize_scopes($key['scopes'] ?? ''), $features), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

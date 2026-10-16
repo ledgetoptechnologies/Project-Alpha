@@ -115,6 +115,11 @@ jobs:
           API_V2_FINANCIAL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
         run: node scripts/run-api-v2-financial-http-mysql.mjs
 
+      - name: MySQL company financial summary HTTP and snapshot regressions
+        env:
+          API_V2_FINANCIAL_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: node scripts/run-api-v2-company-financial-summary-mysql.mjs
+
       - name: MySQL concurrent API-key rate-limit regressions
         shell: pwsh
         env:
