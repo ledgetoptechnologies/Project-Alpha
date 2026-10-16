@@ -489,7 +489,8 @@ if (!empty($smtpConfigKeys)) {
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)'
     );
     foreach ($smtpConfigKeys as $key => $val) {
-        $stmtConfig->execute([$key, $val]);
+        // Optional integration fields can be cleared, but app_config values are NOT NULL.
+        $stmtConfig->execute([$key, (string)($val ?? '')]);
     }
 
     if (!empty($settings['smtp_host'])) {
