@@ -200,15 +200,31 @@ function api_v2_capabilities_payload(array $identity, string $requestId, array $
             ['financial.documents.read', '/api/v2/financial-documents'],
         ],
     ];
+    // These describe preconditions enforced by the corresponding parsers and
+    // writers. Creation has no existing-resource revision. Directory refresh
+    // uses prior/live revisions; relationship/contact commands use typed revisions.
+    $revisionFeatures = [
+        'directory_binding', 'directory_binding_refresh', 'directory_binding_refresh_reconciliation',
+        'directory_organization_write', 'directory_client_write', 'directory_unit_write',
+        'directory_client_archive', 'directory_client_restore', 'directory_organization_archive',
+        'directory_organization_restore', 'directory_unit_archive', 'directory_unit_restore',
+        'directory_unit_contacts_write', 'directory_relationship_write', 'directory_binding_revoke',
+        'projects_complete', 'projects_cancel', 'projects_archive', 'projects_restore',
+        'projects_write', 'projects_binding', 'projects_binding_refresh',
+    ];
+    $publicIdFeatures = ['directory_binding', 'directory_binding_revoke', 'projects_binding', 'projects_binding_refresh'];
     foreach ($definitions as $feature => $routes) {
         if (($features[$feature] ?? false) !== true) continue;
         foreach ($routes as $route) {
             [$scope, $path] = $route;
-            $endpoints[] = [
+            $endpoint = [
                 'method' => $route[2] ?? 'GET', 'path' => $path, 'requiredCapability' => $scope,
                 'requiresSourceInstanceId' => true, 'requiresApplicationId' => true,
                 'requiresHistoryEpoch' => true,
             ];
+            if (in_array($feature, $revisionFeatures, true)) $endpoint['requiresExpectedRevision'] = true;
+            if (in_array($feature, $publicIdFeatures, true)) $endpoint['requiresExpectedPublicId'] = true;
+            $endpoints[] = $endpoint;
             if (in_array($scope, $keyScopes, true) && !in_array(['name' => $scope], $granted, true)) $granted[] = ['name' => $scope];
         }
     }

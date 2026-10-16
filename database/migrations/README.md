@@ -312,3 +312,12 @@ identities and currencies for invoices, contracts and project invoices. Its
 backfills preserve existing document timestamps and financial/public-link data.
 It enables no route or scope. See `docs/admin/api-v2-financial-documents.md` for
 the separately gated read-only projection and validation requirements.
+## Directory binding generation compatibility (0108)
+
+`0108_api_v2_directory_binding_generation_fence.sql` appends nullable expected/result
+authorization generations to directory binding receipts. Historical rows remain
+NULL; new modern receipts must store both values with an exact single increment.
+The existing receipt identity and history-epoch keys are unchanged. This supports
+five-field binding commands with compare-and-swap and durable acknowledgement
+replay while preserving legacy four-field callers. Apply the normal migration
+chain before deploying the modern binding handler.

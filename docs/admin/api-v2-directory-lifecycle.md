@@ -12,6 +12,17 @@ is available only to an application-bound API key with its explicit scope. The l
 scope never authorizes these routes. Every request also carries the provisioned
 source-instance, application, and history-epoch headers.
 
+Existing-directory binding accepts the modern five-field envelope
+`commandId`, `externalId`, `expectedPublicId`, `expectedRevision`, and
+`expectedAuthorizationGeneration`. The last field fences the application
+generation and is acknowledged as the stored `result.authorizationGeneration`
+after its single increment. Replaying the same command returns that original
+generation, even if other authorized operations have advanced the live value.
+Migration `0108_api_v2_directory_binding_generation_fence.sql` adds the nullable
+receipt fields without inventing evidence for historical commands. Legacy
+four-field binding callers retain their original response shape. Both forms
+still require the existing exact resource, binding, identity and scope checks.
+
 Command receipts are scoped to that history epoch. Rotation preserves prior
 receipts as audit history, but a command ID from an earlier epoch can never
 replay its old resource or binding result in the replacement epoch.

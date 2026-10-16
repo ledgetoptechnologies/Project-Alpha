@@ -299,6 +299,92 @@ final class ApiV2DirectoryBindingLifecycleMySqlTest extends TestCase
         self::assertSame('6', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=4')->fetchColumn());
     }
 
+    private function applyBindingGenerationMigration(): void
+    {
+        $sql = (string) file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0108_api_v2_directory_binding_generation_fence.sql');
+        $this->first->exec($sql);
+    }
+
+    private function modernBindingCommand(): array
+    {
+        return ['commandId'=>'423e4567-e89b-42d3-a456-426614174000', 'externalId'=>'native/modern',
+            'expectedPublicId'=>str_repeat('a',32), 'expectedRevision'=>'1', 'expectedAuthorizationGeneration'=>'0'];
+    }
+
+    public function testModernBindingUsesDurableGenerationAndReplaysAfterAnotherAuthorizationChangeOnMySql(): void
+    {
+        $this->applyBindingGenerationMigration();
+        $this->first->exec('DELETE FROM api_v2_directory_external_bindings');
+        $command = $this->modernBindingCommand();
+        $first = \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'first');
+        self::assertSame(200, $first['status']); self::assertFalse($first['payload']['replayed']);
+        self::assertSame('1', $first['payload']['result']['authorizationGeneration']);
+        self::assertSame(['0','1'], array_map('strval', $this->first->query('SELECT expected_authorization_generation,result_authorization_generation FROM api_v2_directory_binding_command_receipts')->fetch(PDO::FETCH_NUM)));
+        $this->second->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=2');
+        $again = \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'replay');
+        self::assertSame(200, $again['status']); self::assertTrue($again['payload']['replayed']);
+        self::assertSame('1', $again['payload']['result']['authorizationGeneration']);
+        self::assertSame('2', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', array_replace($command, ['expectedAuthorizationGeneration'=>'2']), 7, $this->headers(), 'changed')['status']);
+    }
+
+    public function testModernBindingSerializesAgainstAnotherConnectionAndRejectsStaleGenerationOnMySql(): void
+    {
+        $this->applyBindingGenerationMigration(); $this->first->exec('DELETE FROM api_v2_directory_external_bindings');
+        $this->first->exec('SET SESSION innodb_lock_wait_timeout=1');
+        $this->second->beginTransaction();
+        $this->second->query('SELECT authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=3 FOR UPDATE')->fetchColumn();
+        $command = $this->modernBindingCommand();
+        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'locked')['status']);
+        self::assertFalse($this->first->inTransaction());
+        self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
+        $this->second->rollBack();
+        self::assertSame(200, \api_v2_directory_binding_command_write($this->first, 'client', $command, 7, $this->headers(), 'accepted')['status']);
+        $stale = array_replace($command, ['commandId'=>'523e4567-e89b-42d3-a456-426614174000']);
+        self::assertSame(409, \api_v2_directory_binding_command_write($this->second, 'client', $stale, 7, $this->headers(), 'stale')['status']);
+        self::assertSame(1, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame('1', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+    }
+
+    public function testModernReceiptFailureRollsBackBindingAndGenerationOnMySql(): void
+    {
+        $this->applyBindingGenerationMigration(); $this->first->exec('DELETE FROM api_v2_directory_external_bindings');
+        $this->first->exec("CREATE TRIGGER fail_modern_receipt BEFORE INSERT ON api_v2_directory_binding_command_receipts FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic receipt failure'");
+        self::assertSame(409, \api_v2_directory_binding_command_write($this->first, 'client', $this->modernBindingCommand(), 7, $this->headers(), 'failure')['status']);
+        self::assertFalse($this->first->inTransaction());
+        self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_external_bindings')->fetchColumn());
+        self::assertSame(0, (int)$this->first->query('SELECT COUNT(*) FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+        self::assertSame('0', (string)$this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+    }
+
+    public function testGenerationMigrationPreservesLegacyReceiptsAndFourFieldReplayOnMySql(): void
+    {
+        $legacy = $this->modernBindingCommand(); unset($legacy['expectedAuthorizationGeneration']);
+        $this->first->exec('DELETE FROM api_v2_directory_external_bindings');
+        $before = \api_v2_directory_binding_command_write($this->first, 'client', $legacy, 7, $this->headers(), 'legacy');
+        self::assertSame(200, $before['status']); self::assertArrayNotHasKey('authorizationGeneration', $before['payload']['result']);
+        $receipt = $this->first->query('SELECT * FROM api_v2_directory_binding_command_receipts')->fetch(PDO::FETCH_ASSOC);
+        $generation = $this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn();
+        $this->applyBindingGenerationMigration();
+        $after = $this->first->query('SELECT * FROM api_v2_directory_binding_command_receipts')->fetch(PDO::FETCH_ASSOC);
+        self::assertNull($after['expected_authorization_generation']); self::assertNull($after['result_authorization_generation']);
+        unset($after['expected_authorization_generation'], $after['result_authorization_generation']);
+        self::assertSame($receipt, $after);
+        self::assertSame($generation, $this->first->query('SELECT authorization_generation FROM api_v2_directory_authorization_state')->fetchColumn());
+        $replay = \api_v2_directory_binding_command_write($this->first, 'client', $legacy, 7, $this->headers(), 'legacy-replay');
+        self::assertSame(200, $replay['status']); self::assertTrue($replay['payload']['replayed']);
+        self::assertArrayNotHasKey('authorizationGeneration', $replay['payload']['result']);
+        foreach (['expected_authorization_generation=0', 'result_authorization_generation=1',
+            'expected_authorization_generation=0,result_authorization_generation=2',
+            'expected_authorization_generation=9223372036854775807,result_authorization_generation=9223372036854775807'] as $invalidPair) {
+            try { $this->first->exec('UPDATE api_v2_directory_binding_command_receipts SET ' . $invalidPair); self::fail('Invalid durable generation pair was accepted.'); }
+            catch (PDOException $error) { self::assertSame(3819, (int)($error->errorInfo[1] ?? 0)); }
+        }
+        self::assertNull($this->first->query('SELECT expected_authorization_generation FROM api_v2_directory_binding_command_receipts')->fetchColumn());
+    }
+
     private function headers(): array
     {
         return ['source' => '123e4567-e89b-42d3-a456-426614174000', 'application' => '223e4567-e89b-42d3-a456-426614174000', 'epoch' => '323e4567-e89b-42d3-a456-426614174000'];
