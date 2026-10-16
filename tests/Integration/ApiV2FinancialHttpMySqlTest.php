@@ -52,6 +52,27 @@ INSERT INTO public_links VALUES(1,'synthetic_invoice_token_123','invoice',10,NUL
             $page=json_decode($first['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame($first['headers']['x-request-id'],$page['requestId']);self::assertSame(2,$page['snapshot']['documentCount']);self::assertSame('pending',$page['documents'][0]['status']);self::assertNotNull($page['documents'][0]['actionUrl']);
             $next=$this->get($base,'correct','selectorType=client&externalId=client%2Fexact&limit=1&cursor='.rawurlencode($page['nextCursor']));self::assertSame(200,$next['status']);$second=json_decode($next['body'],true,512,JSON_THROW_ON_ERROR);self::assertSame('unpaid',$second['documents'][0]['status']);self::assertNotNull($second['documents'][0]['actionUrl']);self::assertNull($second['nextCursor']);self::assertSame($page['snapshot']['sha256'],$second['snapshot']['sha256']);
             self::assertSame($before,$pdo->query('SELECT * FROM public_links ORDER BY id')->fetchAll());
+            // public/index.php dispatches capabilities before Composer/autoload.
+            // A missing optional policy table must hide only the neutral route,
+            // never turn authenticated capability discovery into a 503.
+            $contactPath='/api/v2/directory/clients/{publicId}/contact-profile/commands';
+            $capabilities=$this->get($base,'correct','',false,'/api/v2/capabilities');
+            self::assertSame(200,$capabilities['status'],$capabilities['body']);
+            self::assertStringContainsString('no-store',$capabilities['headers']['cache-control']);
+            self::assertArrayNotHasKey('set-cookie',$capabilities['headers']);
+            $payload=json_decode($capabilities['body'],true,512,JSON_THROW_ON_ERROR);
+            self::assertSame('123e4567-e89b-42d3-a456-426614174000',$payload['sourceInstanceId']);
+            self::assertSame('223e4567-e89b-42d3-a456-426614174000',$payload['applicationId']);
+            self::assertSame('323e4567-e89b-42d3-a456-426614174000',$payload['historyEpoch']);
+            self::assertSame([] ,array_values(array_filter($payload['implementedEndpoints'],fn(array $endpoint):bool=>$endpoint['path']===$contactPath)));
+            $pdo->exec('CREATE TABLE portal_client_contact_identity_policy(client_id BIGINT PRIMARY KEY)');
+            $capabilities=$this->get($base,'correct','',false,'/api/v2/capabilities');
+            self::assertSame(200,$capabilities['status'],$capabilities['body']);
+            $payload=json_decode($capabilities['body'],true,512,JSON_THROW_ON_ERROR);
+            self::assertSame([['method'=>'POST','path'=>$contactPath,'requiredCapability'=>'directory.clients.write',
+                'requiresSourceInstanceId'=>true,'requiresApplicationId'=>true,'requiresHistoryEpoch'=>true,'requiresExpectedRevision'=>true]],
+                array_values(array_filter($payload['implementedEndpoints'],fn(array $endpoint):bool=>$endpoint['path']===$contactPath)));
+            self::assertSame($before,$pdo->query('SELECT * FROM public_links ORDER BY id')->fetchAll());
             $pdo->exec("UPDATE api_keys SET revoked_at=NOW() WHERE key_prefix='correct'");self::assertSame(401,$this->get($base,'correct')['status']);
         });
     }
@@ -59,14 +80,14 @@ INSERT INTO public_links VALUES(1,'synthetic_invoice_token_123','invoice',10,NUL
     {
         $socket=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);if(!$socket)throw new \RuntimeException('Loopback reservation failed');$address=stream_socket_get_name($socket,false);fclose($socket);
         preg_match('/port=([0-9]+)/',(string)getenv('API_V2_FINANCIAL_MYSQL_DSN'),$port);
-        $env=getenv();$env['DB_HOST']='127.0.0.1;port='.$port[1];$env['MYSQL_DATABASE']=(string)getenv('API_V2_FINANCIAL_MYSQL_DATABASE');$env['MYSQL_USER']='root';$env['MYSQL_PASSWORD']=(string)getenv('API_V2_FINANCIAL_MYSQL_PASSWORD');$env['APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED']=$enabled?'true':'false';$env['APP_SKIP_DB_CONFIG']='1';
+        $env=getenv();$env['DB_HOST']='127.0.0.1;port='.$port[1];$env['MYSQL_DATABASE']=(string)getenv('API_V2_FINANCIAL_MYSQL_DATABASE');$env['MYSQL_USER']='root';$env['MYSQL_PASSWORD']=(string)getenv('API_V2_FINANCIAL_MYSQL_PASSWORD');$env['APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED']=$enabled?'true':'false';$env['APP_SKIP_DB_CONFIG']='1';$env['APP_API_V2_DIRECTORY_CLIENTS_WRITE_ENABLED']='true';
         $log=tmpfile();$process=proc_open([PHP_BINARY,'-S',$address,'-t','public','public/index.php'],[0=>['pipe','r'],1=>$log,2=>$log],$pipes,dirname(__DIR__,2),$env,['bypass_shell'=>true]);if(!is_resource($process))throw new \RuntimeException('Local PHP server unavailable');fclose($pipes[0]);
         try{$ready=false;for($i=0;$i<50;$i++){if(!proc_get_status($process)['running'])break;$probe=@stream_socket_client('tcp://'.$address,$errno,$error,0.1);if($probe){fclose($probe);$ready=true;break;}usleep(100000);}self::assertTrue($ready,'Loopback server did not start');$test('http://'.$address);}
         finally{proc_terminate($process);proc_close($process);fclose($log);}
     }
-    private function get(string $base,?string $token,string $query='selectorType=client&externalId=client%2Fexact',bool $wrongIdentity=false):array
+    private function get(string $base,?string $token,string $query='selectorType=client&externalId=client%2Fexact',bool $wrongIdentity=false,string $path='/api/v2/financial-documents'):array
     {
         $headers=['X-PA-Source-Instance-ID: '.($wrongIdentity?'wrong':'123e4567-e89b-42d3-a456-426614174000'),'X-PA-Application-ID: 223e4567-e89b-42d3-a456-426614174000','X-PA-History-Epoch: 323e4567-e89b-42d3-a456-426614174000'];if($token!==null)$headers[]='Authorization: Bearer '.$token;
-        $body=file_get_contents($base.'/api/v2/financial-documents?'.$query,false,stream_context_create(['http'=>['method'=>'GET','header'=>implode("\r\n",$headers),'ignore_errors'=>true,'follow_location'=>0,'timeout'=>5]]));$raw=$http_response_header;preg_match('/\s([0-9]{3})\s/',$raw[0],$status);$parsed=[];foreach(array_slice($raw,1)as$line){if(str_contains($line,':')){[$key,$value]=explode(':',$line,2);$parsed[strtolower($key)]=trim($value);}}return['status'=>(int)$status[1],'headers'=>$parsed,'body'=>$body];
+        $body=file_get_contents($base.$path.'?'.$query,false,stream_context_create(['http'=>['method'=>'GET','header'=>implode("\r\n",$headers),'ignore_errors'=>true,'follow_location'=>0,'timeout'=>5]]));$raw=$http_response_header;preg_match('/\s([0-9]{3})\s/',$raw[0],$status);$parsed=[];foreach(array_slice($raw,1)as$line){if(str_contains($line,':')){[$key,$value]=explode(':',$line,2);$parsed[strtolower($key)]=trim($value);}}return['status'=>(int)$status[1],'headers'=>$parsed,'body'=>$body];
     }
 }
