@@ -44,6 +44,7 @@ final class FinancialSchedulingTest extends TestCase
         $backup = file_get_contents($this->root . '/src/cron/backup_database.php');
         $backupPage = file_get_contents($this->root . '/src/views/pages/settings/backup.php');
         $entrypoint = file_get_contents($this->root . '/cron/entrypoint.sh');
+        $executionProfile = file_get_contents($this->root . '/cron/execution-profile.sh');
         $environmentHelper = file_get_contents($this->root . '/cron/entrypoint-encryption-key.sh');
         $crontab = file_get_contents($this->root . '/cron/crontab');
         $compose = file_get_contents($this->root . '/docker-compose.yml');
@@ -65,8 +66,9 @@ final class FinancialSchedulingTest extends TestCase
         self::assertStringContainsString("printf 'export %s=%q\\n'", (string)$environmentHelper);
         self::assertStringContainsString("config_key='timezone'", (string)$entrypoint);
         self::assertStringContainsString('/etc/localtime', (string)$entrypoint);
-        self::assertStringContainsString('backup_database.php --scheduled', (string)$entrypoint);
-        self::assertStringContainsString('stripe_reconciliation.php --startup', (string)$entrypoint);
+        self::assertStringContainsString('cron_run_startup_jobs "$CRON_EXECUTION_PROFILE" /var/www/src/cron', (string)$entrypoint);
+        self::assertStringContainsString('backup_database.php" --scheduled', (string)$executionProfile);
+        self::assertStringContainsString('stripe_reconciliation.php" --startup', (string)$executionProfile);
         self::assertStringContainsString('project-alpha:cron-latest', (string)$compose);
         self::assertStringNotContainsString('cron-0.5.0-rc1', (string)$compose);
     }
