@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source /usr/local/lib/project-alpha/cron-execution-profile.sh
+# Validate before key loading, filesystem setup, or any PHP job.
+CRON_EXECUTION_PROFILE="$(cron_execution_profile "$@")"
+cron_install_execution_profile "$CRON_EXECUTION_PROFILE" /usr/local/share/project-alpha /etc/cron.d/project-alpha
+
 CONFIG_DIR="/var/www/config"
 # The web service owns initial key generation in the shared config volume.
 # Wait briefly for a delayed shared-volume write, but never invent a key that
@@ -114,11 +119,7 @@ grep -vE '^(export[[:space:]]+)?TZ=' "$ENV_FILE" > /tmp/project-alpha-environmen
 printf 'export TZ=%q\n' "$TZ" >> /tmp/project-alpha-environment
 mv /tmp/project-alpha-environment "$ENV_FILE"
 
-echo "[cron-entrypoint] Running startup scheduled backup check..."
-php /var/www/src/cron/backup_database.php --scheduled || echo "[cron-entrypoint] Startup scheduled backup check failed; cron will retry at the next hourly check."
-
-echo "[cron-entrypoint] Running startup Stripe reconciliation..."
-php /var/www/src/cron/stripe_reconciliation.php --startup || echo "[cron-entrypoint] Startup Stripe reconciliation failed; cron will continue."
+cron_run_startup_jobs "$CRON_EXECUTION_PROFILE" /var/www/src/cron
 
 echo "[cron-entrypoint] Starting cron..."
 exec cron -f

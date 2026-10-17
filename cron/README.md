@@ -4,6 +4,32 @@ The cron image runs Project Alpha's scheduled PHP jobs independently from Apache
 
 On container startup, the entrypoint runs a scheduled backup catch-up check and `stripe_reconciliation.php --startup` before starting cron. The backup check creates today's missing backup when the configured backup time has already passed. Stripe reconciliation catches recent payments after downtime, while the normal six-hour schedule continues to reconcile missed webhooks.
 
+## Portal-only staging profile
+
+Use `command: ["entrypoint.sh", "portal-only"]` to schedule only
+`reconcile_client_portal.php` and `send_portal_projection_outbox.php`, once per
+minute. This profile skips the startup backup and Stripe reconciliation and
+installs no financial, email, backup, or other jobs. It uses the existing cron
+daemon, database settings, shared configuration volume, and non-generating
+encryption key loader. A missing or mismatched persisted key stops startup.
+The portal producer and delivery settings must still be enabled and configured;
+the profile does not change application permissions or configuration.
+
+With the published Compose installation (after setting its normal inline
+database credentials), the included optional override selects this profile:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.portal-only.yml up -d cron
+```
+
+The override keeps the normal `latest` and `cron-latest` tags and needs no new
+environment file. An existing staging stack with only `db` and `web` must first
+add the published `cron` service with the same database settings and shared
+configuration volume. No argument, or explicit `full`, retains the full
+production schedule and startup jobs. Unknown profiles or extra arguments fail
+before key loading or job execution. Pull a cron image containing this profile
+before selecting it.
+
 ## Installed Schedule
 
 | Local schedule | Script | Purpose |

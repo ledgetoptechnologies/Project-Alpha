@@ -18,8 +18,14 @@ jobs:
       - name: Validate canonical Compose configuration
         run: docker compose config >/tmp/compose.yml
 
+      - name: Validate portal-only Compose override
+        run: docker compose -f docker-compose.yml -f docker-compose.portal-only.yml config --quiet
+
       - name: Verify scheduled-worker shared encryption key
         run: bash cron/tests/entrypoint-encryption-key-test.sh
+
+      - name: Verify cron execution profile isolation
+        run: bash cron/tests/execution-profile-test.sh
 
       - name: Build CI images
         run: |
@@ -68,6 +74,9 @@ jobs:
             echo "Cron reported DB did not become available"; echo "$logs"; exit 1
           fi
           echo "CRON DB OK"
+
+      - name: ASSERT real portal-only cron startup isolation
+        run: bash cron/tests/portal-only-compose-test.sh
 
       - name: PHP syntax check
         run: |
