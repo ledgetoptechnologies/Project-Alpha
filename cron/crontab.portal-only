@@ -1,0 +1,7 @@
+# Portal-only profile: no financial, email, backup, or other scheduled jobs.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CRON_LOG=/var/www/config/logs/cron/cron.log
+
+* * * * * root . /etc/environment && php /var/www/src/cron/reconcile_client_portal.php >> $CRON_LOG 2>&1
+* * * * * root . /etc/environment && php /var/www/src/cron/send_portal_projection_outbox.php >> $CRON_LOG 2>&1

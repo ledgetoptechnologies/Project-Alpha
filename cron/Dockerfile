@@ -47,13 +47,16 @@ RUN chown -R root:root /var/www && chmod -R 755 /var/www
 
 # Install crontab into /etc/cron.d/ (requires user field in each entry)
 COPY crontab /etc/cron.d/project-alpha
+COPY crontab /usr/local/share/project-alpha/crontab.full
+COPY crontab.portal-only /usr/local/share/project-alpha/crontab.portal-only
 RUN sed -i 's/\r$//' /etc/cron.d/project-alpha && chmod 0644 /etc/cron.d/project-alpha
 
 # Entrypoint and its shared key resolver (waits for DB, exports env vars, starts cron)
 RUN mkdir -p /usr/local/lib/project-alpha
 COPY entrypoint-encryption-key.sh /usr/local/lib/project-alpha/cron-encryption-key.sh
+COPY execution-profile.sh /usr/local/lib/project-alpha/cron-execution-profile.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/cron-encryption-key.sh /usr/local/bin/entrypoint.sh \
+RUN sed -i 's/\r$//' /usr/local/lib/project-alpha/cron-encryption-key.sh /usr/local/lib/project-alpha/cron-execution-profile.sh /usr/local/bin/entrypoint.sh /usr/local/share/project-alpha/crontab.* \
     && chmod 0644 /usr/local/lib/project-alpha/cron-encryption-key.sh \
     && chmod +x /usr/local/bin/entrypoint.sh
 

@@ -1,0 +1,8 @@
+# Optional override for the published docker-compose.yml, which supplies cron's
+# existing database environment, shared configuration volume, and dependencies.
+services:
+  web:
+    image: "ghcr.io/ledgetoptechnologies/project-alpha:latest"
+  cron:
+    image: "ghcr.io/ledgetoptechnologies/project-alpha:cron-latest"
+    command: ["entrypoint.sh", "portal-only"]
