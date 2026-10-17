@@ -75,6 +75,9 @@ jobs:
           fi
           echo "CRON DB OK"
 
+      - name: ASSERT real portal-only cron startup isolation
+        run: bash cron/tests/portal-only-compose-test.sh
+
       - name: PHP syntax check
         run: |
           docker compose exec -T web sh -c \
