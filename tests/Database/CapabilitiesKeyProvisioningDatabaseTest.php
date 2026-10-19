@@ -180,4 +180,29 @@ final class CapabilitiesKeyProvisioningDatabaseTest extends TestCase
         self::assertSame($bytes,file_get_contents($plan['secretFile']));
         self::assertSame(1,$this->countKeys());
     }
+
+    public function testMandatoryAuditFailureHasOnlyGenericCliDiagnosticsAndRollsBackGrant(): void
+    {
+        $cli = dirname(__DIR__, 2) . '/bin/provision-api-v2-capabilities-key.php';
+        $path = $this->privateDirectory . '/plan.json';
+        $plan = ['version'=>1,'provisioning'=>$this->service()->dryRun($this->input()),
+            'secretFile'=>$this->privateDirectory.'/key.json'];
+        LocalOperatorKeyReceipt::writeNew($path,$plan);
+        $this->pdo->exec("CREATE TRIGGER fail_operator_audit BEFORE INSERT ON system_audit FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic-private-audit-detail'");
+        try {
+            [$exit,$output,$error] = $this->command([PHP_BINARY,$cli,'--apply','--confirm-create-capabilities-key',
+                '--plan-file='.$path,'--reviewed-plan-sha256='.hash_file('sha256',$path)]);
+        } finally {
+            $this->pdo->exec('DROP TRIGGER fail_operator_audit');
+        }
+        self::assertSame(1,$exit);
+        self::assertSame('',$output);
+        self::assertSame("Capabilities key provisioning held; reconcile the private receipt before retrying.\n",$error);
+        self::assertStringNotContainsString('SQLSTATE',$error);
+        self::assertStringNotContainsString('synthetic-private-audit-detail',$error);
+        $secret = json_decode(file_get_contents($plan['secretFile']),true)['secret'];
+        self::assertStringNotContainsString($secret,$output.$error);
+        self::assertSame(1,$this->countKeys()); self::assertSame(['4','5'],$this->generation());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM system_audit')->fetchColumn());
+    }
 }

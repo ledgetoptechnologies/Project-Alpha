@@ -8,7 +8,6 @@ use RuntimeException;
 use Throwable;
 
 require_once __DIR__ . '/../utils/api_v2_application_provisioning.php';
-require_once __DIR__ . '/../utils/audit.php';
 
 /** Local operator tool, not a web authentication or general key-management API. */
 final class ApiV2CapabilitiesKeyProvisioner
@@ -140,9 +139,15 @@ final class ApiV2CapabilitiesKeyProvisioner
             api_v2_application_existing_binding_advance_authorization_states($this->pdo,$states);
             $detail=['requestSha256'=>$plan['requestSha256'],'input'=>$input,'scope'=>self::SCOPE,'actor'=>self::operator(),
                 'directoryBefore'=>$states[$pk]['directory'],'projectBefore'=>$states[$pk]['project']];
-            // Existing audit_log is intentionally best effort for ordinary UI
-            // actions. Here its exact row must exist or the whole grant rolls back.
-            audit_log($this->pdo,self::ACTION,'api_key',$id,$detail,null);
+            // This grant requires an audit in the same transaction. Do not use
+            // the ordinary best-effort logger: its diagnostics can expose SQL
+            // details before the CLI's generic failure handler takes over.
+            try {
+                $insertAudit=$this->pdo->prepare('INSERT INTO system_audit (user_id,action,entity_type,entity_id,details,ip_address,user_agent) VALUES (NULL,?,?,?,?,NULL,NULL)');
+                $insertAudit->execute([self::ACTION,'api_key',$id,json_encode($detail,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)]);
+            } catch (Throwable) {
+                throw new RuntimeException('audit_required');
+            }
             $auditId=(int)$this->pdo->lastInsertId();
             $verify=$this->pdo->prepare("SELECT user_id,action,entity_type,entity_id,details FROM system_audit WHERE id=?");$verify->execute([$auditId]);$audit=$verify->fetch(PDO::FETCH_ASSOC);
             if (!$audit || $audit['user_id']!==null || $audit['action']!==self::ACTION || $audit['entity_type']!=='api_key'
