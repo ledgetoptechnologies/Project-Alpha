@@ -7,6 +7,8 @@ use App\Services\ApiV2CapabilitiesKeyProvisioner;
 use App\Services\LocalOperatorKeyReceipt;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use Tests\Fixtures\CapabilityLostAckPDO;
 use Tests\Fixtures\CapabilitiesKeyProvisioningCases;
 
@@ -15,6 +17,8 @@ require_once dirname(__DIR__, 2) . '/src/migrations/migration_lib.php';
 require_once dirname(__DIR__, 2) . '/src/services/LocalOperatorKeyReceipt.php';
 
 /** Destructive fixture reset is allowed only in an explicitly disposable DB. */
+#[RunTestsInSeparateProcesses]
+#[PreserveGlobalState(false)]
 final class CapabilitiesKeyProvisioningDatabaseTest extends TestCase
 {
     use CapabilitiesKeyProvisioningCases;

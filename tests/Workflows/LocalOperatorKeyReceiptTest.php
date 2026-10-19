@@ -2,9 +2,13 @@
 declare(strict_types=1);
 namespace Tests\Workflows;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use App\Services\LocalOperatorKeyReceipt;
 require_once dirname(__DIR__,2).'/src/services/ApiV2CapabilitiesKeyProvisioner.php';
 require_once dirname(__DIR__,2).'/src/services/LocalOperatorKeyReceipt.php';
+#[RunTestsInSeparateProcesses]
+#[PreserveGlobalState(false)]
 final class LocalOperatorKeyReceiptTest extends TestCase
 {
     private string $directory;

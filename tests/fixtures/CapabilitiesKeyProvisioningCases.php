@@ -109,4 +109,20 @@ trait CapabilitiesKeyProvisioningCases
         finally{unset($_SESSION['user']);}
         self::assertSame(1,$this->countKeys());
     }
+
+    public function testActivePhpSessionIsRejectedEvenWithoutAHumanUser(): void
+    {
+        self::assertSame(PHP_SESSION_NONE,session_status());
+        self::assertTrue(session_start());
+        self::assertSame(PHP_SESSION_ACTIVE,session_status());
+        try {
+            $this->service()->dryRun($this->input());
+            self::fail('An active PHP session must never gain local operator authority.');
+        } catch (RuntimeException $error) {
+            self::assertSame('local_root_cli_required',$error->getMessage());
+        } finally {
+            session_destroy();
+        }
+        self::assertSame(1,$this->countKeys());
+    }
 }

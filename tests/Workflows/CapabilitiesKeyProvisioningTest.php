@@ -2,10 +2,14 @@
 declare(strict_types=1);
 namespace Tests\Workflows;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use Tests\Fixtures\CapabilityLostAckPDO;
 use Tests\Fixtures\CapabilitiesKeyProvisioningCases;
 require_once dirname(__DIR__).'/fixtures/CapabilitiesKeyProvisioningCases.php';
 
+#[RunTestsInSeparateProcesses]
+#[PreserveGlobalState(false)]
 final class CapabilitiesKeyProvisioningTest extends TestCase
 {
     use CapabilitiesKeyProvisioningCases;
