@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 use App\Services\PayPeriodDeadlineService;
 
+require_once __DIR__ . '/../utils/workforce_availability.php';
+// Also protect already-installed cron schedules and manual invocation.
+if (!pa_workforce_enabled()) { exit(0); }
+
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../utils/cron_state.php';

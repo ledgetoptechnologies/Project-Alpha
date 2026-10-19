@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+require_once __DIR__ . '/../utils/workforce_availability.php';
+
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
@@ -87,14 +89,23 @@ final class ExternalOpsIntegrationService
                 throw new DomainException('Terminated workers must be restored separately before external operations access can be granted.');
             }
 
+            if (!pa_workforce_enabled() && (
+                ($account['worker_status'] ?? '') === 'inactive'
+                || ($account['employment_status'] ?? '') === 'inactive'
+            )) {
+                throw new DomainException('An inactive Workforce profile cannot be reactivated while Workforce is paused.');
+            }
+
             $accountReactivated = !empty($account['is_disabled'])
                 || ($account['worker_status'] ?? '') === 'inactive'
                 || ($account['employment_status'] ?? '') === 'inactive';
             if (!empty($account['is_disabled'])) {
                 $pdo->prepare('UPDATE users SET is_disabled=0,auth_version=auth_version+1 WHERE id=?')->execute([$userId]);
             }
-            $pdo->prepare("UPDATE worker_profiles SET status='active',ended_at=NULL WHERE user_id=? AND status='inactive'")->execute([$userId]);
-            $pdo->prepare("UPDATE employee_profiles SET employment_status='active',terminated_at=NULL WHERE user_id=? AND employment_status='inactive'")->execute([$userId]);
+            if (pa_workforce_enabled()) {
+                $pdo->prepare("UPDATE worker_profiles SET status='active',ended_at=NULL WHERE user_id=? AND status='inactive'")->execute([$userId]);
+                $pdo->prepare("UPDATE employee_profiles SET employment_status='active',terminated_at=NULL WHERE user_id=? AND employment_status='inactive'")->execute([$userId]);
+            }
             $pdo->prepare("UPDATE team_members SET is_active=1 WHERE user_id=? AND profile_source='pa'")->execute([$userId]);
 
             $roleKey = (string)$account['role'] === 'admin' ? 'role-admin' : 'role-operator';

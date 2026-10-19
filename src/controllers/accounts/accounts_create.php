@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/password_policy.php';
 require_once __DIR__ . '/../../utils/acl.php';
+require_once __DIR__ . '/../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../Modules/Timekeeping/WorkforceSettings.php';
 require_once __DIR__ . '/../../utils/external_ops.php';
 
@@ -83,7 +84,7 @@ $employeeProjectIds = array_values(array_unique(array_filter(
 )));
 $employeeProjectRates = (array)($_POST['employee_project_rates'] ?? []);
 
-if ($role === 'employee') {
+if (pa_workforce_enabled() && $role === 'employee') {
     if ($employeeFirstName === '') {
         header('Location: /?page=accounts&action=create&error=' . urlencode('Employee first name is required'));
         exit;
@@ -118,12 +119,12 @@ try {
     $stmt = $pdo->prepare('INSERT INTO users (email, username, password_hash, role, force_password_reset) VALUES (?, ?, ?, ?, ?)');
     $stmt->execute([$email, $username ?: null, $passwordHash, $role, $forceReset ? 1 : 0]);
     $newUserId = (int)$pdo->lastInsertId();
-    $displayName = $role === 'employee'
+    $displayName = pa_workforce_enabled() && $role === 'employee'
         ? trim($employeeFirstName . ' ' . $employeeLastName)
         : ($username !== '' ? $username : $email);
     $pdo->prepare("INSERT INTO team_members (user_id,display_name,email,is_active,profile_source) VALUES (?,?,?,?, 'pa')")
         ->execute([$newUserId,$displayName,$email,1]);
-    if ($role === 'employee') {
+    if (pa_workforce_enabled() && $role === 'employee') {
         $settings = \App\Modules\Timekeeping\WorkforceSettings::load($pdo);
         $currency = (string)$settings['currency'];
         $pdo->prepare(
@@ -161,7 +162,7 @@ try {
     // Authentication role and worker relationship are separate. Employee and
     // explicit owner roles receive a linked worker profile automatically;
     // administrators are not silently classified as owners.
-    if (in_array($role, ['employee', 'owner'], true)) {
+    if (pa_workforce_enabled() && in_array($role, ['employee', 'owner'], true)) {
         $settings ??= \App\Modules\Timekeeping\WorkforceSettings::load($pdo);
         $workerCurrency = (string)$settings['currency'];
         $workerRelationship = $role === 'owner' ? 'owner' : 'employee';

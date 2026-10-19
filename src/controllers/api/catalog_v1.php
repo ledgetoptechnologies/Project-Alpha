@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Services\CompensationRuleService;
 use App\Services\JobWorkPlanningService;
 
+require_once __DIR__ . '/../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/csrf.php';
@@ -27,6 +28,9 @@ if ($method !== 'GET') {
 }
 
 $action = trim((string)($_GET['action'] ?? $input['action'] ?? 'list'));
+if (!pa_workforce_enabled() && !in_array($action, ['list', 'detail'], true)) {
+    api_json_failure(404, 'workforce_unavailable', 'Workforce planning is temporarily unavailable.');
+}
 $canManage = in_array((string)($_SESSION['user']['role'] ?? ''), ['admin','owner'], true)
     || user_can($pdo, $userId, 'workforce.catalog.manage', 0);
 $compensation = new CompensationRuleService($pdo);

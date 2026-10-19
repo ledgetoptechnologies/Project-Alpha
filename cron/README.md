@@ -48,7 +48,7 @@ before selecting it.
 | Daily 05:00 | `sync_merchant_rate.php` | Calculate the observed Stripe processing rate |
 | Daily 06:00 | `process_audit_schedules.php` | Generate and deliver scheduled audit exports |
 | Daily 08:00 | `send_invoice_reminders.php` | Send enabled due and overdue reminders |
-| Every 5 minutes | `process_workforce_deadlines.php` | Send 4/2/1-hour workforce reminders and confirm completed time at cutoff |
+| Paused in code | `process_workforce_deadlines.php` | Workforce reminders and automatic confirmation are shelved; the crontab entry is commented out and direct invocation exits without database access |
 
 All output is appended to `/var/www/config/logs/cron/cron.log` in the cron container. A repository-owned, non-root sweep runs once per minute, rotating `.log` and `.txt` files at 10 MiB. Rotation uses rename-and-recreate so open writers finish safely; quiescent archives are integrity-checked, compressed, and retained according to the deployment policy.
 

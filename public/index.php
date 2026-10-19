@@ -309,6 +309,9 @@ $pageAliases = [
 ];
 $page = $pageAliases[$page] ?? $page;
 
+require_once __DIR__ . '/../src/utils/workforce_availability.php';
+pa_workforce_require_available($page, (string)($_GET['tab'] ?? $_POST['tab'] ?? ''));
+
 if ($page === 'api-ops-snapshot-v2' && !$syncContractV2Enabled) {
     header('Content-Type: application/json; charset=UTF-8');
     http_response_code(404);

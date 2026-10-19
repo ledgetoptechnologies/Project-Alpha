@@ -17,6 +17,7 @@
   <label style="display:flex;gap:10px;align-items:flex-start;margin:10px 0"><input type="checkbox" name="job_project_locations_enabled" value="1" <?php echo !empty($appConfig['job_project_locations_enabled'])?'checked':''; ?>><span><strong>Enable Job and Project location controls</strong><br><small>Jobs may have one default service location; Projects may have several. Existing manual document addresses are preserved.</small></span></label>
 </fieldset>
 
+<?php if (pa_workforce_enabled()): ?>
 <fieldset style="border:1px solid #e5e7eb;border-radius:8px;padding:16px">
   <legend style="padding:0 8px;font-weight:600">Time Access &amp; Approval</legend>
   <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Workers can access their own permitted time. Team-wide access requires both the matching ACL permission and a worker capability scope under People &amp; Business Units.</p>
@@ -75,6 +76,7 @@
     </label>
   </div>
 </fieldset>
+<?php endif; ?>
 
 <fieldset style="border:1px solid #e5e7eb;border-radius:8px;padding:16px">
   <legend style="padding:0 8px;font-weight:600">Mileage</legend>

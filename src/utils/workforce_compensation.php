@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/workforce_availability.php';
+
 use App\Services\CompensationRuleService;
 use App\Services\JobWorkPlanningService;
 
@@ -12,7 +14,7 @@ use App\Services\JobWorkPlanningService;
  */
 function workforce_release_invoice_paid(PDO $pdo, int $invoiceId, int $actorId = 0): array
 {
-    if ($invoiceId <= 0) return [];
+    if (!pa_workforce_enabled() || $invoiceId <= 0) return [];
     try {
         return (new JobWorkPlanningService($pdo, new CompensationRuleService($pdo)))
             ->releaseInvoicePaid($invoiceId, $actorId);

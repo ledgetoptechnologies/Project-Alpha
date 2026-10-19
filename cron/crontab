@@ -17,7 +17,8 @@ CRON_LOG=/var/www/config/logs/cron/cron.log
 * * * * * root . /etc/environment && php /var/www/src/cron/process_notification_relay.php >> $CRON_LOG 2>&1
 
 # Workforce deadline reminders and automatic confirmation - every 5 minutes
-*/5 * * * * root . /etc/environment && php /var/www/src/cron/process_workforce_deadlines.php >> $CRON_LOG 2>&1
+# Shelved pending a reviewed Workforce release:
+# */5 * * * * root . /etc/environment && php /var/www/src/cron/process_workforce_deadlines.php >> $CRON_LOG 2>&1
 
 # Rotate repository-owned system and cron logs at the 10 MiB threshold.
 * * * * * www-data . /etc/environment && php /var/www/src/cron/rotate_logs.php >> $CRON_LOG 2>&1

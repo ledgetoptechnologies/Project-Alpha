@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../../services/ProjectReceivablesSummaryService.php'
 require_once __DIR__ . '/../../../utils/project_files.php';
 require_once __DIR__ . '/../../../utils/public_project_links.php';
 require_once __DIR__ . '/../../../config/app.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 
 $projectId = (int)($_GET['id'] ?? 0);
 if ($projectId <= 0) {
@@ -50,6 +51,7 @@ $operationAssignees = [];
 $projectTasks = [];
 $taskAssignees = [];
 $planningLoadError = '';
+if (pa_workforce_enabled()) {
 try {
     $projectTeamStmt = $pdo->prepare('SELECT pa.user_id,pa.assigned_at,pa.ends_at,u.username,u.email,COALESCE(NULLIF(wp.display_name,\'\'),NULLIF(tm.display_name,\'\'),NULLIF(u.username,\'\'),u.email) AS display_name,COALESCE(NULLIF(wp.display_name,\'\'),NULLIF(tm.display_name,\'\'),NULLIF(u.username,\'\'),u.email) AS name FROM project_assignments pa JOIN users u ON u.id=pa.user_id LEFT JOIN worker_profiles wp ON wp.user_id=u.id LEFT JOIN team_members tm ON tm.user_id=u.id WHERE pa.project_id=? ORDER BY (pa.ends_at IS NOT NULL),name');
     $projectTeamStmt->execute([$projectId]);
@@ -72,10 +74,11 @@ try {
     $planningLoadError = 'Team and work planning is temporarily unavailable. The rest of the Project is still available.';
     error_log('[projects-details] planning query failed: ' . $error->getMessage());
 }
+} // Shelved planning must not query or modify Workforce records.
 $editOperationId=max(0,(int)($_GET['operation_id']??0));$editTaskId=max(0,(int)($_GET['task_id']??0));$editOperation=null;$editTask=null;
 foreach($projectOperations as $row)if((int)$row['id']===$editOperationId)$editOperation=$row;
 foreach($projectTasks as $row)if((int)$row['id']===$editTaskId)$editTask=$row;
-$canManageProjectWork = user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'projects.edit', 0) && user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'workforce.assignments.manage', 0);
+$canManageProjectWork = pa_workforce_enabled() && user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'projects.edit', 0) && user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'workforce.assignments.manage', 0);
 $canEditProjectStatus = user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'projects.edit', 0);
 
 // Fetch associated quotes
@@ -724,6 +727,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                 </div>
             <?php endif; ?>
 
+<?php if (pa_workforce_enabled()): ?>
             <div id="team-work" class="project-panel">
                 <div class="project-section-head"><div><h2>Team &amp; Work</h2><div class="project-muted">Project Team membership controls who may be assigned. External application access is managed separately in Custom Integrations.</div></div></div>
                 <?php if (!empty($_GET['saved'])): ?><div class="alert alert-success">Project work plan saved.</div><?php endif; ?>
@@ -748,6 +752,8 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                     <?php if($canManageProjectWork):?><form method="post" action="/?page=project/project-work-handler" class="project-work-form"><input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="action" value="save-task"><input type="hidden" name="project_id" value="<?php echo $projectId; ?>"><label class="project-field"><span>Task</span><input name="title" required maxlength="255"></label><label class="project-field"><span>Operation (optional)</span><select name="operation_id"><option value="">No Operation</option><?php foreach($projectOperations as $operation):?><option value="<?php echo (int)$operation['id']; ?>"><?php echo htmlspecialchars((string)$operation['title']); ?></option><?php endforeach;?></select></label><label class="project-field"><span>Status</span><select name="status"><?php foreach(\App\Services\OperationsPlanningService::TASK_STATUSES as $status):?><option value="<?php echo $status; ?>"><?php echo htmlspecialchars(ucwords(str_replace('_',' ',$status))); ?></option><?php endforeach;?></select></label><label class="project-field"><span>Due</span><input type="datetime-local" name="due_at"></label><fieldset class="project-field"><legend>Assignees</legend><?php foreach($activeProjectTeam as $member):?><label class="project-check"><input type="checkbox" name="assigned_user_ids[]" value="<?php echo (int)$member['user_id']; ?>"> <?php echo htmlspecialchars((string)($member['display_name']?:$member['username']?:$member['email'])); ?></label><?php endforeach;?></fieldset><label class="project-field project-work-wide"><span>Notes</span><textarea name="notes"></textarea></label><button class="btn btn-primary">Create Task</button></form><?php endif;?>
                 </details>
             </div>
+
+<?php endif; ?>
 
             <div id="project-files" class="project-panel">
                 <div class="project-section-head">

@@ -22,7 +22,7 @@ final class SettingsSavePersistenceTest extends TestCase
         self::assertSame(1, $replacements);
         file_put_contents($this->directory . '/src/controllers/settings_handler.php', $handler);
         foreach (['payment_methods.php', 'financial_reporting_currency.php', 'csrf.php', 'acl.php',
-            'upload_validator.php', 'audit.php', 'client_ip.php'] as $file) {
+            'upload_validator.php', 'audit.php', 'client_ip.php', 'workforce_availability.php'] as $file) {
             copy($root . '/src/utils/' . $file, $this->directory . '/src/utils/' . $file);
         }
         copy($root . '/tests/fixtures/settings-save-driver.php', $this->directory . '/driver.php');
@@ -77,6 +77,20 @@ final class SettingsSavePersistenceTest extends TestCase
         self::assertStringContainsString('Reporting currency must be an uppercase', $output);
         self::assertSame('', $this->database->query("SELECT config_value FROM app_config WHERE config_key='financial_base_currency'")->fetchColumn());
         self::assertSame('{}', file_get_contents($this->directory . '/config/settings.json'));
+    }
+
+    public function testWorkflowSavePreservesShelvedWorkforceSettings(): void
+    {
+        $this->database->exec("INSERT INTO app_config VALUES(0,'workforce_currency','CAD')");
+        file_put_contents($this->directory . '/config/settings.json', '{"workforce_currency":"CAD"}');
+        [$exit, $output] = $this->save(['tab' => 'workflow', 'default_mileage_rate' => '0.700',
+            'workforce_currency' => 'USD', 'workforce_allow_non_admin_time_management' => '1']);
+        self::assertSame(0, $exit, $output);
+        self::assertSame('CAD', $this->database->query("SELECT config_value FROM app_config WHERE config_key='workforce_currency'")->fetchColumn());
+        self::assertFalse($this->database->query("SELECT config_value FROM app_config WHERE config_key='workforce_allow_non_admin_time_management'")->fetchColumn());
+        $file = json_decode(file_get_contents($this->directory . '/config/settings.json'), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame('CAD', $file['workforce_currency']);
+        self::assertArrayNotHasKey('workforce_allow_non_admin_time_management', $file);
     }
 
     /** @return array{int,string} */

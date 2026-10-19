@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/acl.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../../utils/document_sender.php';
 require_once __DIR__ . '/../../../utils/worker_documents.php';
 require_once __DIR__ . '/../../../utils/external_ops.php';
@@ -384,6 +385,7 @@ try {
           </div>
         </div>
 
+<?php if (pa_workforce_enabled()): ?>
         <div id="employee-profile-panel" class="pa-edit-employee-panel" <?php echo $targetRole === 'employee' ? '' : 'hidden'; ?>>
           <h3 style="margin:0 0 8px;font-size:16px;">Employee Profile &amp; Workforce Access</h3>
           <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">The Employee role supplies the default self-service ACL. Employees see only their assigned projects and never direct client or invoice details.</p>
@@ -431,6 +433,7 @@ try {
           </div>
         </div>
 
+<?php endif; ?>
         <div class="pa-edit-actionbar">
           <button type="submit" style="padding:10px 16px;border-radius:8px;border:0;background:var(--nav-accent);color:#fff;font-weight:600;cursor:pointer;">Save Changes</button>
         </div>

@@ -83,23 +83,23 @@ jobs:
           docker compose exec -T web sh -c \
             "find /var/www/src -name '*.php' -exec php -l {} \\; 2>&1 | grep -v 'No syntax errors' && exit 1 || exit 0"
 
-      - name: ASSERT Workforce clean routes reach PA
+      - name: ASSERT shelved Workforce routes are unavailable
         run: |
           for path in time workforce approvals pay; do
             code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:1627/$path")
-            if [ "$code" = "404" ] || [ "$code" = "500" ]; then
+            if [ "$code" != "404" ]; then
               echo "/$path returned $code"
               exit 1
             fi
           done
           for path in time/action workforce/action approvals/action pay/action; do
             code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:1627/$path")
-            if [ "$code" = "404" ] || [ "$code" = "500" ]; then
+            if [ "$code" != "404" ]; then
               echo "/$path returned $code"
               exit 1
             fi
           done
-          echo "Workforce routes reach the PA front controller"
+          echo "Workforce routes are shelved by the PA front controller"
 
       - name: Composer validate
         run: docker compose exec -T web composer validate --strict --no-check-publish
