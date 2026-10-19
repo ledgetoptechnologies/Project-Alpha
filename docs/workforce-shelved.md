@@ -18,9 +18,13 @@ deadline cron line is commented out; its script also exits before opening a
 database so an older installed schedule cannot send reminders or confirm time.
 
 Quotes, contracts, invoices, payments, customer departments and ordinary service
-catalog reads remain available. The historical approved-time read used by invoice
-editors remains available under its existing authorization checks; no invoice or
-payment history is rewritten. Internal division settings are hidden, but retained
+catalog reads remain available. Invoice import selectors are paused, and stale
+tracked-time or allocated-mileage submissions are rejected before database
+bootstrap. Existing linked invoice lines remain read-only with their original
+amounts and associations; ordinary manual extras and hourly billing still work.
+Invoice saves do not synchronize Workforce or legacy time context while paused.
+Invoices with historical time/mileage cannot move to another client. No invoice
+or payment history is rewritten. Internal division settings are hidden, but retained
 historical IDs and existing authorization constraints are not erased or widened.
 
 Operations currently has inactive Workforce migration foundations only, with no

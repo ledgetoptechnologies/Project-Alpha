@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+require_once __DIR__ . '/../utils/workforce_availability.php';
+
 use App\Modules\Timekeeping\AuditRecorder;
 use DomainException;
 use PDO;
@@ -33,6 +35,7 @@ final class WorkTimeBillingContextService
         int $actorId,
         array $workTypeByBillingEntry = []
     ): int {
+        if (!\pa_workforce_enabled()) return 0;
         if ($invoiceId <= 0) {
             throw new DomainException('Choose an invoice before linking tracked time.');
         }

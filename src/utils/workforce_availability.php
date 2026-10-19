@@ -25,10 +25,6 @@ function pa_workforce_page_shelved(string $page, string $tab = ''): bool
     }
     $page = strtolower($page);
     $tab = strtolower($tab);
-    // Existing invoice editors may still consume historical approved time.
-    if ($page === 'time-tracking/unbilled') {
-        return false;
-    }
     if ($page === 'settings' && in_array($tab, pa_workforce_settings_tabs(), true)) {
         return true;
     }
@@ -39,7 +35,7 @@ function pa_workforce_page_shelved(string $page, string $tab = ''): bool
     }
     return in_array($page, [
         'api/workforce-v1', 'settings/workforce-catalog-handler',
-        'project/project-work-handler',
+        'project/project-work-handler', 'financial/mileage-unbilled',
     ], true);
 }
 
@@ -52,4 +48,24 @@ function pa_workforce_require_available(string $page, string $tab = ''): void
     header('Cache-Control: no-store');
     header('Content-Type: text/plain; charset=UTF-8');
     exit('Workforce is temporarily unavailable.');
+}
+
+/** Reject stale import forms before database/configuration bootstrap. */
+function pa_workforce_require_no_invoice_imports(array $post): void
+{
+    if (pa_workforce_enabled()) return;
+    $selected = static function ($value) use (&$selected): bool {
+        if (is_array($value)) {
+            foreach ($value as $entry) if ($selected($entry)) return true;
+            return false;
+        }
+        return $value !== null && $value !== false && trim((string)$value) !== '' && trim((string)$value) !== '0';
+    };
+    foreach (['time_entry_ids', 'time_entry_id', 'mileage_allocation_ids'] as $field) {
+        if (!$selected($post[$field] ?? null)) continue;
+        http_response_code(409);
+        header('Cache-Control: no-store');
+        header('Content-Type: application/json');
+        exit(json_encode(['success' => false, 'code' => 'workforce_imports_paused', 'message' => 'Tracked time and allocated mileage imports are temporarily unavailable.']));
+    }
 }

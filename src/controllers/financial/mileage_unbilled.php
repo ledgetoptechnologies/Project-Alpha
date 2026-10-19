@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../../utils/workforce_availability.php';
+pa_workforce_require_available('financial/mileage-unbilled');
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/api_response.php';
