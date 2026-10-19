@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Tests\Database;
 
 use App\Services\ApiV2CapabilitiesKeyProvisioner;
+use App\Services\LocalOperatorKeyReceipt;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Tests\Fixtures\CapabilityLostAckPDO;
@@ -11,6 +12,7 @@ use Tests\Fixtures\CapabilitiesKeyProvisioningCases;
 
 require_once dirname(__DIR__) . '/fixtures/CapabilitiesKeyProvisioningCases.php';
 require_once dirname(__DIR__, 2) . '/src/migrations/migration_lib.php';
+require_once dirname(__DIR__, 2) . '/src/services/LocalOperatorKeyReceipt.php';
 
 /** Destructive fixture reset is allowed only in an explicitly disposable DB. */
 final class CapabilitiesKeyProvisioningDatabaseTest extends TestCase
@@ -128,5 +130,54 @@ final class CapabilitiesKeyProvisioningDatabaseTest extends TestCase
         sort($results); self::assertSame(['created','held'], $results);
         self::assertSame(2,$this->countKeys()); self::assertSame(['5','6'],$this->generation());
         self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM system_audit')->fetchColumn());
+    }
+
+    public function testPreparedReceiptDefaultsToReconciliationAndRequiresExplicitResume(): void
+    {
+        $cli = dirname(__DIR__, 2) . '/bin/provision-api-v2-capabilities-key.php';
+        $path = $this->privateDirectory . '/plan.json';
+        $plan = ['version'=>1, 'provisioning'=>$this->service()->dryRun($this->input()),
+            'secretFile'=>$this->privateDirectory.'/key.json'];
+        LocalOperatorKeyReceipt::writeNew($path, $plan);
+        // Simulates process death after durable key storage, before DB work.
+        $vault = new LocalOperatorKeyReceipt($plan['secretFile']);
+        $vault->lock(); $material = $vault->create($plan); unset($vault);
+        $bytes = file_get_contents($plan['secretFile']);
+        $apply = [PHP_BINARY,$cli,'--apply','--confirm-create-capabilities-key',
+            '--plan-file='.$path,'--reviewed-plan-sha256='.hash_file('sha256',$path)];
+        [$exit,$output,$error] = $this->command($apply);
+        self::assertSame(3,$exit,$error);
+        self::assertSame('not_committed',json_decode($output,true)['state']);
+        self::assertSame(1,$this->countKeys()); self::assertSame(['4','5'],$this->generation());
+        $apply[] = '--resume-prepared';
+        [$exit,$output,$error] = $this->command($apply);
+        self::assertSame(0,$exit,$error);
+        self::assertSame('created',json_decode($output,true)['state']);
+        self::assertStringNotContainsString($material['secret'],$output.$error);
+        self::assertSame($bytes,file_get_contents($plan['secretFile']));
+        self::assertSame(hash('sha256',$material['secret']),$this->pdo->query('SELECT key_hash FROM api_keys WHERE id<>7')->fetchColumn());
+        self::assertSame(['5','6'],$this->generation());
+    }
+
+    public function testFailedDatabaseAttemptRetainsPrivateMaterialAndNoGrant(): void
+    {
+        $cli = dirname(__DIR__, 2) . '/bin/provision-api-v2-capabilities-key.php';
+        $path = $this->privateDirectory . '/plan.json';
+        $plan = ['version'=>1,'provisioning'=>$this->service()->dryRun($this->input()),
+            'secretFile'=>$this->privateDirectory.'/key.json'];
+        LocalOperatorKeyReceipt::writeNew($path,$plan);
+        $this->pdo->exec('UPDATE api_v2_project_authorization_state SET authorization_generation=6 WHERE application_pk=3');
+        $apply = [PHP_BINARY,$cli,'--apply','--confirm-create-capabilities-key',
+            '--plan-file='.$path,'--reviewed-plan-sha256='.hash_file('sha256',$path)];
+        [$exit,$output,$error] = $this->command($apply);
+        self::assertSame(1,$exit); self::assertFileExists($plan['secretFile']);
+        $bytes = file_get_contents($plan['secretFile']);
+        $secret = json_decode($bytes,true)['secret'];
+        self::assertStringNotContainsString($secret,$output.$error);
+        self::assertSame(1,$this->countKeys()); self::assertSame(['4','6'],$this->generation());
+        [$exit,$output,$error] = $this->command($apply);
+        self::assertSame(3,$exit); self::assertSame('not_committed',json_decode($output,true)['state']);
+        self::assertSame($bytes,file_get_contents($plan['secretFile']));
+        self::assertSame(1,$this->countKeys());
     }
 }
