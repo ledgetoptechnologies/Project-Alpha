@@ -98,8 +98,8 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         $revisionsBeforeRejected = $this->revisions();
         $rejected = $this->post('invalid-mode', '9');
         self::assertSame(0, $rejected['exit'], $rejected['stderr']);
-        self::assertStringContainsString('DomainException', $rejected['stderr']);
-        self::assertStringNotContainsString('Invalid document issuer choice.', $rejected['stderr']);
+        self::assertStringContainsString('DomainException', $rejected['log']);
+        self::assertStringNotContainsString('Invalid document issuer choice.', $rejected['log'] . $rejected['stderr']);
         self::assertSame($beforeRejected, $this->row(), 'Rejected issuer must roll back the entire invoice edit.');
         self::assertSame($revisionsBeforeRejected, $this->revisions());
         foreach (['email_delivery_log', 'public_links'] as $table) {
@@ -178,13 +178,25 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         // This subprocess is a disposable authenticated controller fixture, not a
         // login/session mechanism for a running PA installation. Browser CSRF and
         // sign-in acceptance are separate; this executes the actual save controller.
+        $log = tempnam(sys_get_temp_dir(), 'pa-issuer-test-');
+        self::assertNotFalse($log);
         $script='require '.var_export($root.'/vendor/autoload.php',true).';'
+            // Override the deployment's CLI log destination only in this child.
+            .'ini_set("log_errors","1");ini_set("error_log",'.var_export($log,true).');'
             .'$_SESSION=["user"=>["id"=>'.(int)$this->users[1].',"role"=>"admin"]];'
             .'$_POST='.var_export($post,true).';$_SERVER["REQUEST_METHOD"]="POST";'
             .'require '.var_export($root.'/src/controllers/invoice/invoices_update.php',true).';';
-        $process=proc_open([PHP_BINARY,'-r',$script],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);
-        self::assertIsResource($process);fclose($pipes[0]);$stdout=stream_get_contents($pipes[1]);$stderr=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);
-        return ['exit'=>proc_close($process),'stdout'=>$stdout,'stderr'=>$stderr];
+        try {
+            self::assertTrue(chmod($log, 0600));
+            $process=proc_open([PHP_BINARY,'-r',$script],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);
+            self::assertIsResource($process);fclose($pipes[0]);$stdout=stream_get_contents($pipes[1]);$stderr=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);
+            $exit=proc_close($process);
+            $diagnostics=file_get_contents($log);
+            self::assertNotFalse($diagnostics);
+            return ['exit'=>$exit,'stdout'=>$stdout,'stderr'=>$stderr,'log'=>$diagnostics];
+        } finally {
+            unlink($log);
+        }
     }
 
     private function row(): array
