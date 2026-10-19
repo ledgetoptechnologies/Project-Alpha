@@ -19,7 +19,7 @@ final class WorkforceShelvedTest extends TestCase
             self::assertFalse(pa_workforce_enabled());
             foreach (['workforce/time', 'workforce/action', 'workforce/contractor-invoice-download',
                 'api/workforce-v1', 'settings/workforce-catalog-handler',
-                'project/project-work-handler', 'time-tracking/start-timer'] as $page) {
+                'project/project-work-handler', 'time-tracking/start-timer', 'time-tracking/unbilled', 'financial/mileage-unbilled'] as $page) {
                 self::assertTrue(pa_workforce_page_shelved($page), $page);
             }
             foreach (pa_workforce_settings_tabs() as $tab) {
@@ -34,7 +34,7 @@ final class WorkforceShelvedTest extends TestCase
     {
         foreach (['invoice/invoices-create', 'invoice/invoices-update', 'public-doc',
             'quote/quotes-create', 'contract/contracts-create', 'project/projects-details',
-            'api/financial-summary', 'client/clients-update', 'time-tracking/unbilled'] as $page) {
+            'api/financial-summary', 'client/clients-update', 'financial/mileage-tracking-api'] as $page) {
             self::assertFalse(pa_workforce_page_shelved($page), $page);
         }
         self::assertFalse(pa_workforce_page_shelved('settings', 'workflow'));

@@ -1,6 +1,8 @@
 <?php
 // src/controllers/time-tracking/time_entries_unbilled.php
 // AJAX endpoint returning unbilled billable time entries as JSON
+require_once __DIR__ . '/../../utils/workforce_availability.php';
+pa_workforce_require_available('time-tracking/unbilled');
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/time_tracking_schema.php';

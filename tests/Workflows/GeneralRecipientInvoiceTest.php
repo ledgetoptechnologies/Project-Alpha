@@ -173,7 +173,7 @@ final class GeneralRecipientInvoiceTest extends TestCase
         self::assertStringContainsString("\$isGeneralRecipientInvoice ? 'readonly' : ''", $edit);
         self::assertStringContainsString('if (!$isGeneralRecipientInvoice)', $edit);
         self::assertStringContainsString('$changesPrivateRelationship', $update);
-        self::assertStringContainsString('if (!$isGeneralRecipientInvoice)', $update);
+        self::assertStringContainsString('if (pa_workforce_enabled() && !$isGeneralRecipientInvoice)', $update);
         self::assertStringContainsString('General-recipient invoices cannot include tracked time.', $eligibility);
     }
 

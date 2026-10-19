@@ -52,6 +52,6 @@ final class InvoiceWorkforceShelvedUiTest extends TestCase
         }
         self::assertStringContainsString('name="billing_mode" value="hourly"', $source);
         self::assertStringContainsString('foreach ($items as $it)', $source);
-        self::assertFalse(pa_workforce_page_shelved('time-tracking/unbilled'));
+        self::assertTrue(pa_workforce_page_shelved('time-tracking/unbilled'));
     }
 }

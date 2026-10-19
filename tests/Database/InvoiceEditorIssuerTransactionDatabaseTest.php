@@ -111,6 +111,60 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         self::assertNull($company['sent_at']);self::assertNull($company['finalized_at']);
     }
 
+    public function testShelvedHistoricalInvoiceExtrasSurviveActualControllerEditsWithoutWorkforceWrites(): void
+    {
+        $this->fixture();
+        $timeIds=[];$itemIds=[];$logId=0;$otherClient=0;
+        try {
+            for ($i=0;$i<4;$i++) {
+                $this->pdo->prepare("INSERT INTO invoice_items (invoice_id,item,quantity,unit_price,line_total,billing_unit,is_extra_charge) VALUES (?,'Historical source charge',3,2,?,'hour',1)")->execute([$this->invoice,$i===2?7:6]);
+                $itemIds[]=(int)$this->pdo->lastInsertId();
+            }
+            foreach ([0,1,2] as $i) {
+                $this->pdo->prepare('INSERT INTO time_entries (user_id,client_id,invoice_id,invoice_item_id,hours,rate,billed) VALUES (?,?,?,?,3,2,1)')->execute([$this->users[0],$this->client,$i===1?null:$this->invoice,$i===2?null:$itemIds[$i]]);
+                $timeIds[]=(int)$this->pdo->lastInsertId();
+            }
+            $this->pdo->prepare('UPDATE invoice_items SET time_entry_id=? WHERE id=?')->execute([$timeIds[2],$itemIds[2]]);
+            $this->pdo->prepare("INSERT INTO mileage_logs (client_id,trip_date,billed,invoice_id,invoice_item_id) VALUES (?,'2026-10-19',1,?,?)")->execute([$this->client,$this->invoice,$itemIds[3]]);
+            $logId=(int)$this->pdo->lastInsertId();
+            $this->pdo->prepare('INSERT INTO mileage_charge_allocations (mileage_log_id,client_id,billed,invoice_id,invoice_item_id,client_charge) VALUES (?,?,1,?,?,6)')->execute([$logId,$this->client,$this->invoice,$itemIds[3]]);
+            $allocationId=(int)$this->pdo->lastInsertId();
+            $this->pdo->prepare("INSERT INTO invoice_items (invoice_id,item,quantity,unit_price,line_total,is_extra_charge) VALUES (?,'Manual extra',1,5,5,1)")->execute([$this->invoice]);
+            $manualId=(int)$this->pdo->lastInsertId();
+            $snapshot=function()use($timeIds,$itemIds,$logId,$allocationId):array {
+                $result=[];
+                foreach (['invoice_items'=>$itemIds,'time_entries'=>$timeIds,'mileage_logs'=>[$logId],'mileage_charge_allocations'=>[$allocationId]] as $table=>$ids) {
+                    $q=$this->pdo->prepare('SELECT * FROM '.$table.' WHERE id IN ('.implode(',',array_fill(0,count($ids),'?')).') ORDER BY id');$q->execute($ids);$result[$table]=$q->fetchAll(PDO::FETCH_ASSOC);
+                }
+                return $result;
+            };
+            $before=$snapshot();
+            $workforceBefore=[];
+            foreach (['work_time_entries','work_billing_consumptions','work_approval_snapshots'] as $table) $workforceBefore[$table]=$this->pdo->query('SELECT * FROM '.$table.' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            $extras=['billing_mode'=>'hourly','extra_id'=>[$manualId,...$itemIds],'extra_item'=>['Manual extra','Forged source edit','Forged source edit','Forged source edit','Forged source edit'],'extra_qty'=>[1,9,9,9,9],'extra_price'=>[5,999,999,999,999]];
+            self::assertSame(0,$this->post('creator','0',$extras)['exit']);
+            self::assertSame('31.00',$this->row()['total']);
+            self::assertSame($before,$snapshot());
+            self::assertSame(6,(int)$this->pdo->query('SELECT COUNT(*) FROM invoice_items WHERE invoice_id='.$this->invoice)->fetchColumn());
+            $q=$this->pdo->query("SELECT id FROM invoice_items WHERE invoice_id=".$this->invoice." AND item='Manual extra'");$extras['extra_id'][0]=(int)$q->fetchColumn();$extras['extra_price'][0]=9;
+            self::assertSame(0,$this->post('company','0',$extras)['exit']);
+            self::assertSame('35.00',$this->row()['total']);
+            self::assertSame($before,$snapshot());
+            $row=$this->row();$revisions=$this->revisions();
+            $this->pdo->prepare('INSERT INTO clients (name) VALUES (?)')->execute(['Synthetic alternative client']);
+            $otherClient=(int)$this->pdo->lastInsertId();
+            $rejected=$this->post('company','0',['client_id'=>$otherClient]);
+            self::assertStringContainsString('DomainException',$rejected['log']);
+            self::assertSame($row,$this->row());self::assertSame($revisions,$this->revisions());
+            self::assertSame($before,$snapshot());
+            foreach ($workforceBefore as $table=>$rows) self::assertSame($rows,$this->pdo->query('SELECT * FROM '.$table.' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+        } finally {
+            if ($otherClient) $this->pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$otherClient]);
+            if ($logId) $this->pdo->prepare('DELETE FROM mileage_logs WHERE id=?')->execute([$logId]);
+            foreach($timeIds as $timeId) $this->pdo->prepare('DELETE FROM time_entries WHERE id=?')->execute([$timeId]);
+        }
+    }
+
     public function testIsolatedSecondConnectionRepairFailsClosedInsideTransactionAndRepairsOutside(): void
     {
         if (getenv('PA_DISPOSABLE_SCHEMA_PROOF') !== '1') {
@@ -171,10 +225,11 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         $this->pdo->commit();
     }
 
-    private function post(string $mode, string $discount = '0'): array
+    private function post(string $mode, string $discount = '0', array $overrides=[]): array
     {
         $root=dirname(__DIR__,2);
         $post=['id'=>$this->invoice,'client_id'=>$this->client,'document_issuer_mode'=>$mode,'discount_type'=>'fixed','discount_value'=>$discount,'tax_percent'=>'0','due_date'=>'2026-11-19','billing_mode'=>'fixed'];
+        $post=array_replace($post,$overrides);
         // This subprocess is a disposable authenticated controller fixture, not a
         // login/session mechanism for a running PA installation. Browser CSRF and
         // sign-in acceptance are separate; this executes the actual save controller.

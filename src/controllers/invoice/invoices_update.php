@@ -1,11 +1,14 @@
 <?php
 // src/controllers/invoices_update.php
+require_once __DIR__ . '/../../utils/workforce_availability.php';
+pa_workforce_require_no_invoice_imports($_POST);
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/document_fields.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/acl_middleware.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+require_once __DIR__ . '/../../utils/invoice_workforce_history.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
 require_once __DIR__ . '/../../utils/document_locations.php';
 require_once __DIR__ . '/../../utils/catalog_documents.php';
@@ -83,6 +86,9 @@ if ($hasExtraChargeCol) {
   }
 }
 
+$workforceHistory = invoice_workforce_history($pdo, $id);
+$preservedWorkforceItems = $workforceHistory['items'];
+
 // Process extra charges (new and updated)
 $extraItems = $_POST['extra_item'] ?? [];
 $extraDescs = $_POST['extra_desc'] ?? [];
@@ -103,6 +109,7 @@ for ($i = 0; $i < count($extraItems); $i++) {
   $p = (float)($ExtraPrices[$i] ?? 0);
   $adjustmentType = ($extraTypes[$i] ?? 'charge') === 'credit' ? 'credit' : 'charge';
   $eid = (int)($extraIds[$i] ?? 0);
+  if (isset($preservedWorkforceItems[$eid])) continue;
   
   if ($itm === '' || $q <= 0 || $p < 0) continue;
   
@@ -116,13 +123,15 @@ for ($i = 0; $i < count($extraItems); $i++) {
 
 // Fetch all existing items to calculate subtotal including contract items
 $allExistingItems = $hasExtraChargeCol
-  ? $pdo->prepare('SELECT description, quantity, unit_price, is_extra_charge FROM invoice_items WHERE invoice_id=?')
-  : $pdo->prepare('SELECT description, quantity, unit_price, 0 AS is_extra_charge FROM invoice_items WHERE invoice_id=?');
+  ? $pdo->prepare('SELECT id, description, quantity, unit_price, line_total, is_extra_charge FROM invoice_items WHERE invoice_id=?')
+  : $pdo->prepare('SELECT id, description, quantity, unit_price, line_total, 0 AS is_extra_charge FROM invoice_items WHERE invoice_id=?');
 $allExistingItems->execute([$id]);
 $contractSubtotal = 0.0;
 foreach ($allExistingItems->fetchAll(PDO::FETCH_ASSOC) as $item) {
-  if ((int)($item['is_extra_charge'] ?? 0) === 0) {
-    $contractSubtotal += (float)$item['quantity'] * (float)$item['unit_price'];
+  if ((int)($item['is_extra_charge'] ?? 0) === 0 || isset($preservedWorkforceItems[(int)$item['id']])) {
+    $contractSubtotal += isset($preservedWorkforceItems[(int)$item['id']])
+      ? (float)$item['line_total']
+      : (float)$item['quantity'] * (float)$item['unit_price'];
   }
 }
 $subtotal = $contractSubtotal; // Reset and add extras
@@ -154,6 +163,8 @@ $pdo->beginTransaction();
 try {
   $invoiceState=DocumentPolicy::assertMutable($pdo,'invoice',$id,'monetary_adjustment',true);
   require_record_ownership($pdo,'invoices',$id);
+  if (invoice_workforce_history($pdo, $id) !== $workforceHistory) throw new DomainException('Invoice history changed; reload before saving.');
+  if ($workforceHistory['linked'] && $client_id !== (int)$invoiceState['client_id']) throw new DomainException('Historical time and mileage must retain their original client.');
   if(pricing_invoice_is_fixed_total_installment($pdo,$id))throw new DomainException($fixedTotalLockMessage);
   $invoiceStatus=strtolower((string)($invoiceState['status']??''));
   $isDraft=$invoiceStatus==='draft';
@@ -189,6 +200,7 @@ try {
   
   // Delete only extra charge items (if column exists), otherwise do not delete contract items
   if ($hasExtraChargeCol) {
+    if (pa_workforce_enabled()) {
     $releaseExtraTime = $pdo->prepare('
       UPDATE time_entries te
       INNER JOIN invoice_items ii ON ii.id = te.invoice_item_id
@@ -196,7 +208,10 @@ try {
       WHERE ii.invoice_id = ? AND ii.is_extra_charge = 1
     ');
     $releaseExtraTime->execute([$id]);
-    $pdo->prepare('DELETE FROM invoice_items WHERE invoice_id=? AND is_extra_charge=1')->execute([$id]);
+    }
+    $preservedIds = array_keys($preservedWorkforceItems);
+    $preserveSql = $preservedIds ? ' AND id NOT IN (' . implode(',', array_fill(0, count($preservedIds), '?')) . ')' : '';
+    $pdo->prepare('DELETE FROM invoice_items WHERE invoice_id=? AND is_extra_charge=1' . $preserveSql)->execute(array_merge([$id], $preservedIds));
 
     // Insert new extra charges with the flag
     $ins = $pdo->prepare('INSERT INTO invoice_items (invoice_id,item_library_id,item,description,quantity,unit_price,line_total,billing_unit,is_extra_charge,catalog_snapshot) VALUES (?,?,?,?,?,?,?,?,1,?)');
@@ -225,7 +240,7 @@ try {
   $adjustmentInsert=$pdo->prepare('INSERT INTO invoice_adjustments (invoice_id,adjustment_type,label,description,quantity,unit_price,amount,revision_number,created_by) VALUES (?,?,?,?,?,?,?,?,?)');
   foreach($extraItemsArr as $it){$adjustmentInsert->execute([$id,$it['type'],$it['i'],$it['d']?:null,$it['q'],$it['p'],$it['t'],$nextInvoiceRevision,(int)($_SESSION['user']['id']??0)?:null]);}
 
-  if (!$isGeneralRecipientInvoice) {
+  if (pa_workforce_enabled() && !$isGeneralRecipientInvoice) {
     $syncTimeEntries = $pdo->prepare('
       UPDATE time_entries te
       LEFT JOIN invoice_items ii ON ii.id = te.invoice_item_id

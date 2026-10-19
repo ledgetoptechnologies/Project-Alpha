@@ -221,6 +221,24 @@ final class PortalProjectionMutationService
         return true;
     }
 
+    /** Publish current portal authority after a separately governed, exact-client
+     * provisioning transaction. This never invokes root-wide provisioning. */
+    public function afterGovernedClientProvisioning(PDO $pdo, array $scopes): bool
+    {
+        $this->requireTransaction($pdo);
+        $scopes=$this->uniqueScopes($scopes);
+        $this->reconcileRelations($pdo,$scopes);
+        foreach($scopes as$scope){
+            $query=$pdo->prepare("SELECT workspace.public_id FROM portal_v2_workspaces workspace
+                JOIN portal_client_access_roots control ON control.root_type=workspace.root_type AND control.root_public_id=workspace.root_public_id
+                WHERE workspace.root_type=? AND workspace.root_public_id=? AND workspace.active=1 AND control.access_state='active'");
+            $query->execute([$scope['root_type'],$scope['root_public_id']]);$ids=$query->fetchAll(PDO::FETCH_COLUMN);
+            if(count($ids)!==1)throw new \DomainException('Governed client provisioning requires an already-active workspace.');
+            $this->queueWorkspaces($pdo,$ids,null,true);
+        }
+        return true;
+    }
+
     /** @return list<array<string,mixed>> */
     public function queueCatalog(PDO $pdo,?int $onlyProfileId=null):array
     {

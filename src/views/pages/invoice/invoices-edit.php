@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/document_fields.php';
 require_once __DIR__ . '/../../../utils/workforce_availability.php';
+require_once __DIR__ . '/../../../utils/invoice_workforce_history.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/general_recipient_invoices.php';
 require_once __DIR__ . '/../../../services/DocumentPolicy.php';
@@ -25,6 +26,7 @@ $isGeneralRecipientInvoice = pa_invoice_is_general_recipient($inv);
 $items = $pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id=?');
 $items->execute([$id]);
 $items = $items->fetchAll(PDO::FETCH_ASSOC);
+$preservedWorkforceItems = invoice_workforce_history($pdo, $id)['items'];
 $clients = $pdo->query("SELECT c.id, c.name, c.organization_id, o.name AS organization_name FROM clients c LEFT JOIN organizations o ON o.id=c.organization_id ORDER BY c.name ASC")->fetchAll();
 $clientName = '';
 $clientOrganizationId = 0;
@@ -44,7 +46,7 @@ $attachedTimeEntries = [];
 $invoiceTimeBlockingReason = null;
 $invoiceActorIsVerifiedOwner = false;
 $invoiceActorCanAdministrativelySelfConfirm = false;
-if (!$isGeneralRecipientInvoice) {
+if (pa_workforce_enabled() && !$isGeneralRecipientInvoice) {
   $invoiceTimeEligibility = (new \App\Services\WorkTimeInvoiceEligibilityService($pdo))
     ->forInvoice($id, $invoiceActorId);
   $availableTimeEntries = $invoiceTimeEligibility['ready'];
@@ -283,7 +285,7 @@ if (!empty($inv['contract_id'])) {
         $contractItems = [];
         $extraCharges = [];
         foreach ($items as $it) {
-          if ((int)($it['is_extra_charge'] ?? 0) === 1) {
+          if ((int)($it['is_extra_charge'] ?? 0) === 1 && !isset($preservedWorkforceItems[(int)$it['id']])) {
             $extraCharges[] = $it;
           } else {
             $contractItems[] = $it;
@@ -310,7 +312,7 @@ if (!empty($inv['contract_id'])) {
                   <td style="padding:8px;color:#6b7280;font-size:13px"><?php echo htmlspecialchars($it['description'] ?? ''); ?></td>
                   <td style="padding:8px;text-align:right"><?php echo htmlspecialchars(number_format((float)$it['quantity'], 2)); ?></td>
                   <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format((float)$it['unit_price'], 2)); ?></td>
-                  <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format((float)$it['quantity'] * (float)$it['unit_price'], 2)); ?></td>
+                  <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format(isset($preservedWorkforceItems[(int)$it['id']]) ? (float)$it['line_total'] : (float)$it['quantity'] * (float)$it['unit_price'], 2)); ?></td>
                 </tr>
               <?php endforeach; ?>
             </tbody>
@@ -371,9 +373,9 @@ if (!empty($inv['contract_id'])) {
     $contractSubtotalForTotals = 0;
     $extraSubtotalForTotals = 0;
     foreach ($items as $it) {
-      $lineTotal = (float)$it['quantity'] * (float)$it['unit_price'];
+      $lineTotal = isset($preservedWorkforceItems[(int)$it['id']]) ? (float)$it['line_total'] : (float)$it['quantity'] * (float)$it['unit_price'];
       $subtotal += $lineTotal;
-      if ((int)($it['is_extra_charge'] ?? 0) === 1) {
+      if ((int)($it['is_extra_charge'] ?? 0) === 1 && !isset($preservedWorkforceItems[(int)$it['id']])) {
         $extraSubtotalForTotals += $lineTotal;
       } else {
         $contractSubtotalForTotals += $lineTotal;
