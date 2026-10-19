@@ -42,6 +42,19 @@ function api_v2_directory_client_profile_result(array $identity, string $publicI
         'result'=>['resource'=>['type'=>'client', 'publicId'=>$publicId, 'revision'=>$revision], 'authorizationGeneration'=>$authorizationGeneration]];
 }
 
+/** A known generation mismatch refused before profile or portal identity mutation. */
+function api_v2_directory_client_profile_authorization_generation_conflict(array $identity, string $requestId): array
+{
+    return ['status'=>409, 'payload'=>[
+        'apiVersion'=>'2',
+        'sourceInstanceId'=>(string)$identity['source_instance_id'],
+        'applicationId'=>(string)$identity['application_id'],
+        'historyEpoch'=>(string)$identity['history_epoch'],
+        'requestId'=>$requestId,
+        'error'=>['code'=>'authorization_generation_conflict'],
+    ]];
+}
+
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicId, array $command, int $apiKeyId, array $headers, string $requestId, bool $preservePortalIdentity = false): array
 {
@@ -61,7 +74,14 @@ function api_v2_directory_client_profile_command_write(PDO $pdo, string $publicI
         if ($receipt && (!hash_equals((string)$receipt['request_sha256'], $requestHash) || !hash_equals((string)$receipt['public_id'], $publicId) || (string)$receipt['expected_revision'] !== $command['expectedRevision'] || (string)$receipt['expected_authorization_generation'] !== $command['expectedAuthorizationGeneration'])) { $pdo->rollBack(); return ['status'=>409]; }
         if ($receipt) { $pdo->commit(); return ['status'=>200, 'payload'=>api_v2_directory_client_profile_result($identity, $publicId, (string)$receipt['result_revision'], (string)$receipt['expected_authorization_generation'], $requestId, true)]; }
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock); $authorizationStatement->execute([(int)$identity['application_pk']]); $authorizationGeneration = $authorizationStatement->fetchColumn();
-        if ($authorizationGeneration === false || (string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) { $pdo->rollBack(); return ['status'=>409]; }
+        if ($authorizationGeneration === false) { $pdo->rollBack(); return ['status'=>409]; }
+        if ((string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) {
+            $pdo->rollBack();
+            $generation = (string)$authorizationGeneration;
+            if (preg_match('/^(0|[1-9][0-9]{0,18})$/D', $generation) !== 1
+                || (strlen($generation) === 19 && strcmp($generation, PA_API_V2_AUTHORIZATION_GENERATION_MAX) >= 0)) return ['status'=>409];
+            return api_v2_directory_client_profile_authorization_generation_conflict($identity, $requestId);
+        }
         // Resolve without a lock, then acquire the same dependency order used
         // by browser mutations: projects, department contacts, client,
         // organization, address, and finally directory revision state.

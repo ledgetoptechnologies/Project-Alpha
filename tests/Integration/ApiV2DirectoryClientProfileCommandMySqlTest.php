@@ -89,6 +89,57 @@ final class ApiV2DirectoryClientProfileCommandMySqlTest extends TestCase
         self::assertSame('old@example.test',$policy['login_email']);$this->first->rollBack();
     }
 
+    public function testRealMySqlRegularGenerationRefusalPreservesProfileAndPortalAuthority():void
+    {
+        $this->exerciseGenerationRefusal(false);
+    }
+
+    public function testRealMySqlContactGenerationRefusalPreservesProfileAndPortalAuthority():void
+    {
+        $this->exerciseGenerationRefusal(true);
+    }
+
+    private function exerciseGenerationRefusal(bool $neutral):void
+    {
+        $this->installContactPolicy();
+        $this->first->exec("CREATE TABLE portal_identity_bindings(id INT PRIMARY KEY,portal_principal_id BIGINT UNSIGNED,issuer VARCHAR(255),subject_hash VARCHAR(255),enabled TINYINT) ENGINE=InnoDB;
+            CREATE TABLE portal_v2_entitlements(id INT PRIMARY KEY,portal_principal_id BIGINT UNSIGNED,capability VARCHAR(64),active TINYINT) ENGINE=InnoDB;
+            CREATE TABLE portal_principal_clients(portal_principal_id BIGINT UNSIGNED,client_id INT,PRIMARY KEY(portal_principal_id,client_id)) ENGINE=InnoDB;
+            INSERT INTO portal_identity_bindings VALUES(88,77,'https://issuer.example.test','existing-subject',1);
+            INSERT INTO portal_v2_entitlements VALUES(99,77,'directory.read',1);INSERT INTO portal_principal_clients VALUES(77,9)");
+        $command=$this->command('423e4567-e89b-42d3-a456-426614174000');
+        $this->first->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+        $before=$this->generationRefusalFootprint();
+        self::assertSame(['status'=>409,'payload'=>['apiVersion'=>'2','sourceInstanceId'=>$this->headers()['source'],
+            'applicationId'=>$this->headers()['application'],'historyEpoch'=>$this->headers()['epoch'],'requestId'=>'refused',
+            'error'=>['code'=>'authorization_generation_conflict']]],
+            \api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$command,7,$this->headers(),'refused',$neutral));
+        self::assertSame($before,$this->generationRefusalFootprint());self::assertFalse($this->first->inTransaction());
+        $command['expectedAuthorizationGeneration']='1';
+        $stale=$command;$stale['expectedRevision']='2';
+        self::assertSame(['status'=>409],\api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$stale,7,$this->headers(),'wrong-revision',$neutral));
+        self::assertSame($before,$this->generationRefusalFootprint());
+        self::assertSame(200,\api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$command,7,$this->headers(),'first',$neutral)['status']);
+        $this->first->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=2');$after=$this->generationRefusalFootprint();
+        $replay=\api_v2_directory_client_profile_command_write($this->second,str_repeat('a',32),$command,7,$this->headers(),'replay',$neutral);
+        self::assertSame(200,$replay['status']);self::assertTrue($replay['payload']['replayed']);self::assertSame('1',$replay['payload']['result']['authorizationGeneration']);
+        self::assertSame(['status'=>409],\api_v2_directory_client_profile_command_write($this->second,str_repeat('a',32),$command,7,$this->headers(),'cross-policy',!$neutral));
+        $changed=$command;$changed['profile']['name']='Changed request';
+        self::assertSame(['status'=>409],\api_v2_directory_client_profile_command_write($this->second,str_repeat('a',32),$changed,7,$this->headers(),'changed-request',$neutral));
+        self::assertSame($after,$this->generationRefusalFootprint());
+    }
+
+    private function generationRefusalFootprint():array
+    {
+        $rows=[];
+        foreach (['clients','addresses','address_assignments','api_v2_directory_resource_state','api_v2_directory_resource_changes',
+            'api_v2_directory_authorization_state','api_v2_directory_external_bindings','api_v2_directory_client_profile_command_receipts',
+            'portal_principals','portal_client_login_eligibility','portal_client_contact_identity_policy','portal_identity_bindings',
+            'portal_v2_entitlements','portal_principal_clients'] as $table)
+            $rows[$table]=$this->first->query('SELECT * FROM '.$table.' ORDER BY 1')->fetchAll();
+        return $rows;
+    }
+
     private function installContactPolicy():void
     {
         $this->first->exec("CREATE TABLE portal_principals(id BIGINT UNSIGNED PRIMARY KEY,email_hint VARCHAR(254),enabled TINYINT) ENGINE=InnoDB;
@@ -109,7 +160,7 @@ final class ApiV2DirectoryClientProfileCommandMySqlTest extends TestCase
 
     private function resetSchema(): void
     {
-        $this->first->exec('SET FOREIGN_KEY_CHECKS=0'); foreach (['portal_client_contact_identity_policy','portal_client_login_eligibility','portal_principals','api_v2_directory_external_bindings','api_v2_directory_client_profile_command_receipts','api_v2_directory_organization_profile_command_receipts','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','address_assignments','addresses','portal_integration_profile_workspaces','portal_v2_workspaces','portal_integration_profiles','organization_department_contacts','projects','organizations','clients','app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`"); $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
+        $this->first->exec('SET FOREIGN_KEY_CHECKS=0'); foreach (['portal_identity_bindings','portal_v2_entitlements','portal_principal_clients','portal_client_contact_identity_policy','portal_client_login_eligibility','portal_principals','api_v2_directory_external_bindings','api_v2_directory_client_profile_command_receipts','api_v2_directory_organization_profile_command_receipts','api_v2_directory_resource_changes','api_v2_directory_resource_state','api_v2_directory_authorization_state','api_keys','api_v2_applications','api_v2_history_identity','address_assignments','addresses','portal_integration_profile_workspaces','portal_v2_workspaces','portal_integration_profiles','organization_department_contacts','projects','organizations','clients','app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`"); $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,application_id CHAR(36) NOT NULL,name VARCHAR(191) NOT NULL) ENGINE=InnoDB; CREATE TABLE api_keys(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,api_v2_application_id BIGINT UNSIGNED NULL,revoked_at DATETIME NULL) ENGINE=InnoDB; CREATE TABLE api_v2_history_identity(singleton TINYINT UNSIGNED NOT NULL PRIMARY KEY,source_instance_id CHAR(36) NOT NULL,history_epoch CHAR(36) NOT NULL) ENGINE=InnoDB; CREATE TABLE api_v2_directory_authorization_state(application_pk BIGINT UNSIGNED NOT NULL PRIMARY KEY,authorization_generation BIGINT UNSIGNED NOT NULL) ENGINE=InnoDB; CREATE TABLE api_v2_directory_resource_state(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) NOT NULL,revision BIGINT UNSIGNED NOT NULL,projection_sha256 CHAR(64) NOT NULL,present TINYINT(1) NOT NULL,PRIMARY KEY(resource_type,public_id)) ENGINE=InnoDB; CREATE TABLE api_v2_directory_resource_changes(resource_type ENUM('client','organization') NOT NULL,public_id CHAR(32) NOT NULL,revision BIGINT UNSIGNED NOT NULL,action ENUM('upsert','delete') NOT NULL,PRIMARY KEY(resource_type,public_id,revision)) ENGINE=InnoDB; CREATE TABLE organizations(id INT NOT NULL PRIMARY KEY,public_id CHAR(32) NOT NULL UNIQUE) ENGINE=InnoDB; CREATE TABLE clients(id INT NOT NULL PRIMARY KEY,public_id CHAR(32) NOT NULL UNIQUE,name VARCHAR(150) NOT NULL,email VARCHAR(255) NULL,phone VARCHAR(50) NULL,client_type VARCHAR(20) NULL,organization_id INT NULL,notes TEXT NULL,address_line1 VARCHAR(255) NULL,address_line2 VARCHAR(255) NULL,city VARCHAR(100) NULL,state VARCHAR(2) NULL,postal_code VARCHAR(20) NULL,country VARCHAR(100) NULL,stripe_customer_id VARCHAR(255) NULL,stripe_payment_method_id VARCHAR(255) NULL,auto_pay_enabled TINYINT(1) NOT NULL DEFAULT 0,source_version VARCHAR(64) NULL) ENGINE=InnoDB; CREATE TABLE projects(id INT NOT NULL PRIMARY KEY,client_id INT NULL) ENGINE=InnoDB; CREATE TABLE organization_department_contacts(department_id INT NOT NULL,client_id INT NOT NULL) ENGINE=InnoDB; CREATE TABLE addresses(id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,label VARCHAR(255) NULL,address_line1 VARCHAR(255) NULL,address_line2 VARCHAR(255) NULL,city VARCHAR(100) NULL,state VARCHAR(100) NULL,postal_code VARCHAR(32) NULL,country VARCHAR(100) NULL,google_place_id VARCHAR(255) NULL,source VARCHAR(32) NULL,created_by INT NULL,archived TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB; CREATE TABLE address_assignments(id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,address_id INT NOT NULL,entity_type VARCHAR(32) NOT NULL,entity_id INT NOT NULL,purpose VARCHAR(32) NOT NULL,is_default TINYINT(1) NOT NULL,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uq_test_address_assignment(entity_type,entity_id,purpose,address_id)) ENGINE=InnoDB; CREATE TABLE portal_integration_profiles(id INT NOT NULL PRIMARY KEY,enabled TINYINT NOT NULL,service_assignment_projection_enabled TINYINT NOT NULL,delivery_enabled TINYINT NOT NULL) ENGINE=InnoDB; CREATE TABLE portal_integration_profile_workspaces(profile_id INT NOT NULL,workspace_id INT NOT NULL,active TINYINT NOT NULL) ENGINE=InnoDB; CREATE TABLE portal_v2_workspaces(id INT NOT NULL PRIMARY KEY,root_type VARCHAR(32) NOT NULL,root_public_id CHAR(32) NOT NULL,active TINYINT NOT NULL) ENGINE=InnoDB; CREATE TABLE app_config(organization_id INT NOT NULL,config_key VARCHAR(191) NOT NULL,config_value TEXT NULL) ENGINE=InnoDB; INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','Disposable test application'); INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_directory_authorization_state VALUES(3,0); INSERT INTO organizations VALUES(10,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'); INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Example','old@example.test','old','consumer',10,'private note','','','','','','','customer-private','payment-private',1,'v-old'); INSERT INTO addresses VALUES(4,'Private label','old','','','','','','place-hidden','google',NULL,0); INSERT INTO address_assignments(address_id,entity_type,entity_id,purpose,is_default) VALUES(4,'client',9,'billing',1); INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0')");
         foreach(['0093_api_v2_directory_organization_profile_command_receipts.sql','0094_api_v2_directory_client_profile_command_receipts.sql','0106_api_v2_directory_profile_receipt_history_epochs.sql']as$filename){$migration=file_get_contents(dirname(__DIR__,2).'/database/migrations/'.$filename);self::assertNotFalse($migration);$this->first->exec($migration);} $this->first->beginTransaction(); \api_v2_directory_record($this->first,'client',9); $this->first->commit();
     }

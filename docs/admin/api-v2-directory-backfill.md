@@ -95,6 +95,16 @@ and does not prove that the revision or remaining request would be accepted. A
 generic `409` is never evidence permitting a changed request or automatic retry;
 any separately authorized successor must preserve the original immutable command.
 
+The client `/api/v2/directory/clients/{publicId}/profile/commands` and
+`/api/v2/directory/clients/{publicId}/contact-profile/commands` endpoints use the
+same typed pre-write refusal. Their current authentication, identity, revision
+and receipt-policy fences remain independent. Exact replay is checked first;
+regular and contact-profile requests cannot replay each other's receipts. A
+generation refusal makes no profile, address, revision, login, association,
+entitlement, contact-identity policy or receipt change. The contact route keeps
+its existing availability gate and preserves existing portal identity on a
+subsequently authorized successful command.
+
 Before an operator may enable this route, require all of the following:
 
 - Complete and audit the existing-row directory backfill above.
