@@ -68,17 +68,7 @@ final class DocumentIssuerSnapshotTest extends TestCase
     public function testDocumentRevisionKeepsEachIssuerSnapshotAndEditorSeparateFromCreator(): void
     {
         require_once __DIR__ . '/../../src/services/DocumentRevisionService.php';
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN revision_number INTEGER DEFAULT 1');
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN revision_updated_at TEXT');
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN updated_at TEXT');
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN project_id INTEGER');
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN client_id INTEGER');
-        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN organization_id INTEGER');
-        $this->pdo->exec('CREATE TABLE projects(id INTEGER PRIMARY KEY,organization_id INTEGER)');
-        $this->pdo->exec('CREATE TABLE clients(id INTEGER PRIMARY KEY,organization_id INTEGER)');
-        $this->pdo->exec('CREATE TABLE invoice_items(id INTEGER PRIMARY KEY,invoice_id INTEGER)');
-        $this->pdo->exec('CREATE TABLE invoice_adjustments(id INTEGER PRIMARY KEY,invoice_id INTEGER,superseded_at TEXT)');
-        $this->pdo->exec('CREATE TABLE document_revisions(document_type TEXT,document_id INTEGER,revision_number INTEGER,snapshot TEXT,content_hash TEXT,created_by INTEGER,UNIQUE(document_type,document_id,revision_number))');
+        $this->prepareRevisionTables();
         $this->pdo->exec("INSERT INTO invoices(id,created_by,status) VALUES(1,2,'draft')");
         $this->pdo->beginTransaction();
         \DocumentRevisionService::snapshotAndSave($this->pdo,'invoice',1,2,false,$this->config);
@@ -96,6 +86,27 @@ final class DocumentIssuerSnapshotTest extends TestCase
         self::assertSame(hash('sha256',$revisions[0]['snapshot']),$revisions[0]['content_hash']);
     }
 
+    public function testUnspecifiedRevisionConfigIgnoresStaleGlobalsAndUsesInstallationPolicy(): void
+    {
+        require_once __DIR__ . '/../../src/services/DocumentRevisionService.php';
+        $this->prepareRevisionTables();
+        $installation=document_issuer_company_configuration($this->pdo,[]);
+        $before=$GLOBALS['appConfig']??null;
+        $GLOBALS['appConfig']=array_replace($installation,['from_company'=>'Wrong stale company','brand_name'=>'Wrong stale brand','document_issuer_mode'=>'creator']);
+        $this->pdo->exec("INSERT INTO invoices(id,created_by,status) VALUES(1,2,'draft')");
+        $this->pdo->beginTransaction();
+        try {
+            \DocumentRevisionService::snapshotAndSave($this->pdo,'invoice',1,3,false);
+            $snapshot=json_decode((string)$this->pdo->query('SELECT issuer_snapshot FROM invoices WHERE id=1')->fetchColumn(),true);
+            self::assertSame($installation['document_issuer_mode'],$snapshot['mode']);
+            self::assertNotSame('Wrong stale company',$snapshot['sender']['company']);
+            self::assertSame(trim((string)($installation['from_company']??'')) ?: $installation['brand_name'],$snapshot['sender']['company']);
+        } finally {
+            $this->pdo->rollBack();
+            if($before===null)unset($GLOBALS['appConfig']);else $GLOBALS['appConfig']=$before;
+        }
+    }
+
     public function testIssuedDocumentCannotChangeIssuer(): void
     {
         $this->pdo->exec("INSERT INTO invoices(id,created_by,status,last_sent_revision,issuer_mode) VALUES(1,2,'unpaid',1,'company')");
@@ -111,6 +122,7 @@ final class DocumentIssuerSnapshotTest extends TestCase
         self::assertArrayHasKey('from_company',$resolved);
         self::assertNotSame('',trim((string)$resolved['brand_name']));
         self::assertSame(14,$resolved['net_terms_days']);
+        self::assertSame('creator',document_issuer_company_configuration($this->pdo,['document_issuer_mode'=>'creator'])['document_issuer_mode']);
         $this->pdo->exec("INSERT INTO invoices(id,created_by,status) VALUES(1,2,'draft')");
         $this->pdo->beginTransaction();
         $issuer=document_issuer_capture($this->pdo,$resolved,'invoice',1);
@@ -126,4 +138,19 @@ final class DocumentIssuerSnapshotTest extends TestCase
         $this->expectException(\LogicException::class);
         document_issuer_capture($this->pdo,[],'invoice',1);
     }
+    private function prepareRevisionTables(): void
+    {
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN revision_number INTEGER DEFAULT 1');
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN revision_updated_at TEXT');
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN updated_at TEXT');
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN project_id INTEGER');
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN client_id INTEGER');
+        $this->pdo->exec('ALTER TABLE invoices ADD COLUMN organization_id INTEGER');
+        $this->pdo->exec('CREATE TABLE projects(id INTEGER PRIMARY KEY,organization_id INTEGER)');
+        $this->pdo->exec('CREATE TABLE clients(id INTEGER PRIMARY KEY,organization_id INTEGER)');
+        $this->pdo->exec('CREATE TABLE invoice_items(id INTEGER PRIMARY KEY,invoice_id INTEGER)');
+        $this->pdo->exec('CREATE TABLE invoice_adjustments(id INTEGER PRIMARY KEY,invoice_id INTEGER,superseded_at TEXT)');
+        $this->pdo->exec('CREATE TABLE document_revisions(document_type TEXT,document_id INTEGER,revision_number INTEGER,snapshot TEXT,content_hash TEXT,created_by INTEGER,UNIQUE(document_type,document_id,revision_number))');
+    }
+
 }

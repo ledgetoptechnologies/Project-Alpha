@@ -25,7 +25,7 @@ final class DocumentRevisionService
         if (!$row) {
             throw new RuntimeException('Document not found.');
         }
-        $resolvedIssuerConfig = $issuerConfig ?? (array)($GLOBALS['appConfig'] ?? []);
+        $resolvedIssuerConfig = $issuerConfig ?? [];
         if (isset($row['issuer_mode']) && $row['issuer_mode'] !== 'legacy' && empty($row['issuer_snapshot'])) {
             // Automation callers historically pass only scheduling/mail options.
             // Complete the issuer identity from persisted installation settings.
