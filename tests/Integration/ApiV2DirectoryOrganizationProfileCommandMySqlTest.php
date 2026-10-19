@@ -115,6 +115,27 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
         return ['source' => '123e4567-e89b-42d3-a456-426614174000', 'application' => '223e4567-e89b-42d3-a456-426614174000', 'epoch' => '323e4567-e89b-42d3-a456-426614174000'];
     }
 
+    public function testRealMySqlGenerationRefusalIsTypedAndReceiptReplayRemainsFirst(): void
+    {
+        $command = $this->command('423e4567-e89b-42d3-a456-426614174000');
+        $this->first->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+        $tables = ['organizations','addresses','address_assignments','api_v2_directory_resource_state','api_v2_directory_resource_changes',
+            'api_v2_directory_authorization_state','api_v2_directory_organization_profile_command_receipts'];
+        $before = [];
+        foreach ($tables as $table) $before[$table] = $this->first->query('SELECT * FROM ' . $table)->fetchAll();
+        $outcome = \api_v2_directory_organization_profile_command_write($this->first, str_repeat('a',32), $command, 7, $this->headers(), 'refused');
+        self::assertSame(['status'=>409,'payload'=>['apiVersion'=>'2','sourceInstanceId'=>$this->headers()['source'],
+            'applicationId'=>$this->headers()['application'],'historyEpoch'=>$this->headers()['epoch'],'requestId'=>'refused',
+            'error'=>['code'=>'authorization_generation_conflict']]], $outcome);
+        foreach ($tables as $table) self::assertSame($before[$table], $this->first->query('SELECT * FROM ' . $table)->fetchAll(), $table);
+        $command['expectedAuthorizationGeneration']='1';
+        self::assertSame(200, \api_v2_directory_organization_profile_command_write($this->first, str_repeat('a',32), $command, 7, $this->headers(), 'first')['status']);
+        $this->first->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=2');
+        $replay = \api_v2_directory_organization_profile_command_write($this->second, str_repeat('a',32), $command, 7, $this->headers(), 'replay');
+        self::assertSame(200, $replay['status']); self::assertTrue($replay['payload']['replayed']);
+        self::assertSame('1', $replay['payload']['result']['authorizationGeneration']);
+    }
+
     private function command(string $commandId): array
     {
         $raw = ['commandId' => $commandId, 'expectedRevision' => '1', 'expectedAuthorizationGeneration' => '0', 'profile' => ['name' => 'Updated Org', 'generalEmail' => 'ops@example.test', 'generalPhone' => '555', 'addressLine1' => '1 Main', 'addressLine2' => '', 'city' => 'Austin', 'state' => 'TX', 'postalCode' => '78701', 'country' => 'US']];

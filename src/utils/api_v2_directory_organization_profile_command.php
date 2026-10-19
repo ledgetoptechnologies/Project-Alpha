@@ -50,6 +50,19 @@ function api_v2_directory_organization_profile_result(array $identity, string $p
         'result'=>['resource'=>['type'=>'organization', 'publicId'=>$publicId, 'revision'=>$revision], 'authorizationGeneration'=>$authorizationGeneration]];
 }
 
+/** A known generation mismatch refused before any command mutation, not a retry instruction. */
+function api_v2_directory_organization_profile_authorization_generation_conflict(array $identity, string $requestId): array
+{
+    return ['status'=>409, 'payload'=>[
+        'apiVersion'=>'2',
+        'sourceInstanceId'=>(string)$identity['source_instance_id'],
+        'applicationId'=>(string)$identity['application_id'],
+        'historyEpoch'=>(string)$identity['history_epoch'],
+        'requestId'=>$requestId,
+        'error'=>['code'=>'authorization_generation_conflict'],
+    ]];
+}
+
 /** @return array{status:int,payload?:array} */
 function api_v2_directory_organization_profile_command_write(PDO $pdo, string $publicId, array $command, int $apiKeyId, array $headers, string $requestId): array
 {
@@ -76,7 +89,16 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
             return ['status'=>200, 'payload'=>api_v2_directory_organization_profile_result($identity, $publicId, (string)$receipt['result_revision'], (string)$receipt['expected_authorization_generation'], $requestId, true)];
         }
         $authorizationStatement = $pdo->prepare('SELECT CAST(authorization_generation AS CHAR) authorization_generation FROM api_v2_directory_authorization_state WHERE application_pk=?' . $lock); $authorizationStatement->execute([(int)$identity['application_pk']]); $authorizationGeneration = $authorizationStatement->fetchColumn();
-        if ($authorizationGeneration === false || (string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) { $pdo->rollBack(); return ['status'=>409]; }
+        if ($authorizationGeneration === false) { $pdo->rollBack(); return ['status'=>409]; }
+        if ((string)$authorizationGeneration !== $command['expectedAuthorizationGeneration']) {
+            $pdo->rollBack();
+            // Match create's typed-conflict boundary: unavailable, malformed or
+            // exhausted state must not be mistaken for recoverable drift.
+            $generation = (string)$authorizationGeneration;
+            if (preg_match('/^(0|[1-9][0-9]{0,18})$/D', $generation) !== 1
+                || (strlen($generation) === 19 && strcmp($generation, PA_API_V2_AUTHORIZATION_GENERATION_MAX) >= 0)) return ['status'=>409];
+            return api_v2_directory_organization_profile_authorization_generation_conflict($identity, $requestId);
+        }
         $liveStatement = $pdo->prepare('SELECT * FROM organizations WHERE public_id=?' . $lock); $liveStatement->execute([$publicId]); $live = $liveStatement->fetch(PDO::FETCH_ASSOC);
         if (!$live) { $pdo->rollBack(); return ['status'=>409]; }
         // Browser profile writes acquire the organization row, its reusable
