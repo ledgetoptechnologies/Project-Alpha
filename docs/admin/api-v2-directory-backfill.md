@@ -82,6 +82,29 @@ application ID, and history epoch from the capability/directory handshake.
 Stale state, a mismatched identity, or reuse of a command ID with a different
 request fails closed.
 
+A known, valid, non-exhausted authorization-generation mismatch returns HTTP
+`409` with the same `authorization_generation_conflict` identity/request envelope
+documented for [directory creates](api-v2-directory-create-conflicts.md). This
+refusal occurs before profile, address, revision or receipt mutations. The
+`X-Request-ID` matches the JSON request ID. Exact successful receipt replay still
+precedes the generation check. Missing state, generation mismatches involving
+invalid/exhausted state, identity or revision mismatch and changed command-ID
+reuse remain generic conflicts. The generation fence runs before the resource
+revision fence: if both are stale, the pre-write generation refusal can be typed,
+and does not prove that the revision or remaining request would be accepted. A
+generic `409` is never evidence permitting a changed request or automatic retry;
+any separately authorized successor must preserve the original immutable command.
+
+The client `/api/v2/directory/clients/{publicId}/profile/commands` and
+`/api/v2/directory/clients/{publicId}/contact-profile/commands` endpoints use the
+same typed pre-write refusal. Their current authentication, identity, revision
+and receipt-policy fences remain independent. Exact replay is checked first;
+regular and contact-profile requests cannot replay each other's receipts. A
+generation refusal makes no profile, address, revision, login, association,
+entitlement, contact-identity policy or receipt change. The contact route keeps
+its existing availability gate and preserves existing portal identity on a
+subsequently authorized successful command.
+
 Before an operator may enable this route, require all of the following:
 
 - Complete and audit the existing-row directory backfill above.

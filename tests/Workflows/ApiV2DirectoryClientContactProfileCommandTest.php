@@ -59,6 +59,57 @@ SQL);
         return \api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$command,7,$this->headers(),'request-neutral',$neutral);
     }
 
+    public function testBothProfilePoliciesTypeOnlyPrewriteGenerationDriftWithoutChangingAnyAuthority():void
+    {
+        foreach ([false,true] as $neutral) {
+            $pdo=$this->database();$pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+            $before=$this->commandFootprint($pdo);$changes=$pdo->query('SELECT total_changes()')->fetchColumn();
+            self::assertSame(['status'=>409,'payload'=>['apiVersion'=>'2','sourceInstanceId'=>$this->headers()['source'],
+                'applicationId'=>$this->headers()['application'],'historyEpoch'=>$this->headers()['epoch'],
+                'requestId'=>'request-neutral','error'=>['code'=>'authorization_generation_conflict']]],$this->write($pdo,null,$neutral));
+            self::assertSame($before,$this->commandFootprint($pdo));self::assertSame($changes,$pdo->query('SELECT total_changes()')->fetchColumn());
+            self::assertFalse($pdo->inTransaction());
+        }
+    }
+
+    public function testBothProfilePoliciesKeepGenericConflictsAndExactOldGenerationReceiptReplay():void
+    {
+        foreach ([false,true] as $neutral) {
+            foreach (['source','application','epoch'] as $field) {
+                $pdo=$this->database();$pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');
+                $before=$this->commandFootprint($pdo);$command=\api_v2_directory_client_profile_command_parse(json_encode($this->command(),JSON_THROW_ON_ERROR));
+                self::assertSame(['status'=>409],\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$command,7,
+                    array_replace($this->headers(),[$field=>'923e4567-e89b-42d3-a456-426614174000']),'wrong-identity',$neutral));
+                self::assertSame($before,$this->commandFootprint($pdo));
+            }
+            foreach ([null,'invalid','-1','9223372036854775807'] as $generation) {
+                $pdo=$this->database();
+                if ($generation===null) $pdo->exec('DELETE FROM api_v2_directory_authorization_state');
+                else $pdo->prepare('UPDATE api_v2_directory_authorization_state SET authorization_generation=?')->execute([$generation]);
+                self::assertSame(['status'=>409],$this->write($pdo,null,$neutral));
+            }
+            $pdo=$this->database();$stale=$this->command();$stale['expectedRevision']='2';
+            self::assertSame(['status'=>409],$this->write($pdo,$stale,$neutral));
+            self::assertSame(200,$this->write($pdo,null,$neutral)['status']);
+            $pdo->exec('UPDATE api_v2_directory_authorization_state SET authorization_generation=1');$before=$this->commandFootprint($pdo);
+            $replay=$this->write($pdo,null,$neutral);self::assertSame(200,$replay['status']);self::assertTrue($replay['payload']['replayed']);
+            self::assertSame('0',$replay['payload']['result']['authorizationGeneration']);self::assertSame($before,$this->commandFootprint($pdo));
+            self::assertSame(['status'=>409],$this->write($pdo,null,!$neutral),'Profile policies cannot cross-replay despite generation drift');
+            $changed=$this->command();$changed['profile']['name']='Different request';
+            self::assertSame(['status'=>409],$this->write($pdo,$changed,$neutral));self::assertSame($before,$this->commandFootprint($pdo));
+        }
+    }
+
+    private function commandFootprint(PDO $pdo):array
+    {
+        $result=$this->footprint($pdo);
+        foreach (['clients','organizations','addresses','address_assignments','api_v2_directory_resource_state','api_v2_directory_resource_changes',
+            'api_v2_directory_authorization_state','api_v2_directory_external_bindings','portal_client_contact_identity_policy',
+            'api_v2_directory_client_profile_command_receipts'] as $table)
+            $result[$table]=$pdo->query('SELECT * FROM '.$table.' ORDER BY 1')->fetchAll(PDO::FETCH_ASSOC);
+        return $result;
+    }
+
     private function reconcile(PDO $pdo,bool $rootActive=true):string
     {
         $method=new \ReflectionMethod(\App\Services\PortalClientProvisioningService::class,'reconcileClient');

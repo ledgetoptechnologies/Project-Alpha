@@ -20,5 +20,13 @@ catch (Throwable $error) { error_log('[ApiV2OrganizationProfile] database unavai
 require_once __DIR__ . '/../../utils/api_auth.php';
 $key = api_require_key(['api.capabilities.read', 'directory.organizations.write'], false);
 if (in_array('full', api_normalize_scopes($key['scopes'] ?? ''), true)) { http_response_code(403); exit; }
-try { $outcome = api_v2_directory_organization_profile_command_write($pdo, $match[1], $command, (int)$key['id'], ['source'=>$_SERVER['HTTP_X_PA_SOURCE_INSTANCE_ID'] ?? null, 'application'=>$_SERVER['HTTP_X_PA_APPLICATION_ID'] ?? null, 'epoch'=>$_SERVER['HTTP_X_PA_HISTORY_EPOCH'] ?? null], $requestId); if ($outcome['status'] !== 200) { http_response_code($outcome['status']); exit; } $json = json_encode($outcome['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR); if (strlen($json) > 64 * 1024) throw new RuntimeException('Organization profile response limit'); echo $json; }
+try {
+    $outcome = api_v2_directory_organization_profile_command_write($pdo, $match[1], $command, (int)$key['id'], ['source'=>$_SERVER['HTTP_X_PA_SOURCE_INSTANCE_ID'] ?? null, 'application'=>$_SERVER['HTTP_X_PA_APPLICATION_ID'] ?? null, 'epoch'=>$_SERVER['HTTP_X_PA_HISTORY_EPOCH'] ?? null], $requestId);
+    http_response_code($outcome['status']);
+    if (isset($outcome['payload'])) {
+        $json = json_encode($outcome['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        if (strlen($json) > 64 * 1024) throw new RuntimeException('Organization profile response limit');
+        echo $json;
+    }
+}
 catch (Throwable $error) { error_log('[ApiV2OrganizationProfile] command unavailable: ' . get_class($error)); http_response_code(503); }
