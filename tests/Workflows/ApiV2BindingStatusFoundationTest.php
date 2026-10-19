@@ -45,6 +45,8 @@ final class ApiV2BindingStatusFoundationTest extends TestCase
         $pdo->prepare('INSERT INTO api_v2_directory_resource_state VALUES(?,?,?,?,1)')->execute(['client', $public, 7, $hash]); $pdo->prepare('INSERT INTO api_v2_directory_external_bindings VALUES(?,?,?,?,?,?,?,?)')->execute([3, 'client', $external, $public, 7, $hash, 'active', '2026-09-14 12:35:56.789000']); $pdo->prepare('INSERT INTO api_v2_directory_authorization_state VALUES(3,0)')->execute();
         $headers = ['source' => $source, 'application' => $application, 'epoch' => $epoch]; $request = '423e4567-e89b-42d3-a456-426614174000';
         self::assertSame(200, \api_v2_binding_status_read($pdo, 'client', $external, 7, $headers, $request)['status']);
+        self::assertArrayNotHasKey('clientPortalIdentity', \api_v2_binding_status_read($pdo, 'client', $external, 7, $headers, $request)['payload']);
+        self::assertSame(['state'=>'unavailable','principalPublicId'=>null,'associationVersion'=>null], \api_v2_binding_status_read($pdo, 'client', $external, 7, $headers, $request,true)['payload']['clientPortalIdentity']);
         self::assertSame(404, \api_v2_binding_status_read($pdo, 'client', rtrim($external), 7, $headers, $request)['status']);
         $pdo->exec("UPDATE clients SET name='Untracked change' WHERE id=9");
         self::assertSame(409, \api_v2_binding_status_read($pdo, 'client', $external, 7, $headers, $request)['status']);
