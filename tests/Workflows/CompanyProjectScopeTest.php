@@ -44,4 +44,24 @@ final class CompanyProjectScopeTest extends TestCase
         self::assertNull($pdo->query('SELECT business_unit_id FROM projects')->fetchColumn());
         self::assertSame(2,(int)$pdo->query('SELECT user_id FROM project_assignments')->fetchColumn());
     }
+    public function testRetiredDivisionSetterPreservesHistoricalIdsAndNeverAssignsANewScope(): void
+    {
+        $pdo=new PDO('sqlite::memory:');
+        $pdo->exec('CREATE TABLE projects(id INTEGER PRIMARY KEY,business_unit_id INTEGER)');
+        $pdo->exec('CREATE TABLE operations(id INTEGER PRIMARY KEY,project_id INTEGER,business_unit_id INTEGER)');
+        $pdo->exec('CREATE TABLE tasks(id INTEGER PRIMARY KEY,project_id INTEGER,business_unit_id INTEGER)');
+        $pdo->exec('INSERT INTO projects VALUES(1,10)');
+        $pdo->exec('INSERT INTO operations VALUES(1,1,10)');
+        $pdo->exec('INSERT INTO tasks VALUES(1,1,10)');
+        $service=new ProjectWorkPlanningService();
+        try {
+            $service->setProjectBusinessUnit($pdo,1,20);
+            self::fail('Retired division assignment was accepted.');
+        } catch (\DomainException $error) {
+            self::assertSame('Internal divisions have been retired.',$error->getMessage());
+        }
+        foreach (['projects','operations','tasks'] as $table) self::assertSame(10,(int)$pdo->query("SELECT business_unit_id FROM {$table}")->fetchColumn());
+        self::assertSame(0,$service->primaryBusinessUnitForUser($pdo,2));
+    }
+
 }

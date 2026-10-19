@@ -40,15 +40,6 @@ function pa_settings_registry(): array
             'description' => 'Business identity, branding, public access, integrations, and installation defaults.',
             'keywords' => 'business brand logo domain address timezone google email smtp integration installation',
             'items' => [
-                'business-units-divisions' => [
-                    'title' => 'Business units & divisions',
-                    'description' => 'Organize branches, regions, departments, or crews such as Green Bay and Chippewa Falls.',
-                    'tab' => 'business-units-divisions',
-                    'permission' => 'settings.manage',
-                    'roles' => ['admin', 'owner'],
-                    'keywords' => 'division branch region department crew business unit default',
-                    'form_mode' => 'self',
-                ],
                 'system' => [
                     'title' => 'Business & installation',
                     'description' => 'Business details, logo, domain, email providers, maps, and installation defaults.',
@@ -61,11 +52,11 @@ function pa_settings_registry(): array
             ],
         ],
         'people' => [
-            'title' => 'People, Access & Business Units',
+            'title' => 'People & Access',
             'short_title' => 'People & Access',
             'marker' => 'PA',
             'description' => 'Accounts, roles, permissions, and access boundaries.',
-            'keywords' => 'people users accounts roles permissions access business units',
+            'keywords' => 'people users accounts roles permissions access',
             'items' => [
                 'business-units' => [
                     'title' => 'Worker profiles & access',

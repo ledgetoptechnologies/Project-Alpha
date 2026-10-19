@@ -29,8 +29,6 @@ if ($projectInvoiceLinkClientIds !== null && !is_array($projectInvoiceLinkClient
 $parent_id = null; // Parent projects are not supported any more
 $organization_id = (int)($_POST['organization_id'] ?? 0);
 $department_id = (int)($_POST['department_id'] ?? 0);
-// Internal divisions are retired. Never accept new division assignments.
-$businessUnitId = 0;
 $managerUserId = array_key_exists('manager_user_id', $_POST) ? (int)$_POST['manager_user_id'] : (int)$__creator;
 $estimated_start = trim($_POST['estimated_start'] ?? '');
 $estimated_end = trim($_POST['estimated_end'] ?? '');
@@ -145,7 +143,7 @@ try {
 if ($hasAutoEmailColumn) {
 	$departmentColumn = $hasDepartmentColumn ? ', department_id' : '';
 	$departmentValue = $hasDepartmentColumn ? ', ?' : '';
-	$ins = $pdo->prepare("INSERT INTO projects (name, client_id, organization_id{$departmentColumn}, business_unit_id, manager_user_id, invoice_billing_period, invoice_net_terms_days, project_invoice_auto_email, estimated_start, estimated_end, notes, source_version, created_by, created_at) VALUES (?,?,?{$departmentValue},?,?,?,?,?,?,?,?,?,?,NOW())");
+	$ins = $pdo->prepare("INSERT INTO projects (name, client_id, organization_id{$departmentColumn}, manager_user_id, invoice_billing_period, invoice_net_terms_days, project_invoice_auto_email, estimated_start, estimated_end, notes, source_version, created_by, created_at) VALUES (?,?,?{$departmentValue},?,?,?,?,?,?,?,?,?,NOW())");
 	$params = [
 		$name,
 		$client_id > 0 ? $client_id : null,
@@ -154,7 +152,6 @@ if ($hasAutoEmailColumn) {
 	if ($hasDepartmentColumn) {
 		$params[] = $department_id > 0 ? $department_id : null;
 	}
-	$params[] = $businessUnitId > 0 ? $businessUnitId : null;
 	$params[] = $managerUserId > 0 ? $managerUserId : null;
 	$params = array_merge($params, [
 		$invoiceBillingPeriod,
@@ -170,7 +167,7 @@ if ($hasAutoEmailColumn) {
 } else {
 	$departmentColumn = $hasDepartmentColumn ? ', department_id' : '';
 	$departmentValue = $hasDepartmentColumn ? ', ?' : '';
-	$ins = $pdo->prepare("INSERT INTO projects (name, client_id, organization_id{$departmentColumn}, business_unit_id, manager_user_id, invoice_billing_period, invoice_net_terms_days, estimated_start, estimated_end, notes, source_version, created_by, created_at) VALUES (?,?,?{$departmentValue},?,?,?,?,?,?,?,?,?,NOW())");
+	$ins = $pdo->prepare("INSERT INTO projects (name, client_id, organization_id{$departmentColumn}, manager_user_id, invoice_billing_period, invoice_net_terms_days, estimated_start, estimated_end, notes, source_version, created_by, created_at) VALUES (?,?,?{$departmentValue},?,?,?,?,?,?,?,?,NOW())");
 	$params = [
 		$name,
 		$client_id > 0 ? $client_id : null,
@@ -179,7 +176,6 @@ if ($hasAutoEmailColumn) {
 	if ($hasDepartmentColumn) {
 		$params[] = $department_id > 0 ? $department_id : null;
 	}
-	$params[] = $businessUnitId > 0 ? $businessUnitId : null;
 	$params[] = $managerUserId > 0 ? $managerUserId : null;
 	$params = array_merge($params, [
 		$invoiceBillingPeriod,
@@ -221,7 +217,7 @@ project_invoice_sync_recipients(
 	$projectInvoiceManualEmails,
 	$useOrganizationInvoiceEmail ? [$organization_id] : []
 );
-audit_log($pdo, 'project.create', 'project', $project_id, ['client_id' => $client_id > 0 ? $client_id : null, 'organization_id' => $organization_id > 0 ? $organization_id : null, 'department_id' => $department_id > 0 ? $department_id : null, 'business_unit_id' => $businessUnitId > 0 ? $businessUnitId : null, 'manager_user_id' => $managerUserId > 0 ? $managerUserId : null, 'created_by' => $__creator]);
+audit_log($pdo, 'project.create', 'project', $project_id, ['client_id' => $client_id > 0 ? $client_id : null, 'organization_id' => $organization_id > 0 ? $organization_id : null, 'department_id' => $department_id > 0 ? $department_id : null, 'manager_user_id' => $managerUserId > 0 ? $managerUserId : null, 'created_by' => $__creator]);
 (new \App\Services\ProjectRevisionService($pdo))->initialize($project_id, 'create', null, null, $__creator);
 ScheduleService::syncProject($pdo, $project_id, (string)($appConfig['timezone'] ?? 'UTC'), $__creator);
 $opsConfig=pa_external_ops_delivery_config($pdo);
