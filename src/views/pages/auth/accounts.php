@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/acl.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 
 // Ensure user is logged in and is an admin
 if (empty($_SESSION['user']) || $_SESSION['user']['role'] !== 'admin') {
@@ -263,6 +264,7 @@ if (!isset($roleDefaults[(string)$defaultCreateRoleId]) || empty($roleDefaults[(
 
         </div>
 
+<?php if (pa_workforce_enabled()): ?>
         <div id="employee-profile-panel" class="pa-create-card" style="margin-bottom:16px;" hidden>
           <h3>Employee Profile</h3>
           <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">The Employee role applies the self-service Workforce ACL. Direct client and invoice information stays hidden; employees only see projects assigned here.</p>
@@ -297,6 +299,7 @@ if (!isset($roleDefaults[(string)$defaultCreateRoleId]) || empty($roleDefaults[(
           </div>
         </div>
 
+<?php endif; ?>
         <div id="permissions-panel" class="pa-create-card" style="margin-bottom:16px;">
           <h3>Permissions</h3>
           <p style="margin:0 0 16px 0;color:#6b7280;font-size:14px;">Set what this user can access. Admins always have full access — these settings apply to non-admin users only.</p>

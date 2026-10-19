@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
+
 /**
  * Settings information architecture.
  *
@@ -315,6 +317,19 @@ function pa_settings_registry(): array
         'system' => $registry['system'],
     ];
 
+    if (!pa_workforce_enabled()) {
+        foreach ($registry as &$category) {
+            foreach (pa_workforce_settings_tabs() as $shelvedTab) {
+                unset($category['items'][$shelvedTab]);
+            }
+        }
+        unset($category);
+        $registry['workforce']['title'] = 'Workflow';
+        $registry['workforce']['short_title'] = 'Workflow';
+        $registry['workforce']['description'] = 'Document conversion, mileage and location defaults.';
+        $registry['workforce']['items']['workflow']['description'] = 'Configure document conversion, mileage and location defaults.';
+        $registry['account']['description'] = 'User accounts, roles, permissions and access boundaries.';
+    }
     return $registry;
 }
 

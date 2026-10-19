@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
+require_once __DIR__ . '/../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../services/PortalProjectionMutationService.php';
 require_once __DIR__ . '/../../services/PortalIntegrationContract.php';
 require_once __DIR__ . '/../../services/PortalSourceVersion.php';
@@ -69,6 +70,13 @@ try {
         if ($jobReference->fetchColumn()) {
             throw new DomainException('This service has already been used by a Job. Deactivate it to preserve history.');
         }
+        if (!pa_workforce_enabled()) {
+            $retainedWork = $pdo->prepare('SELECT 1 FROM catalog_work_components WHERE item_library_id=? LIMIT 1');
+            $retainedWork->execute([$id]);
+            if ($retainedWork->fetchColumn()) {
+                throw new DomainException('This service has retained work history. Deactivate it instead.');
+            }
+        }
         $linkedActivity = $pdo->prepare('SELECT work_type_id FROM catalog_work_components WHERE item_library_id=? AND is_active=1 LIMIT 1 FOR UPDATE');
         $linkedActivity->execute([$id]);
         $linkedWorkTypeId = (int)($linkedActivity->fetchColumn() ?: 0);
@@ -96,7 +104,7 @@ try {
         $linked = $pdo->prepare('SELECT work_type_id FROM catalog_work_components WHERE item_library_id=? AND is_active=1 FOR UPDATE');
         $linked->execute([$id]);
         $linkedWorkTypeIds = array_map('intval', $linked->fetchAll(PDO::FETCH_COLUMN));
-        if ($linkedWorkTypeIds) {
+        if (pa_workforce_enabled() && $linkedWorkTypeIds) {
             $placeholders = implode(',', array_fill(0, count($linkedWorkTypeIds), '?'));
             $pdo->prepare("UPDATE work_types SET is_active=0 WHERE id IN ({$placeholders})")->execute($linkedWorkTypeIds);
         }
@@ -138,6 +146,8 @@ try {
     }
     if ($pricingModel !== 'base_overage') { $clientIncludedMinutes = null; $clientOverageRate = null; }
     if ($pricingModel === 'hourly') $billingUnit = 'hour';
+    $components = [];
+    if (pa_workforce_enabled()) {
     $components = json_decode((string)($_POST['components_json'] ?? '[]'), true);
     if (!is_array($components)) throw new DomainException('Work Activity settings are invalid.');
     if (array_key_exists('activity_link_mode', $_POST)) {
@@ -173,6 +183,7 @@ try {
             ];
         }
     }
+    } // Ignore stale Workforce controls without changing retained activity links.
     $bundleItems = json_decode((string)($_POST['bundle_items_json'] ?? '[]'), true);
     if (!is_array($bundleItems)) throw new DomainException('Bundle contents are invalid.');
 
@@ -197,6 +208,7 @@ try {
         }
     }
 
+    if (pa_workforce_enabled()) {
     $retained = [];
     foreach (array_values($components) as $order => $component) {
         if (!is_array($component)) continue;
@@ -299,6 +311,7 @@ try {
         $params = array_merge($params,$retained);
     }
     $pdo->prepare($sql)->execute($params);
+    } // Ordinary Service Library saves preserve shelved work and compensation rules.
     $pdo->prepare('DELETE FROM catalog_bundle_items WHERE bundle_item_library_id=?')->execute([$id]);
     if ($entryType === 'bundle') {
         $bundleInsert = $pdo->prepare('INSERT INTO catalog_bundle_items (bundle_item_library_id,child_item_library_id,quantity,display_order) VALUES (?,?,?,?)');

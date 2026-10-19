@@ -3,7 +3,8 @@
 <?php require_once __DIR__ . '/../../utils/format.php'; ?>
 <?php require_once __DIR__ . '/../../utils/acl.php'; ?>
 <?php require_once __DIR__ . '/../../utils/app_version.php'; ?>
-<?php require_once __DIR__ . '/../../Modules/Timekeeping/WorkforceSettings.php'; ?>
+<?php require_once __DIR__ . '/../../Modules/Timekeeping/WorkforceSettings.php';
+require_once __DIR__ . '/../../utils/workforce_availability.php'; ?>
 <?php require_once __DIR__ . '/../../utils/api_v2_directory_management.php'; ?>
 <?php if (session_status() !== PHP_SESSION_ACTIVE) {
   session_start();
@@ -61,7 +62,9 @@ function nav_can(string $permission): bool {
        them with the authenticated shell keeps soft navigation identical to a
        hard reload, even when a page fragment contains no executable scripts. -->
   <script src="<?php echo htmlspecialchars(asset_url('/assets/js/item-library.js'), ENT_QUOTES, 'UTF-8'); ?>" data-pa-shell-asset defer></script>
+<?php if (pa_workforce_enabled()): ?>
   <script src="<?php echo htmlspecialchars(asset_url('/assets/js/workforce.js'), ENT_QUOTES, 'UTF-8'); ?>" data-pa-shell-asset defer></script>
+<?php endif; ?>
   <script src="<?php echo htmlspecialchars(asset_url('/assets/item-autocomplete.js'), ENT_QUOTES, 'UTF-8'); ?>" data-pa-shell-asset defer></script>
 
 </head>
@@ -208,6 +211,7 @@ function nav_can(string $permission): bool {
             </li>
             <?php endif; ?>
 
+            <?php if (pa_workforce_enabled()): ?>
             <?php
               $navWorkforceUserId = (int)($_SESSION['user']['id'] ?? 0);
               $navCanManageAllTime = \App\Modules\Timekeeping\WorkforceSettings::canManageAllTime($pdo, $navWorkforceUserId);
@@ -224,6 +228,8 @@ function nav_can(string $permission): bool {
               </ul>
             </li>
             <?php endif; ?>
+
+            <?php endif; // Workforce is shelved; preserve its navigation for later. ?>
 
             <?php if (nav_can('financial.view')): ?>
             <li class="nav-section">

@@ -350,7 +350,18 @@ final class ExternalOpsIntegrationTest extends TestCase
         self::assertSame([], $ownerPayload['entitlement']['business_unit_ids']);
     }
 
-    public function testGrantRevokeAndInactiveGrantAreConsistent(): void
+    public function testActiveGrantStillReactivatesDisabledStaffAccount(): void
+    {
+        $service = new ExternalOpsIntegrationService();
+        $this->pdo->exec('UPDATE users SET is_disabled=1 WHERE id=2');
+        $granted = $service->grantAccountAccess($this->pdo, 2, 'ltds_ops', 1);
+        self::assertTrue($granted['effective_enabled']);
+        self::assertTrue($this->latestPayload()['user']['active']);
+        self::assertSame(0, (int)$this->pdo->query('SELECT is_disabled FROM users WHERE id=2')->fetchColumn());
+        self::assertSame('active', $this->pdo->query('SELECT status FROM worker_profiles WHERE user_id=2')->fetchColumn());
+    }
+
+    public function testShelvedInactiveGrantFailsBeforeStaffOrEntitlementMutation(): void
     {
         $service = new ExternalOpsIntegrationService();
         $service->grantAccountAccess($this->pdo, 2, 'ltds_ops', 1);
@@ -360,16 +371,21 @@ final class ExternalOpsIntegrationTest extends TestCase
         $this->pdo->exec('UPDATE users SET is_disabled=1 WHERE id=2');
         $this->pdo->exec("UPDATE worker_profiles SET status='inactive' WHERE user_id=2");
         $this->pdo->exec("UPDATE employee_profiles SET employment_status='inactive' WHERE user_id=2");
-        $granted = $service->grantAccountAccess($this->pdo, 2, 'ltds_ops', 1);
-        self::assertTrue($granted['effective_enabled']);
-        $payload = $this->latestPayload();
-        self::assertTrue($payload['user']['active']);
-        self::assertTrue($payload['entitlement']['enabled']);
-        self::assertSame(0, (int)$this->pdo->query('SELECT is_disabled FROM users WHERE id=2')->fetchColumn());
-        self::assertSame('active', $this->pdo->query('SELECT status FROM worker_profiles WHERE user_id=2')->fetchColumn());
-        self::assertSame(1, (int)$this->pdo->query(
-            "SELECT enabled FROM application_entitlements WHERE user_id=2 AND application_key='ltds_ops'"
-        )->fetchColumn());
+        $staffBefore = $this->pdo->query('SELECT * FROM users WHERE id=2')->fetch(PDO::FETCH_ASSOC);
+        $entitlementBefore = $this->pdo->query("SELECT * FROM application_entitlements WHERE user_id=2 AND application_key='ltds_ops'")->fetch(PDO::FETCH_ASSOC);
+        $eventCount = (int)$this->pdo->query('SELECT COUNT(*) FROM integration_outbox')->fetchColumn();
+        try {
+            $service->grantAccountAccess($this->pdo, 2, 'ltds_ops', 1);
+            self::fail('A shelved Workforce profile was reactivated.');
+        } catch (\DomainException $error) {
+            self::assertStringContainsString('Workforce is paused', $error->getMessage());
+        }
+        self::assertFalse($this->pdo->inTransaction());
+        self::assertSame($staffBefore, $this->pdo->query('SELECT * FROM users WHERE id=2')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($entitlementBefore, $this->pdo->query("SELECT * FROM application_entitlements WHERE user_id=2 AND application_key='ltds_ops'")->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($eventCount, (int)$this->pdo->query('SELECT COUNT(*) FROM integration_outbox')->fetchColumn());
+        self::assertSame('inactive', $this->pdo->query('SELECT status FROM worker_profiles WHERE user_id=2')->fetchColumn());
+        self::assertSame('inactive', $this->pdo->query('SELECT employment_status FROM employee_profiles WHERE user_id=2')->fetchColumn());
     }
 
     public function testExplicitSelectionIgnoresDeprecatedBusinessUnitScopes(): void

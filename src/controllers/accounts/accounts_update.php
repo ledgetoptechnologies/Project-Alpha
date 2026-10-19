@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/acl.php';
+require_once __DIR__ . '/../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../utils/permission_catalog.php';
 require_once __DIR__ . '/../../utils/admin_account_policy.php';
 require_once __DIR__ . '/../../Modules/Timekeeping/WorkforceSettings.php';
@@ -95,7 +96,7 @@ $employeeProjectIds = array_values(array_unique(array_filter(
 )));
 $employeeProjectRates = (array)($_POST['employee_project_rates'] ?? []);
 
-if ($role === 'employee') {
+if (pa_workforce_enabled() && $role === 'employee') {
     if ($employeeFirstName === '') {
         header('Location: /?page=account-edit&id=' . $userId . '&error=' . urlencode('Employee first name is required'));
         exit;
@@ -217,7 +218,7 @@ try {
     }
 
     $effectiveEmployeeStatus = $accountDisabled && $employeeStatus !== 'terminated' ? 'inactive' : $employeeStatus;
-    if ($role !== 'employee' || $effectiveEmployeeStatus !== 'active') {
+    if (pa_workforce_enabled() && ($role !== 'employee' || $effectiveEmployeeStatus !== 'active')) {
         $timerStmt = $pdo->prepare("SELECT 1 FROM work_time_entries WHERE user_id=? AND status='running' LIMIT 1");
         $timerStmt->execute([$userId]);
         if ($timerStmt->fetchColumn()) {
@@ -265,7 +266,7 @@ try {
         $userId
     ]);
 
-    $displayName = $role === 'employee'
+    $displayName = pa_workforce_enabled() && $role === 'employee'
         ? trim($employeeFirstName . ' ' . $employeeLastName)
         : ($username !== '' ? $username : $email);
     $member=$pdo->prepare('SELECT tm.id,tm.profile_source FROM team_members tm WHERE tm.user_id=? LIMIT 1');$member->execute([$userId]);$teamMember=$member->fetch(PDO::FETCH_ASSOC);
@@ -274,7 +275,7 @@ try {
     }elseif(($teamMember['profile_source']??'pa')==='pa'){
         $pdo->prepare('UPDATE team_members SET display_name=?,email=?,is_active=? WHERE id=?')->execute([$displayName,$email,$accountDisabled?0:1,(int)$teamMember['id']]);
     }
-    if ($role === 'employee') {
+    if (pa_workforce_enabled() && $role === 'employee') {
         $settings = \App\Modules\Timekeeping\WorkforceSettings::load($pdo);
         $currency = (string)$settings['currency'];
         $terminatedAt = $effectiveEmployeeStatus === 'terminated' ? date('Y-m-d') : null;
@@ -319,7 +320,7 @@ try {
                 $assignmentStmt->execute([$projectId, $userId, $rate !== '' ? $rate : null, (int)$_SESSION['user']['id']]);
             }
         }
-    } else {
+    } elseif (pa_workforce_enabled()) {
         $pdo->prepare("UPDATE employee_profiles SET employment_status='inactive' WHERE user_id=?")->execute([$userId]);
         $pdo->prepare('UPDATE project_assignments pa JOIN projects p ON p.id=pa.project_id SET pa.ends_at=UTC_TIMESTAMP(6) WHERE pa.user_id=? AND (pa.ends_at IS NULL OR pa.ends_at>UTC_TIMESTAMP(6)) AND (p.manager_user_id IS NULL OR p.manager_user_id<>?)')->execute([$userId,$userId]);
     }
@@ -327,6 +328,7 @@ try {
     // Keep an existing worker relationship independent from the account ACL
     // role. Only create a default relationship when an Employee or explicit
     // Owner account has no worker profile yet.
+    if (pa_workforce_enabled()) {
     $workerStmt = $pdo->prepare('SELECT id,relationship_type,status FROM worker_profiles WHERE user_id=?');
     $workerStmt->execute([$userId]);
     $workerProfile = $workerStmt->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -366,6 +368,8 @@ try {
             $workerStatus === 'terminated' ? date('Y-m-d') : null,
         ]);
     }
+
+    } // Preserve historical Workforce profiles while shelved.
 
     if (!empty($_POST['save_account_permissions'])) {
         $allPermissions = permission_catalog_flat();

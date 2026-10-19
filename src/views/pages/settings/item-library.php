@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 
 $successMsg = !empty($_GET['created']) ? 'Service created.' : (!empty($_GET['updated']) ? 'Service updated.' : (!empty($_GET['purged']) ? 'Unused service permanently deleted.' : (!empty($_GET['deleted']) ? 'Service deactivated.' : '')));
 $errorMsg = (string)($_GET['error'] ?? '');
@@ -64,7 +65,7 @@ $clientBillingLabels = [
 
 <section class="settings-section catalog-settings" data-item-library-page>
   <div class="page-head">
-    <div><h3>Service Library</h3><p class="muted">Define the services clients receive and connect them to reusable Work Activities. Client billing and worker compensation stay separate, and changes never rewrite existing documents or Jobs.</p></div>
+    <div><h3>Service Library</h3><p class="muted">Define services, pricing and packages for client documents. Changes apply to future documents.</p></div>
     <button type="button" class="btn btn-primary" data-item-library-create>+ Add service</button>
   </div>
 
@@ -73,14 +74,16 @@ $clientBillingLabels = [
 
   <div class="pa-table-wrap">
     <table class="pa-table">
-      <thead><tr><th>Service or package</th><th>Type</th><th>Standard price</th><th>Work Activities</th><th>Status</th><th class="text-right">Actions</th></tr></thead>
+      <thead><tr><th>Service or package</th><th>Type</th><th>Standard price</th><?php if (pa_workforce_enabled()): ?><th>Work Activities</th><?php endif; ?><th>Status</th><th class="text-right">Actions</th></tr></thead>
       <tbody>
       <?php foreach ($items as $item): ?>
         <tr class="<?= !$item['is_active'] ? 'is-muted' : '' ?>">
           <td><strong><?= $h($item['item_name']) ?></strong><small><?= $h($item['description']) ?></small></td>
           <td><?= $h($offeringLabel((string)$item['entry_type'])) ?></td>
           <td>$<?= number_format((float)$item['unit_price'],2) ?> / <?= $h($billingUnitLabel((string)$item['billing_unit'])) ?><?php if (($item['client_pricing_model'] ?? '') === 'base_overage'): ?><small>Includes <?= (int)$item['client_included_minutes'] ?> min, then $<?= number_format((float)$item['client_overage_rate'],2) ?>/hr</small><?php endif; ?></td>
+<?php if (pa_workforce_enabled()): ?>
           <td><?php if (!empty($item['linked_work_type_id'])): ?><a href="/?page=settings&amp;tab=work-types&amp;edit_work_type=<?= (int)$item['linked_work_type_id'] ?>"><?= $h($item['linked_work_type_name']) ?></a><small>Exclusive one-to-one link</small><?php else: ?><span class="muted">Not linked</span><?php endif; ?></td>
+<?php endif; ?>
           <td><span class="status-pill status-pill--<?= $item['is_active'] ? 'active' : 'inactive' ?>"><?= $item['is_active'] ? 'Active' : 'Inactive' ?></span></td>
           <td class="text-right">
             <button type="button" class="btn btn-sm" data-item-library-edit data-item='<?= $h(json_encode($item, JSON_UNESCAPED_SLASHES)) ?>'>Edit</button>
@@ -89,7 +92,7 @@ $clientBillingLabels = [
           </td>
         </tr>
       <?php endforeach; ?>
-      <?php if (!$items): ?><tr><td colspan="6" class="empty-state">No services yet.</td></tr><?php endif; ?>
+      <?php if (!$items): ?><tr><td colspan="<?= pa_workforce_enabled() ? 6 : 5 ?>" class="empty-state">No services yet.</td></tr><?php endif; ?>
       </tbody>
     </table>
   </div>
@@ -97,7 +100,7 @@ $clientBillingLabels = [
 
 <div id="itemModal" class="modal-backdrop" hidden>
   <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <div class="modal-card__head"><div><h2 id="modalTitle">Add service</h2><p>Define the service the client receives, then connect the Work Activities used to deliver it.</p></div><button type="button" class="btn btn-sm" data-item-library-close aria-label="Close">Close</button></div>
+    <div class="modal-card__head"><div><h2 id="modalTitle">Add service</h2><p>Define the service and pricing the client receives.</p></div><button type="button" class="btn btn-sm" data-item-library-close aria-label="Close">Close</button></div>
     <form method="post" action="/?page=settings/item-library-handler" data-catalog-form>
       <input type="hidden" name="csrf" value="<?= $h(csrf_token()) ?>"><input type="hidden" id="formAction" name="action" value="create"><input type="hidden" id="formId" name="id"><input type="hidden" id="linkedComponentId" name="linked_component_id"><input type="hidden" id="bundleItemsJson" name="bundle_items_json" value="[]">
 
@@ -116,11 +119,13 @@ $clientBillingLabels = [
 
       <fieldset class="settings-card" id="bundleContents" hidden><legend>Package contents</legend><p class="muted">A package has one client-facing price. Search the Service Library and add only the services or fees that belong in it.</p><label class="field catalog-bundle-search"><span class="label">Add a service or fee</span><input class="input" type="search" placeholder="Type to search the Service Library" autocomplete="off" data-bundle-search aria-controls="bundleSearchResults" aria-expanded="false"></label><div class="catalog-bundle-results" id="bundleSearchResults" data-bundle-results role="listbox" hidden></div><div class="catalog-bundle-selected" data-bundle-selected></div><p class="muted catalog-bundle-empty" data-bundle-empty>No services or fees added yet.</p></fieldset>
 
+      <?php if (pa_workforce_enabled()): ?>
       <fieldset class="settings-card" id="activityLinkCard"><legend>Optional Work Activity link</legend>
         <p class="muted">Use this when the service and the internal activity represent the same work. The link is exclusive: one Service to one Work Activity. Names and rates remain independent.</p>
         <div class="settings-form-grid"><label class="field"><span class="label">Link behavior</span><select class="input" id="activityLinkMode" name="activity_link_mode"><option value="none">No linked Work Activity</option><option value="new">Create a matching Work Activity</option><option value="existing">Link an existing unlinked Work Activity</option></select><small>Packages cannot be linked; their contained Services provide any activity links.</small></label><label class="field" data-existing-activity hidden><span class="label">Available Work Activity</span><select class="input" id="linkedWorkTypeId" name="linked_work_type_id"><option value="">Choose an activity</option><?php foreach ($workTypes as $type): ?><option value="<?= (int)$type['id'] ?>" data-linked-service-id="<?= (int)($type['linked_service_id'] ?? 0) ?>" data-linked-service-name="<?= $h($type['linked_service_name'] ?? '') ?>"><?= $h($type['name']) ?><?= !empty($type['linked_service_id']) ? ' — linked to '.$h($type['linked_service_name']) : '' ?></option><?php endforeach; ?></select><small>Activities linked to another Service must be unlinked there first.</small></label></div>
       </fieldset>
 
+<?php endif; ?>
       <div class="modal-card__actions"><button type="button" class="btn" data-item-library-close>Cancel</button><button type="submit" class="btn btn-primary">Save service</button></div>
     </form>
   </div>

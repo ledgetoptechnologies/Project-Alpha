@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 final class SettingsRedesignTest extends TestCase
 {
-    public function testEveryLegacySettingsTabAppearsExactlyOnce(): void
+    public function testEveryActiveSettingsTabAppearsExactlyOnce(): void
     {
         $tabs = [];
         foreach (pa_settings_registry() as $category) {
@@ -20,9 +20,9 @@ final class SettingsRedesignTest extends TestCase
         }
 
         $expected = [
-            'assignments', 'backup', 'billing', 'business-units', 'documents',
-            'item-library', 'links', 'logs', 'notifications', 'pay-periods',
-            'permissions', 'system', 'taxes', 'terms', 'work-types', 'workflow',
+            'backup', 'billing', 'documents',
+            'item-library', 'links', 'logs', 'notifications',
+            'permissions', 'system', 'taxes', 'terms', 'workflow',
         ];
         sort($tabs);
         sort($expected);
@@ -202,15 +202,14 @@ final class SettingsRedesignTest extends TestCase
         self::assertStringContainsString('default_treatment="undecided"', $controller);
         self::assertStringContainsString("\$action==='set-work-type-status'", $controller);
         self::assertStringNotContainsString("['undecided','internal','fixed_price_included','hourly']", $controller);
-        self::assertSame('workforce.catalog.manage', $registry['workforce']['items']['work-types']['permission']);
+        self::assertArrayNotHasKey('work-types', $registry['workforce']['items']);
 
         $catalogManagerRegistry = pa_settings_visible_registry(
             $registry,
             static fn (string $permission): bool => $permission === 'workforce.catalog.manage',
             'staff'
         );
-        self::assertArrayHasKey('work-types', $catalogManagerRegistry['workforce']['items']);
-        self::assertArrayNotHasKey('workflow', $catalogManagerRegistry['workforce']['items']);
+        self::assertArrayNotHasKey('workforce', $catalogManagerRegistry);
     }
 
     public function testItemLibraryIsServiceFocusedAndPackagesUseSearchSelection(): void
@@ -282,7 +281,7 @@ final class SettingsRedesignTest extends TestCase
         );
 
         self::assertArrayNotHasKey('permissions', $registry['account']['items']);
-        self::assertArrayHasKey('business-units', $registry['account']['items']);
+        self::assertArrayNotHasKey('business-units', $registry['account']['items']);
 
         $businessUnits = (string)file_get_contents(dirname(__DIR__, 2) . '/src/views/pages/settings/business-units.php');
         self::assertStringContainsString("user_can(\$pdo,(int)(\$_SESSION['user']['id']??0),'users.manage',0)", $businessUnits);

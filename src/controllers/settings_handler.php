@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../utils/workforce_availability.php';
 // src/controllers/settings_handler.php
 // Save settings and handle logo upload, then redirect (PRG)
 require_once __DIR__ . '/../utils/payment_methods.php';
@@ -362,8 +363,8 @@ if (isset($_POST['timezone'])) {
     }
 }
 
-// Workforce defaults live with the rest of the Work, Jobs & Pay workflow rules.
-if ($isWorkflowTab) {
+// Preserve shelved defaults; other Workflow settings remain editable.
+if (pa_workforce_enabled() && $isWorkflowTab) {
     $currency = strtoupper(trim((string)($_POST['workforce_currency'] ?? 'USD')));
     if (!preg_match('/^[A-Z]{3}$/', $currency)) {
         header('Location: /?page=settings&tab=workflow&error=' . urlencode('Workforce currency must be a three-letter ISO code.'));
@@ -411,8 +412,10 @@ if ($isWorkflowTab) {
     $settings['mileage_tracking_enabled'] = !empty($_POST['mileage_tracking_enabled']) ? 1 : 0;
     $settings['address_route_assistance_enabled'] = !empty($_POST['address_route_assistance_enabled']) ? 1 : 0;
     $settings['job_project_locations_enabled'] = !empty($_POST['job_project_locations_enabled']) ? 1 : 0;
-    $settings['workforce_allow_non_admin_time_management'] = !empty($_POST['workforce_allow_non_admin_time_management']) ? 1 : 0;
-    $settings['workforce_allow_non_admin_time_approval'] = !empty($_POST['workforce_allow_non_admin_time_approval']) ? 1 : 0;
+    if (pa_workforce_enabled()) {
+        $settings['workforce_allow_non_admin_time_management'] = !empty($_POST['workforce_allow_non_admin_time_management']) ? 1 : 0;
+        $settings['workforce_allow_non_admin_time_approval'] = !empty($_POST['workforce_allow_non_admin_time_approval']) ? 1 : 0;
+    }
 }
 
 // SMTP settings
@@ -556,10 +559,18 @@ $generalConfigKeys = [
     'cron_enabled', 'cron_schedule', 'cron_custom',
     'processor_import_standalone_income', 'processor_import_auto_create_clients',
 ];
+if (!pa_workforce_enabled()) {
+    foreach (array_keys($settings) as $key) {
+        if (str_starts_with($key, 'workforce_')) { unset($settings[$key]); }
+    }
+}
 // contract_custom_sections is an array — serialize to JSON for DB storage
 if (isset($settings['contract_custom_sections'])) {
     $settings['contract_custom_sections_json'] = json_encode($settings['contract_custom_sections']);
     $generalConfigKeys[] = 'contract_custom_sections_json';
+}
+if (!pa_workforce_enabled()) {
+    $generalConfigKeys = array_values(array_filter($generalConfigKeys, static fn(string $key): bool => !str_starts_with($key, 'workforce_')));
 }
 if (!empty($generalConfigKeys)) {
     require_once __DIR__ . '/../config/db.php';
@@ -844,6 +855,11 @@ if (is_readable($target)) {
     $existing = json_decode(@file_get_contents($target), true) ?: [];
 }
 
+if (!pa_workforce_enabled()) {
+    foreach (array_keys($settings) as $key) {
+        if (str_starts_with($key, 'workforce_')) { unset($settings[$key]); }
+    }
+}
 $merged = array_merge($existing, $settings);
 // Never persist a plaintext encryption key in settings.json (env-var only).
 unset($merged['encryption_key']);
