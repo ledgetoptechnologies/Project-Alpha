@@ -1049,6 +1049,153 @@ SQL);
     private function connection(string$key,string$url,bool$enabled=true):array{return['enabled'=>$enabled?1:0,'configured_enabled'=>$enabled,'application_key'=>$key,'label'=>'Operations','webhook_url'=>$url,'access_client_id'=>'access-id','access_client_secret'=>'access-secret','hmac_secret'=>str_repeat('h',32),'timeout_seconds'=>15,'max_attempts'=>12];}
     private function activateWorkspace(int$profileId):void{$this->pdo->exec("INSERT INTO organizations VALUES(90,'org-rotation','Rotation Org');INSERT INTO clients VALUES(91,'client-rotation','Rotation Person','rotation@example.test',90,'consumer',0,NULL,'v1')");$this->pdo->beginTransaction();$this->service->ensureScopes($this->pdo,[['root_type'=>'organization','root_public_id'=>'org-rotation']],7,$this->pdo->query("SELECT * FROM portal_integration_profiles WHERE id={$profileId}")->fetch(PDO::FETCH_ASSOC));$this->pdo->commit();$workspace=(string)$this->pdo->query("SELECT public_id FROM portal_v2_workspaces WHERE root_public_id='org-rotation'")->fetchColumn();$this->pdo->prepare('INSERT INTO portal_projection_state VALUES(?,?,?,?,?)')->execute([$profileId,$workspace,'generation-1',1,str_repeat('f',64)]);}
     /** @param array<string,mixed> $capabilities */
+    private function prepareCompletedOrganizationWithMissingPerson(): int
+    {
+        $this->prepareHistoricalBackfill();
+        $this->pdo->exec("ALTER TABLE organizations ADD COLUMN archived INTEGER DEFAULT 0;
+            ALTER TABLE organizations ADD COLUMN deleted_at TEXT;
+            CREATE TABLE portal_client_contact_identity_policy(client_id INTEGER PRIMARY KEY,portal_principal_id INTEGER,login_email TEXT,application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT);
+            INSERT INTO organizations(id,public_id,name)VALUES(10,'completed-company','Existing Company');
+            INSERT INTO clients VALUES(20,'existing-person','Existing Person','existing@example.test',10,'business',0,NULL,'v1');");
+        self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+        $this->pdo->exec("INSERT INTO clients VALUES(21,'new-person','New Person','new@example.test',10,'business',0,NULL,'v1')");
+        return (int)$this->pdo->query('SELECT id FROM portal_integration_profiles')->fetchColumn();
+    }
+
+    private function existingPersonAuthority(): array
+    {
+        $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=20')->fetchColumn();
+        $result=[];
+        foreach(['portal_principals'=>"id={$principal}",'portal_principal_clients'=>"portal_principal_id={$principal}",
+            'portal_v2_entitlements'=>"portal_principal_id={$principal}",'portal_client_login_eligibility'=>'client_id=20',
+            'portal_identity_bindings'=>'1=1','portal_client_access_roots'=>'1=1','portal_v2_workspaces'=>'1=1','portal_client_provisioning_backfill'=>'1=1']as$table=>$where){
+            $result[$table]=$this->pdo->query("SELECT * FROM {$table} WHERE {$where}")->fetchAll(PDO::FETCH_ASSOC);
+        }
+        return$result;
+    }
+
+    public function testFuturePersonUnderCompletedRootGetsOnlyOwnAuthorityAndActualBindingProof(): void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareCompletedOrganizationWithMissingPerson();
+            $before=$this->existingPersonAuthority();
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+            $summary=$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations');
+            self::assertSame(1,$summary['completed']);self::assertSame(0,$summary['remaining']);
+            self::assertSame($before,$this->existingPersonAuthority(),'Other people, roots and completed history must remain byte-for-byte unchanged.');
+            require_once dirname(__DIR__,2).'/src/utils/api_v2_binding_status.php';
+            $client=$this->pdo->query('SELECT * FROM clients WHERE id=21')->fetch(PDO::FETCH_ASSOC);
+            $proof=\api_v2_binding_status_client_portal_identity($this->pdo,$client);
+            self::assertSame('eligible',$proof['state']);self::assertMatchesRegularExpression('/^[a-f0-9]{32}$/',$proof['principalPublicId']);
+            self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/',$proof['associationVersion']);
+            $published=$this->pdo->prepare('SELECT COUNT(*) FROM portal_projection_outbox WHERE instr(payload_json,?)>0');$published->execute([$proof['principalPublicId']]);self::assertGreaterThan(0,(int)$published->fetchColumn(),'The actual new own principal must be published, not merely stored.');
+            $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn();
+            self::assertSame([['client_id'=>21]],$this->pdo->query('SELECT client_id FROM portal_principal_clients WHERE portal_principal_id='.$principal)->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame(['client'],$this->pdo->query('SELECT DISTINCT scope_type FROM portal_v2_entitlements WHERE portal_principal_id='.$principal)->fetchAll(PDO::FETCH_COLUMN));
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_identity_bindings')->fetchColumn());
+            $snapshot=$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
+            self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+            self::assertSame($snapshot,$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
+        });
+    }
+
+    public function testMissingPersonReconciliationNeverRestoresProtectedRevokedOrInactiveAuthority(): void
+    {
+        foreach(['policy','eligibility','root','workspace','profile_workspace','client_archived','organization_archived']as$case){
+            $this->setUp();
+            $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function()use($case):void{
+                $this->prepareCompletedOrganizationWithMissingPerson();
+                $sql=match($case){
+                    'policy'=>"INSERT INTO portal_client_contact_identity_policy(client_id)VALUES(21)",
+                    'eligibility'=>"INSERT INTO portal_client_login_eligibility(client_id,manual_state,eligibility_status)VALUES(21,'revoked','revoked')",
+                    'root'=>"UPDATE portal_client_access_roots SET access_state='revoked'",
+                    'workspace'=>"UPDATE portal_v2_workspaces SET active=0",
+                    'profile_workspace'=>"UPDATE portal_integration_profile_workspaces SET active=0",
+                    'client_archived'=>"UPDATE clients SET archived=1 WHERE id=21",
+                    'organization_archived'=>"UPDATE organizations SET archived=1 WHERE id=10",
+                };$this->pdo->exec($sql);
+                $before=$this->existingPersonAuthority();
+                self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed'],$case);
+                self::assertSame($before,$this->existingPersonAuthority(),$case);
+                self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn(),$case);
+            });
+        }
+    }
+
+    public function testMissingPersonInvalidOrDuplicateEmailRequiresReviewWithoutGrant():void
+    {
+        foreach(['invalid','existing@example.test']as$email){$this->setUp();
+            $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function()use($email):void{
+                $this->prepareCompletedOrganizationWithMissingPerson();$this->pdo->prepare('UPDATE clients SET email=? WHERE id=21')->execute([$email]);
+                self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+                self::assertSame('review_required',$this->pdo->query('SELECT eligibility_status FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+                self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+                self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+            });
+        }
+    }
+
+    public function testMissingPersonRechecksConcurrentCronOrProtectedContactUnderLock():void
+    {
+        foreach(['cron','policy','root']as$race){$this->setUp();
+            $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function()use($race):void{
+                $this->prepareCompletedOrganizationWithMissingPerson();$fired=false;
+                $this->pdo->afterMissingClientSelection=function()use($race,&$fired):void{
+                    $fired=true;
+                    if($race==='cron')self::assertSame(1,(new PortalClientProvisioningService())->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+                    elseif($race==='policy')$this->pdo->exec('INSERT INTO portal_client_contact_identity_policy(client_id)VALUES(21)');
+                    else$this->pdo->exec("UPDATE portal_client_access_roots SET access_state='revoked'");
+                };
+                self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);self::assertTrue($fired,'Race must run after selection and before locking recheck.');
+                self::assertSame($race==='cron'?2:1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+                self::assertSame($race==='cron'?1:0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.missing_client_completed'")->fetchColumn());
+            });
+        }
+    }
+
+    public function testMissingPersonFailureRollsBackAndDoesNotStarveOtherClientsOrReopenRoot():void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareCompletedOrganizationWithMissingPerson();$before=$this->existingPersonAuthority();
+            $this->pdo->exec("INSERT INTO clients VALUES(22,'other-new-person','Other New','other-new@example.test',10,'business',0,NULL,'v1');
+                CREATE TRIGGER fail_pending_person BEFORE INSERT ON portal_principals WHEN NEW.email_hint='new@example.test' BEGIN SELECT RAISE(ABORT,'private client details'); END;");
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['retrying']);
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed'],'An untried client must precede a failed one.');
+            for($i=2;$i<=5;$i++)$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $summary=$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);self::assertSame(0,$summary['considered']);self::assertSame(1,$summary['failed']);
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+            self::assertSame(5,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.missing_client_failed'")->fetchColumn());
+            self::assertSame($before,$this->existingPersonAuthority());self::assertStringNotContainsString('private client details',json_encode($this->pdo->query('SELECT * FROM portal_integration_audit')->fetchAll(PDO::FETCH_ASSOC)));
+        });
+    }
+
+    public function testMissingPersonProjectionFailureRollsBackAuthorityAndCanRetrySafely():void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareCompletedOrganizationWithMissingPerson();$before=$this->existingPersonAuthority();
+            $this->pdo->exec("CREATE TRIGGER fail_pending_projection BEFORE INSERT ON portal_projection_outbox BEGIN SELECT RAISE(ABORT,'private projection data'); END;");
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['retrying']);
+            self::assertSame($before,$this->existingPersonAuthority());self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+            $this->pdo->exec('DROP TRIGGER fail_pending_projection');self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+        });
+    }
+
+    public function testMissingPersonLaneCoexistsWithNewRootsAndSeparateProducerInstances():void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareCompletedOrganizationWithMissingPerson();$first=$this->pdo;
+            $this->pdo->exec("INSERT INTO clients VALUES(22,'new-standalone','Standalone','standalone@example.test',NULL,'consumer',0,NULL,'v1')");
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed']);
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed']);
+            $firstCount=(int)$first->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn();
+            $this->setUp();$this->prepareCompletedOrganizationWithMissingPerson();
+            self::assertSame(1,(new PortalClientProvisioningService())->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+            self::assertSame($firstCount,(int)$first->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        });
+    }
+
     private function withPortalCapabilities(array$capabilities,callable$test):void{$previousEncryption=getenv('APP_ENCRYPTION_KEY');$previousCapabilities=getenv('PORTAL_INTEGRATION_HMAC_SECRETS_JSON');putenv('APP_ENCRYPTION_KEY=portal-provisioning-lifecycle-test-key');putenv('PORTAL_INTEGRATION_HMAC_SECRETS_JSON='.json_encode($capabilities,JSON_THROW_ON_ERROR));try{$test();}finally{$previousEncryption===false?putenv('APP_ENCRYPTION_KEY'):putenv('APP_ENCRYPTION_KEY='.$previousEncryption);$previousCapabilities===false?putenv('PORTAL_INTEGRATION_HMAC_SECRETS_JSON'):putenv('PORTAL_INTEGRATION_HMAC_SECRETS_JSON='.$previousCapabilities);}}
 }
 
@@ -1056,6 +1203,7 @@ SQL);
 final class BackfillRacePDO extends PDO
 {
     public ?\Closure $afterCandidateSelection = null;
+    public ?\Closure $afterMissingClientSelection = null;
     /** @var list<list<string>> */
     public array $profileWriteParameterTypes = [];
 }
@@ -1073,6 +1221,11 @@ final class BackfillRaceStatement extends \PDOStatement
         if (str_starts_with($this->queryString,'SELECT roots.root_type,roots.root_public_id') && $this->connection->afterCandidateSelection) {
             $callback=$this->connection->afterCandidateSelection;
             $this->connection->afterCandidateSelection=null;
+            $callback();
+        }
+        if (str_starts_with($this->queryString,'SELECT * FROM (SELECT c.id,c.public_id') && $this->connection->afterMissingClientSelection) {
+            $callback=$this->connection->afterMissingClientSelection;
+            $this->connection->afterMissingClientSelection=null;
             $callback();
         }
         return $result;

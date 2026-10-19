@@ -600,10 +600,16 @@ final class PortalClientProvisioningService
                 }
             }
         }
+        // The configured automatic producer also owns future contacts beneath
+        // completed roots. Reconcile only missing people, never reopen a root.
+        $missing = $summary['ready']
+            ? $this->reconcileMissingCompletedRootClients($pdo, $applicationKey, $profile, max(0, $limit - $summary['considered']))
+            : ['considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0];
+        foreach (['considered','completed','retrying'] as $key) $summary[$key] += $missing[$key];
         $summary['remaining'] = $this->historicalRemaining($pdo, $profile);
         $failed = $pdo->prepare("SELECT COUNT(*) FROM portal_client_provisioning_backfill WHERE integration_profile_id=? AND contract_fingerprint=? AND state='failed'");
         $failed->execute([$profileId,$fingerprint]);
-        $summary['failed'] = (int)$failed->fetchColumn();
+        $summary['failed'] = (int)$failed->fetchColumn() + $missing['failed'];
         return $summary;
     }
 
@@ -632,12 +638,108 @@ final class PortalClientProvisioningService
         return hash('sha256', json_encode([(string)$profile['application_key'],(string)$profile['portal_route']], JSON_THROW_ON_ERROR));
     }
 
+    /** A missing person is not permission to revisit existing people or roots.
+     * The saved producer, completed root and active workspace are the authority. */
+    private function missingCompletedRootClientQuery(PDO $pdo, array $profile): ?string
+    {
+        if (!PortalContactIdentityPolicy::available($pdo)) return null;
+        $profileId = (int)$profile['id'];
+        $fingerprint = $this->backfillContractFingerprint($profile);
+        return "SELECT c.id,c.public_id,o.public_id root_public_id,
+            (SELECT COUNT(*) FROM portal_integration_audit attempt
+              WHERE attempt.integration_profile_id={$profileId}
+                AND attempt.action='portal.client_provisioning.missing_client_failed'
+                AND attempt.target_type='client' AND attempt.target_public_id=c.public_id
+                AND json_extract(attempt.metadata_json,'$.contract_fingerprint')='{$fingerprint}') failure_count
+          FROM clients c JOIN organizations o ON o.id=c.organization_id
+          JOIN portal_client_access_roots root ON root.root_type='organization' AND root.root_public_id=o.public_id AND root.access_state='active'
+          JOIN portal_v2_workspaces workspace ON workspace.root_type=root.root_type AND workspace.root_public_id=root.root_public_id AND workspace.active=1
+          JOIN portal_integration_profile_workspaces linked ON linked.workspace_id=workspace.id AND linked.profile_id={$profileId} AND linked.active=1
+          JOIN portal_client_provisioning_backfill backfill ON backfill.integration_profile_id={$profileId}
+            AND backfill.root_type=root.root_type AND backfill.root_public_id=root.root_public_id
+            AND backfill.state='complete' AND backfill.contract_fingerprint='{$fingerprint}'
+          WHERE c.archived=0 AND c.deleted_at IS NULL AND o.archived=0 AND o.deleted_at IS NULL
+            AND NOT EXISTS(SELECT 1 FROM portal_client_login_eligibility eligibility WHERE eligibility.client_id=c.id)
+            AND NOT EXISTS(SELECT 1 FROM portal_client_contact_identity_policy policy WHERE policy.client_id=c.id)";
+    }
+
+    /** @return array{considered:int,completed:int,retrying:int,failed:int} */
+    private function reconcileMissingCompletedRootClients(PDO $pdo, string $applicationKey, array $profile, int $limit): array
+    {
+        $summary = ['considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0];
+        $query = $this->missingCompletedRootClientQuery($pdo, $profile);
+        if ($query === null) return $summary;
+        $profileId = (int)$profile['id'];
+        $fingerprint = $this->backfillContractFingerprint($profile);
+        // Immutable audit attempts provide bounded retry without adding another
+        // authority table or resetting the completed root's history.
+        $summary['failed'] = (int)$pdo->query('SELECT COUNT(*) FROM ('.$query.') pending_clients WHERE failure_count>=5')->fetchColumn();
+        if ($limit < 1) return $summary;
+        $selection = $pdo->prepare('SELECT * FROM ('.$query.') pending_clients WHERE failure_count<5 ORDER BY failure_count,id LIMIT '.(int)$limit);
+        $selection->execute(); $rows = $selection->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $candidate) {
+            $summary['considered']++;
+            try {
+                $pdo->beginTransaction();
+                PortalProjectionService::lockProfileContract($pdo, $profileId);
+                $currentProfile = $this->requireReadyProfile($pdo, $applicationKey);
+                if ((int)$currentProfile['id'] !== $profileId || $this->backfillContractFingerprint($currentProfile) !== $fingerprint) {
+                    $pdo->rollBack(); break;
+                }
+                $this->assertOnlyProducer($pdo, $profileId);
+                $currentQuery = $this->missingCompletedRootClientQuery($pdo, $currentProfile);
+                $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $current = $pdo->query($currentQuery.' AND c.id='.(int)$candidate['id'].$lock)->fetch(PDO::FETCH_ASSOC);
+                if (!$current || (int)$current['failure_count'] >= 5) { $pdo->commit(); continue; }
+                // Current locking reads fence a contact update or another cron
+                // that committed after the initial candidate snapshot.
+                if (PortalContactIdentityPolicy::forClient($pdo, (int)$current['id'])) { $pdo->commit(); continue; }
+                $eligibility = $pdo->prepare('SELECT client_id FROM portal_client_login_eligibility WHERE client_id=?'.$lock);
+                $eligibility->execute([(int)$current['id']]);
+                if ($eligibility->fetchColumn() !== false) { $pdo->commit(); continue; }
+                $client = $pdo->prepare('SELECT * FROM clients WHERE id=?'.$lock);
+                $client->execute([(int)$current['id']]); $client = $client->fetch(PDO::FETCH_ASSOC);
+                if (!$client) { $pdo->commit(); continue; }
+                $scope = ['root_type'=>'organization','root_public_id'=>$current['root_public_id']];
+                $status = $this->reconcileClient($pdo, $client, $scope, true, 0, true);
+                (new PortalProjectionMutationService())->afterGovernedClientProvisioning($pdo, [$scope]);
+                $this->audit($pdo, $profileId, 'portal.client_provisioning.missing_client_completed', 'client', $current['public_id'],
+                    ['automatic'=>true,'contract_fingerprint'=>$fingerprint,'eligibility_status'=>$status]);
+                $pdo->commit(); $summary['completed']++;
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $code = ($error instanceof \PDOException ? 'storage_failure:' : 'projection_failure:').substr(hash('sha256',get_class($error).':'.$error->getMessage()),0,12);
+                $pdo->beginTransaction();
+                try {
+                    PortalProjectionService::lockProfileContract($pdo, $profileId);
+                    $currentProfile = $this->requireReadyProfile($pdo, $applicationKey);
+                    if ((int)$currentProfile['id'] === $profileId && $this->backfillContractFingerprint($currentProfile) === $fingerprint) {
+                        $retryQuery = $this->missingCompletedRootClientQuery($pdo, $currentProfile);
+                        $retry = $pdo->query($retryQuery.' AND c.id='.(int)$candidate['id'])->fetch(PDO::FETCH_ASSOC);
+                        if ($retry && (int)$retry['failure_count'] < 5) {
+                            $attempt = (int)$retry['failure_count'] + 1;
+                            $this->audit($pdo, $profileId, 'portal.client_provisioning.missing_client_failed', 'client', $retry['public_id'],
+                                ['automatic'=>true,'contract_fingerprint'=>$fingerprint,'attempt'=>$attempt,'error_code'=>$code]);
+                            $summary[$attempt >= 5 ? 'failed' : 'retrying']++;
+                        }
+                    }
+                    $pdo->commit();
+                } catch (Throwable $persistenceError) {
+                    if ($pdo->inTransaction()) $pdo->rollBack(); throw $persistenceError;
+                }
+            }
+        }
+        return $summary;
+    }
+
     /** @param array<string,mixed> $profile */
     private function historicalRemaining(PDO $pdo, array $profile): int
     {
         $count = $pdo->prepare('SELECT COUNT(*) FROM ('.$this->scopeQuery().') roots LEFT JOIN portal_client_provisioning_backfill b ON b.integration_profile_id=? AND b.root_type=roots.root_type AND b.root_public_id=roots.root_public_id WHERE b.integration_profile_id IS NULL OR b.contract_fingerprint<>? OR b.state<>\'complete\'');
         $count->execute([(int)$profile['id'], $this->backfillContractFingerprint($profile)]);
-        return (int)$count->fetchColumn();
+        $missing = $this->missingCompletedRootClientQuery($pdo, $profile);
+        $extra = $missing === null ? 0 : (int)$pdo->query('SELECT COUNT(*) FROM ('.$missing.') pending_clients')->fetchColumn();
+        return (int)$count->fetchColumn() + $extra;
     }
 
     /**
@@ -849,7 +951,7 @@ final class PortalClientProvisioningService
     }
 
     /** @param array<string,mixed> $client @param array{root_type:string,root_public_id:string} $scope */
-    private function reconcileClient(PDO $pdo, array $client, array $scope, bool $rootActive, int $actorId): string
+    private function reconcileClient(PDO $pdo, array $client, array $scope, bool $rootActive, int $actorId, bool $currentReads = false): string
     {
         $clientId=(int)$client['id'];$existing=$this->eligibility($pdo,$clientId);$manual=(string)($existing['manual_state']??'automatic');
         $protected=PortalContactIdentityPolicy::forClient($pdo,$clientId);
@@ -862,15 +964,16 @@ final class PortalClientProvisioningService
         elseif(empty($client['organization_id'])&&!in_array((string)($client['client_type']??'unknown'),['consumer'],true)){$status='review_required';$reason='non_human_record';}
         elseif($email===''){$status='review_required';$reason='missing_email';}
         elseif(strlen($email)>254||!filter_var($email,FILTER_VALIDATE_EMAIL)){$status='review_required';$reason='invalid_email';}
-        elseif($this->emailCount($pdo,$email)!==1){$status='review_required';$reason='duplicate_email';}
+        elseif($this->emailCount($pdo,$email,$currentReads)!==1){$status='review_required';$reason='duplicate_email';}
 
         $principalId=isset($existing['portal_principal_id'])?(int)$existing['portal_principal_id']:null;
         $previousEmail=(string)($existing['canonical_email']??'');
         if($principalId&&$previousEmail!==''&&$email!==''&&!hash_equals($previousEmail,$email)){$this->revokePrincipal($pdo,$principalId,$actorId);$principalId=null;}
         if($status==='eligible'){
             if(!$principalId){
-                $conflict=$pdo->prepare('SELECT COUNT(*) FROM portal_principals p LEFT JOIN portal_client_login_eligibility e ON e.portal_principal_id=p.id WHERE LOWER(TRIM(p.email_hint))=? AND p.enabled=1 AND p.revoked_at IS NULL AND e.client_id IS NULL');$conflict->execute([$email]);
-                if((int)$conflict->fetchColumn()>0){$status='review_required';$reason='principal_conflict';}
+                $locking=$currentReads&&$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql';
+                $conflict=$pdo->prepare('SELECT '.($locking?'p.id':'COUNT(*)').' FROM portal_principals p LEFT JOIN portal_client_login_eligibility e ON e.portal_principal_id=p.id WHERE LOWER(TRIM(p.email_hint))=? AND p.enabled=1 AND p.revoked_at IS NULL AND e.client_id IS NULL'.($locking?' LIMIT 1 FOR UPDATE':''));$conflict->execute([$email]);
+                if($locking?$conflict->fetchColumn()!==false:(int)$conflict->fetchColumn()>0){$status='review_required';$reason='principal_conflict';}
                 else{$principalId=$this->createManagedPrincipal($pdo,$email,(string)$client['name'],$actorId);}
             }
             if($status==='eligible'&&$principalId){
@@ -919,11 +1022,15 @@ final class PortalClientProvisioningService
         return (string)$existing['eligibility_status'];
     }
 
-    private function emailCount(PDO $pdo,string $email):int
+    private function emailCount(PDO $pdo,string $email,bool $currentReads=false):int
     {
         $sql=PortalContactIdentityPolicy::available($pdo)
             ? 'SELECT COUNT(*) FROM clients client LEFT JOIN portal_client_contact_identity_policy policy ON policy.client_id=client.id WHERE client.archived=0 AND client.deleted_at IS NULL AND LOWER(TRIM(CASE WHEN policy.client_id IS NULL THEN client.email ELSE policy.login_email END))=?'
             : 'SELECT COUNT(*) FROM clients WHERE archived=0 AND deleted_at IS NULL AND LOWER(TRIM(email))=?';
+        if($currentReads&&$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'){
+            $sql=str_replace('SELECT COUNT(*)','SELECT '.(PortalContactIdentityPolicy::available($pdo)?'client.id':'id'),$sql).' LIMIT 2 FOR UPDATE';
+            $s=$pdo->prepare($sql);$s->execute([$email]);return count($s->fetchAll(PDO::FETCH_COLUMN));
+        }
         $s=$pdo->prepare($sql);$s->execute([$email]);return(int)$s->fetchColumn();
     }
     private function eligibility(PDO$pdo,int$clientId):array|false{$s=$pdo->prepare('SELECT * FROM portal_client_login_eligibility WHERE client_id=?');$s->execute([$clientId]);return$s->fetch(PDO::FETCH_ASSOC);}
