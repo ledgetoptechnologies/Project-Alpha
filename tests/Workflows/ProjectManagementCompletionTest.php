@@ -34,14 +34,15 @@ final class ProjectManagementCompletionTest extends TestCase
         self::assertStringContainsString('addTeamMember($pdo, $project_id, $managerUserId', $createController);
         self::assertStringContainsString('addTeamMember($pdo, $id, $managerUserId', $updateController);
         self::assertStringNotContainsString("default_business_unit_id", $updateController);
-        self::assertStringContainsString('$businessUnitId = $storedBusinessUnitId;', $updateController);
+        self::assertStringNotContainsString('business_unit_id=?', $updateController);
+        self::assertStringNotContainsString('UPDATE operations SET business_unit_id', $updateController);
 
         $accountUpdate = (string)file_get_contents($root . '/src/controllers/accounts/accounts_update.php');
         self::assertStringContainsString('Choose a different Project Manager for ', $accountUpdate);
         self::assertStringContainsString('p.manager_user_id<>?', $accountUpdate);
     }
 
-    public function testManagerDefaultsToPrimaryUnitAndRemainsOnProjectTeam(): void
+    public function testManagerIgnoresHistoricalUnitAndRemainsOnProjectTeam(): void
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -60,7 +61,7 @@ final class ProjectManagementCompletionTest extends TestCase
         $pdo->exec("INSERT INTO projects VALUES (20,'active',NULL,NULL,NULL)");
 
         $service = new ProjectWorkPlanningService();
-        self::assertSame(10, $service->primaryBusinessUnitForUser($pdo, 2));
+        self::assertSame(0, $service->primaryBusinessUnitForUser($pdo, 2));
 
         $service->setProjectManager($pdo, 20, 2, 1);
         self::assertSame(2, (int)$pdo->query('SELECT manager_user_id FROM projects WHERE id=20')->fetchColumn());

@@ -32,8 +32,6 @@ if (!is_array($projectInvoiceLinkClientIds)) { $projectInvoiceLinkClientIds = []
 $parent_id = null; // Parent projects not supported any more
 $organization_id = (int)($_POST['organization_id'] ?? 0);
 $department_id = (int)($_POST['department_id'] ?? 0);
-// Internal divisions are retired. Never accept new division assignments.
-$businessUnitId = 0;
 $managerUserIdProvided = array_key_exists('manager_user_id', $_POST);
 $managerUserId = (int)($_POST['manager_user_id'] ?? 0);
 $estimated_start = trim($_POST['estimated_start'] ?? '');
@@ -67,11 +65,10 @@ if ($billingTransitionDeliveryAction === 'send_all'
 	exit('Forbidden');
 }
 
-$projectStmt = $pdo->prepare('SELECT organization_id,business_unit_id,manager_user_id,invoice_billing_period,public_project_token,public_project_password_hash FROM projects WHERE id = ? LIMIT 1');
+$projectStmt = $pdo->prepare('SELECT organization_id,manager_user_id,invoice_billing_period,public_project_token,public_project_password_hash FROM projects WHERE id = ? LIMIT 1');
 $projectStmt->execute([$id]);
 $storedProject = $projectStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 $storedOrganizationId = (int)($storedProject['organization_id'] ?? 0);
-$storedBusinessUnitId = (int)($storedProject['business_unit_id'] ?? 0);
 $storedManagerUserId = (int)($storedProject['manager_user_id'] ?? 0);
 $projectInvoiceManualEmails = [];
 if (!$managerUserIdProvided) {
@@ -87,8 +84,6 @@ try {
 if ($storedOrganizationId > 0) {
 	$organization_id = $storedOrganizationId;
 }
-// Keep legacy scope IDs unchanged until their integration contract is migrated.
-$businessUnitId = $storedBusinessUnitId;
 if ($department_id > 0) {
 	$departmentStmt = $pdo->prepare('SELECT organization_id FROM organization_departments WHERE id = ? LIMIT 1');
 	$departmentStmt->execute([$department_id]);
@@ -204,7 +199,7 @@ if ($lockedInvoiceBillingPeriod === 'per_invoice'
 }
 if ($hasAutoEmailColumn) {
 	$departmentSet = $hasDepartmentColumn ? 'department_id=?,' : '';
-	$stmt = $pdo->prepare("UPDATE projects SET name=?, client_id=?, organization_id=?, {$departmentSet} business_unit_id=?, manager_user_id=?, invoice_billing_period=?, invoice_net_terms_days=?, project_invoice_auto_email=?, estimated_start=?, estimated_end=?, notes=?, source_version=?, updated_at=NOW() WHERE id=?");
+	$stmt = $pdo->prepare("UPDATE projects SET name=?, client_id=?, organization_id=?, {$departmentSet} manager_user_id=?, invoice_billing_period=?, invoice_net_terms_days=?, project_invoice_auto_email=?, estimated_start=?, estimated_end=?, notes=?, source_version=?, updated_at=NOW() WHERE id=?");
 	$params = [
 		$name,
 		$client_id > 0 ? $client_id : null,
@@ -213,7 +208,6 @@ if ($hasAutoEmailColumn) {
 	if ($hasDepartmentColumn) {
 		$params[] = $department_id > 0 ? $department_id : null;
 	}
-	$params[] = $businessUnitId > 0 ? $businessUnitId : null;
 	$params[] = $managerUserId > 0 ? $managerUserId : null;
 	$params = array_merge($params, [
 		$invoiceBillingPeriod,
@@ -228,7 +222,7 @@ if ($hasAutoEmailColumn) {
 	$stmt->execute($params);
 } else {
 	$departmentSet = $hasDepartmentColumn ? 'department_id=?,' : '';
-	$stmt = $pdo->prepare("UPDATE projects SET name=?, client_id=?, organization_id=?, {$departmentSet} business_unit_id=?, manager_user_id=?, invoice_billing_period=?, invoice_net_terms_days=?, estimated_start=?, estimated_end=?, notes=?, source_version=?, updated_at=NOW() WHERE id=?");
+	$stmt = $pdo->prepare("UPDATE projects SET name=?, client_id=?, organization_id=?, {$departmentSet} manager_user_id=?, invoice_billing_period=?, invoice_net_terms_days=?, estimated_start=?, estimated_end=?, notes=?, source_version=?, updated_at=NOW() WHERE id=?");
 	$params = [
 		$name,
 		$client_id > 0 ? $client_id : null,
@@ -237,7 +231,6 @@ if ($hasAutoEmailColumn) {
 	if ($hasDepartmentColumn) {
 		$params[] = $department_id > 0 ? $department_id : null;
 	}
-	$params[] = $businessUnitId > 0 ? $businessUnitId : null;
 	$params[] = $managerUserId > 0 ? $managerUserId : null;
 	$params = array_merge($params, [
 		$invoiceBillingPeriod,
@@ -255,8 +248,6 @@ $managerAssignmentChanged = false;
 if ($managerUserId > 0) {
 	$managerAssignmentId = $projectPlanning->addTeamMember($pdo, $id, $managerUserId, (int)($_SESSION['user']['id'] ?? 0), $managerAssignmentChanged);
 }
-$pdo->prepare('UPDATE operations SET business_unit_id=? WHERE project_id=?')->execute([$businessUnitId ?: null, $id]);
-$pdo->prepare('UPDATE tasks SET business_unit_id=? WHERE project_id=?')->execute([$businessUnitId ?: null, $id]);
 project_invoice_sync_clients(
 	$pdo,
 	$id,
@@ -346,7 +337,6 @@ if(!empty($opsConfig['enabled'])){
 		$integration->enqueueProjectionChange($pdo,(string)$opsConfig['application_key'],'project_assignment',$managerAssignmentId,'upsert',$assignmentEvent->fetch(PDO::FETCH_ASSOC)?:[]);
 	}
 }
-if($storedBusinessUnitId!==$businessUnitId)audit_log($pdo,'project.business_unit.changed','project',$id,['from'=>$storedBusinessUnitId?:null,'to'=>$businessUnitId?:null]);
 if($storedManagerUserId!==$managerUserId)audit_log($pdo,'project.manager.changed','project',$id,['from'=>$storedManagerUserId?:null,'to'=>$managerUserId?:null]);
 (new \App\Services\ProjectRevisionService($pdo))->advance($id, 'update', null, null, $actorId ?: null);
 $portalProjection->afterMutation($pdo, array_merge($portalBeforeScopes, $portalProjection->projectScopes($pdo, $id)));

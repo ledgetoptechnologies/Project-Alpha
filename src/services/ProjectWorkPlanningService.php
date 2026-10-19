@@ -59,6 +59,9 @@ final class ProjectWorkPlanningService
 
     public function setProjectBusinessUnit(PDO $pdo, int $projectId, int $businessUnitId): void
     {
+        // Retained as a fail-closed compatibility entry point for old callers.
+        throw new DomainException('Internal divisions have been retired.');
+        /* Historical implementation retained with workforce source:
         $this->requireProject($pdo, $projectId);
         if ($businessUnitId > 0) {
             $unit = $pdo->prepare('SELECT 1 FROM business_units WHERE id=? AND is_active=1');
@@ -71,6 +74,7 @@ final class ProjectWorkPlanningService
             ->execute([$businessUnitId ?: null, $projectId]);
         $pdo->prepare('UPDATE operations SET business_unit_id=? WHERE project_id=?')->execute([$businessUnitId ?: null, $projectId]);
         $pdo->prepare('UPDATE tasks SET business_unit_id=? WHERE project_id=?')->execute([$businessUnitId ?: null, $projectId]);
+        */
     }
 
     public function setProjectManager(PDO $pdo, int $projectId, int $managerUserId, int $actorUserId): void
@@ -95,6 +99,9 @@ final class ProjectWorkPlanningService
 
     public function primaryBusinessUnitForUser(PDO $pdo, int $userId): int
     {
+        // An account's historical division never supplies current project authority.
+        return 0;
+        /* Historical lookup retained for maintenance:
         if ($userId < 1) {
             return 0;
         }
@@ -108,6 +115,7 @@ final class ProjectWorkPlanningService
         );
         $statement->execute([$userId]);
         return (int)($statement->fetchColumn() ?: 0);
+        */
     }
 
     private function requireProject(PDO $pdo, int $projectId): void

@@ -49,3 +49,27 @@ This source change removes the user-facing project selector/default dependency.
 It does not claim that every historical external authority contract has already
 been removed. Physical table/field deletion is a later migration after the
 consumer acceptance evidence exists.
+
+
+### Current Operations consumer coupling
+
+The released Operations legacy snapshot consumer also maintains its own divisions
+from the primary PA `business_units` collection, using
+`project_alpha_business_unit_id` as the link. Its client feedback and project work
+queries join projected project unit IDs to those local divisions. This is active
+consumer coupling, even though PA emits empty entitlement unit/oversight lists.
+
+Before suppressing that collection, Operations must preserve its local division
+IDs, staff/file grants, folder authority, names, and active state independently.
+It needs explicit local project-to-division associations for work that still uses
+an Operations division. Those associations must be reviewed data mappings, not a
+fallback from null PA division to all local divisions. The PA catalog must then
+cease creating/updating local Operations divisions. This transition must be tested
+on the consumer before changing existing PA snapshot collections or version hashes.
+
+The PA retirement source removes the project overview division card/join, default
+inference, direct division assignment, and propagation into historical work rows.
+Retired service calls fail closed, and internal division catalog actions return a
+retirement response even if experimental workforce code is later resumed. Stored
+IDs and the existing wire projection are deliberately unchanged until that
+Operations consumer transition is accepted.

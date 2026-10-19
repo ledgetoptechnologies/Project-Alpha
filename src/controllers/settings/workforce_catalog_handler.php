@@ -19,6 +19,10 @@ require_once __DIR__ . '/../../utils/audit.php';
 $userId=(int)($_SESSION['user']['id']??0);$action=(string)($_POST['action']??'');$tab=(string)($_POST['return_tab']??'work-types');
 $redirect='/?page=settings&tab='.rawurlencode($tab);
 if($userId<=0||!csrf_validate()){http_response_code(403);exit('Forbidden');}
+if (in_array($action, ['save-business-unit','save-unit-membership','end-unit-membership','assign-worker-unit','assign-client-unit'], true)) {
+ http_response_code(410); exit('Internal divisions have been retired.');
+}
+
 $can=static fn(string $permission):bool=>user_can($pdo,$userId,$permission,0);
 $syncOpsAccount=static function(?int $accountId)use($pdo,$userId):void{
  if(!$accountId)return;

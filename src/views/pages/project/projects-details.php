@@ -23,13 +23,11 @@ pa_project_public_link_ensure_schema($pdo);
 // Fetch project details
 $stmt = $pdo->prepare('
     SELECT p.*, c.name AS client_name, o.name AS organization_name, od.name AS department_name,
-           bu.name AS business_unit_name,
            COALESCE(NULLIF(manager_wp.display_name,\'\'),NULLIF(manager_tm.display_name,\'\'),NULLIF(manager_u.username,\'\'),manager_u.email) AS manager_name
     FROM projects p
     LEFT JOIN clients c ON c.id = p.client_id
     LEFT JOIN organizations o ON o.id = p.organization_id
     LEFT JOIN organization_departments od ON od.id = p.department_id
-    LEFT JOIN business_units bu ON bu.id = p.business_unit_id
     LEFT JOIN users manager_u ON manager_u.id=p.manager_user_id
     LEFT JOIN worker_profiles manager_wp ON manager_wp.user_id=manager_u.id
     LEFT JOIN team_members manager_tm ON manager_tm.user_id=manager_u.id
@@ -562,10 +560,6 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                     <div>
                         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Department</div>
                         <div class="font-600"><?php echo htmlspecialchars((string)($project['department_name'] ?? '') !== '' ? (string)$project['department_name'] : 'Org-level / no department'); ?></div>
-                    </div>
-                    <div>
-                        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Business Unit</div>
-                        <div class="font-600"><?php echo htmlspecialchars((string)($project['business_unit_name'] ?: 'Unassigned — review needed')); ?></div>
                     </div>
 
                     <div>
