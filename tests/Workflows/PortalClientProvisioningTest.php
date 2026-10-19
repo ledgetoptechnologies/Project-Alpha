@@ -754,6 +754,195 @@ SQL);
         });
     }
 
+    public function testExplicitRecoverySupersedesPendingSuffixOnlyAfterCompleteSnapshotAck():void
+    {
+        $this->withPortalCapabilities([],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-recovery-order','Recovery Order','recovery-order@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $first=(int)$this->pdo->query('SELECT MIN(id) FROM portal_projection_outbox')->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_http_status=422,last_error_code='http_4xx' WHERE id={$first}");
+            $original=$this->pdo->query('SELECT * FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            $cutoff=(int)end($original)['id'];
+            self::assertGreaterThan($first,$cutoff,'Real head-of-line fixture has a pending suffix after its terminal row.');
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $r=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetch(PDO::FETCH_ASSOC);
+            self::assertSame($cutoff,(int)$r['failed_row_cutoff_id']);
+            $sent=[];
+            $transport=static function(string$url,array$headers,string$body)use(&$sent):array{
+                $p=json_decode($body,true,64,JSON_THROW_ON_ERROR)['projection'];$sent[]=$p;
+                return ['status'=>204];
+            };
+            $sender=new \App\Services\PortalProjectionOutboxSender();
+            $s=$sender->deliverDue($this->pdo,1,$transport);
+            self::assertSame(1,$s['delivered']);self::assertSame('snapshot.page',$sent[0]['kind']);
+            self::assertSame($r['source_generation'],$sent[0]['sourceGeneration']);
+            self::assertSame('queued',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame($original,$this->pdo->query("SELECT * FROM portal_projection_outbox WHERE id<={$cutoff} ORDER BY id")->fetchAll(PDO::FETCH_ASSOC));
+            $sender->deliverDue($this->pdo,10,$transport);
+            self::assertSame('snapshot.activate',end($sent)['kind']);
+            self::assertSame('complete',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame(0,$sender->deliverDue($this->pdo,10,$transport)['processed']);
+            self::assertSame($original,$this->pdo->query("SELECT * FROM portal_projection_outbox WHERE id<={$cutoff} ORDER BY id")->fetchAll(PDO::FETCH_ASSOC),'Supersession never fabricates delivery or rewrites old attempts/history.');
+        });
+    }
+
+    public function testExplicitRecoveryReplansOnlyLegacyInsufficientCutoffAndPreservesItsHistory():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first,int$cutoff):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            // Model the exact old compiler's terminal-only cutoff. All other
+            // generation/page/activation rows come from the real service.
+            $this->pdo->exec("UPDATE portal_projection_recoveries SET failed_row_cutoff_id={$first}");
+            $old=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetch(PDO::FETCH_ASSOC);
+            $original=$this->pdo->query('SELECT * FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            self::assertSame(1,$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25)['queued']);
+            $rows=$this->pdo->query('SELECT * FROM portal_projection_recoveries ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            self::assertCount(2,$rows);self::assertSame('failed',$rows[0]['state']);self::assertSame('replaced_after_review',$rows[0]['last_error_code']);
+            foreach(['failed_row_cutoff_id','source_generation','activation_delivery_id','requested_by']as$key)self::assertSame($old[$key],$rows[0][$key]);
+            self::assertSame('queued',$rows[1]['state']);self::assertNotSame($old['source_generation'],$rows[1]['source_generation']);
+            self::assertSame((int)end($original)['id'],(int)$rows[1]['failed_row_cutoff_id']);
+            self::assertSame($original,$this->pdo->query('SELECT * FROM portal_projection_outbox WHERE id<='.(int)end($original)['id'].' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.recovery_replanned'")->fetchColumn());
+            (new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,10,static fn():array=>['status'=>204]);
+            self::assertSame(['failed','complete'],$this->pdo->query('SELECT state FROM portal_projection_recoveries ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
+            self::assertSame($original,$this->pdo->query('SELECT * FROM portal_projection_outbox WHERE id<='.(int)end($original)['id'].' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+        });
+    }
+
+    public function testRecoveryDoesNotStealLiveClaimOrBroadenAdequateQueuedIntent():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first,int$cutoff):void{
+            $this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=strftime('%Y-%m-%d %H:%M:%f','now'),claim_token='live-original' WHERE id={$cutoff}");
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('Live original claim must drain first.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable',$error->getMessage());}
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame('live-original',$this->pdo->query("SELECT claim_token FROM portal_projection_outbox WHERE id={$cutoff}")->fetchColumn());
+            $this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=NULL,claim_token=NULL WHERE id={$cutoff}");
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $before=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetchAll(PDO::FETCH_ASSOC);
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('Adequate queued intent cannot be duplicated.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable',$error->getMessage());}
+            self::assertSame($before,$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetchAll(PDO::FETCH_ASSOC));
+            $this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=strftime('%Y-%m-%d %H:%M:%f','now'),claim_token='late-live-original' WHERE id={$cutoff}");
+            $called=false;$s=(new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,10,static function()use(&$called):array{$called=true;return['status'=>204];});
+            self::assertFalse($called);self::assertSame(0,$s['processed']);
+            self::assertSame('late-live-original',$this->pdo->query("SELECT claim_token FROM portal_projection_outbox WHERE id={$cutoff}")->fetchColumn());
+        });
+    }
+
+    public function testExplicitReplanSkipsWithdrawnLegacyWorkspaceAndRecoversOtherAuthorizedWorkspace():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $this->pdo->exec("UPDATE portal_projection_recoveries SET failed_row_cutoff_id={$first}");
+            $old=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetch(PDO::FETCH_ASSOC);
+            $original=$this->pdo->query('SELECT * FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            $last=(int)end($original)['id'];
+            $this->pdo->exec('UPDATE portal_integration_profile_workspaces SET active=0');
+            $this->pdo->exec("INSERT INTO clients VALUES(21,'client-other-recovery','Other Recovery','other-recovery@example.test',NULL,'consumer',0,NULL,'v1')");
+            self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed']);
+            $newFirst=(int)$this->pdo->query('SELECT MIN(id) FROM portal_projection_outbox WHERE id>'.$last)->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_error_code='http_4xx' WHERE id={$newFirst}");
+            self::assertSame(1,$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25)['queued']);
+            self::assertSame($old,$this->pdo->query('SELECT * FROM portal_projection_recoveries ORDER BY id LIMIT 1')->fetch(PDO::FETCH_ASSOC));
+            self::assertSame($original,$this->pdo->query('SELECT * FROM portal_projection_outbox WHERE id<='.$last.' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame(2,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_recoveries WHERE state='queued'")->fetchColumn());
+        });
+    }
+
+    public function testBoundedExplicitReplanSkipsOlderIneligibleQueuedIntentsBeforeLimit():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $this->pdo->exec("UPDATE portal_projection_recoveries SET failed_row_cutoff_id={$first}");
+            $this->pdo->exec('UPDATE portal_integration_profile_workspaces SET active=0');
+            // Every intent/payload originates from normal provisioning/recovery.
+            // Only legacy cutoff/transport states are modeled in the fixture.
+            foreach(['adequate','live_claim','revocation','eligible']as$i=>$mode){
+                $id=21+$i;$previous=(int)$this->pdo->query('SELECT MAX(id) FROM portal_projection_outbox')->fetchColumn();
+                $this->pdo->prepare("INSERT INTO clients VALUES(?,?,?, ?,NULL,'consumer',0,NULL,'v1')")->execute([$id,'client-replan-'.$mode,'Replan '.$mode,'replan-'.$mode.'@example.test']);
+                self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1)['completed']);
+                $terminal=(int)$this->pdo->query('SELECT MIN(id) FROM portal_projection_outbox WHERE id>'.$previous)->fetchColumn();
+                $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_error_code='http_4xx' WHERE id={$terminal}");
+                self::assertSame(1,$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25)['queued']);
+                $r=$this->pdo->query('SELECT * FROM portal_projection_recoveries ORDER BY id DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+                if($mode!=='adequate')$this->pdo->exec('UPDATE portal_projection_recoveries SET failed_row_cutoff_id='.$terminal.' WHERE id='.(int)$r['id']);
+                if($mode==='live_claim')$this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=strftime('%Y-%m-%d %H:%M:%f','now'),claim_token='held-original' WHERE delivery_id='".$r['activation_delivery_id']."'");
+                if($mode==='revocation'){
+                    $this->pdo->beginTransaction();
+                    (new \App\Services\PortalProjectionService())->queueWorkspaceRevocation($this->pdo,$this->pdo->query('SELECT * FROM portal_integration_profiles')->fetch(PDO::FETCH_ASSOC),(string)$r['workspace_public_id']);
+                    $this->pdo->commit();
+                }
+            }
+            $before=$this->pdo->query('SELECT * FROM portal_projection_recoveries ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            self::assertCount(5,$before);
+            self::assertSame(1,$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,1)['queued'],'A limit of one must count eligible work, not the oldest withdrawn/adequate/claimed/revoked intents.');
+            $after=$this->pdo->query('SELECT * FROM portal_projection_recoveries ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            self::assertCount(6,$after);self::assertSame(array_slice($before,0,4),array_slice($after,0,4));
+            self::assertSame('failed',$after[4]['state']);self::assertSame('replaced_after_review',$after[4]['last_error_code']);self::assertSame('queued',$after[5]['state']);
+        });
+    }
+
+    public function testExplicitLegacyReplanRefusesLiveReplacementClaimOrActivationAck():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $this->pdo->exec("UPDATE portal_projection_recoveries SET failed_row_cutoff_id={$first}");
+            $old=$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetchAll(PDO::FETCH_ASSOC);
+            $activation=(int)$this->pdo->query('SELECT MAX(id) FROM portal_projection_outbox')->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=strftime('%Y-%m-%d %H:%M:%f','now'),claim_token='replacement-live' WHERE id={$activation}");
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('Live replacement cannot be replanned.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable',$error->getMessage());}
+            self::assertSame($old,$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetchAll(PDO::FETCH_ASSOC));
+            $this->pdo->exec("UPDATE portal_projection_outbox SET claimed_at=NULL,claim_token=NULL,delivered_at=CURRENT_TIMESTAMP WHERE id={$activation}");
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('Known activation ACK must never be superseded as unexecuted.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable',$error->getMessage());}
+            self::assertSame($old,$this->pdo->query('SELECT * FROM portal_projection_recoveries')->fetchAll(PDO::FETCH_ASSOC));
+        });
+    }
+
+    public function testRecoveryChecksWorkspaceWithdrawalBeforeClaimWithoutBurningAttempts():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $before=$this->pdo->query('SELECT * FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+            $this->pdo->exec('UPDATE portal_integration_profile_workspaces SET active=0');
+            $called=false;$s=(new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,10,static function()use(&$called):array{$called=true;return['status'=>204];});
+            self::assertFalse($called);self::assertSame(0,$s['processed']);
+            self::assertSame($before,$this->pdo->query('SELECT * FROM portal_projection_outbox ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame('queued',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+        });
+    }
+
+    public function testRecoveryLostActivationAckReplaysExactDeliveryAndNeverClaimsPrematureCompletion():void
+    {
+        $this->withBlockedRecoveryFixture(function(string$workspace,int$first,int$cutoff):void{
+            $this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);
+            $sender=new \App\Services\PortalProjectionOutboxSender();
+            $sender->deliverDue($this->pdo,1,static fn():array=>['status'=>204]);
+            $seen=[];$transport=static function(string$url,array$headers,string$body)use(&$seen):array{$p=json_decode($body,true,64,JSON_THROW_ON_ERROR)['projection'];$seen[]=$p;return['status'=>count($seen)===1?0:204];};
+            self::assertSame(1,$sender->deliverDue($this->pdo,1,$transport)['failed']);
+            self::assertSame('queued',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame(1,$this->service->status($this->pdo,'generic_operations')['counts']['failed_portal']);
+            $this->pdo->exec("UPDATE portal_projection_outbox SET next_attempt_at='2000-01-01 00:00:00.000000' WHERE id>{$cutoff} AND delivered_at IS NULL");
+            self::assertSame(1,$sender->deliverDue($this->pdo,1,$transport)['delivered']);
+            self::assertCount(2,$seen);self::assertSame($seen[0],$seen[1]);self::assertSame('snapshot.activate',$seen[0]['kind']);
+            self::assertSame('complete',$this->pdo->query('SELECT state FROM portal_projection_recoveries')->fetchColumn());
+            self::assertSame(0,$sender->deliverDue($this->pdo,10,$transport)['processed']);
+        });
+    }
+
+    private function withBlockedRecoveryFixture(callable $check):void
+    {
+        $this->withPortalCapabilities([],function()use($check):void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("INSERT INTO clients VALUES(20,'client-blocked-recovery','Blocked Recovery','blocked-recovery@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->service->reconcileHistoricalBatch($this->pdo,'generic_operations',1);
+            $first=(int)$this->pdo->query('SELECT MIN(id) FROM portal_projection_outbox')->fetchColumn();
+            $cutoff=(int)$this->pdo->query('SELECT MAX(id) FROM portal_projection_outbox')->fetchColumn();
+            $this->pdo->exec("UPDATE portal_projection_outbox SET attempts=12,dead_lettered_at=CURRENT_TIMESTAMP,last_http_status=422,last_error_code='http_4xx' WHERE id={$first}");
+            $workspace=(string)$this->pdo->query("SELECT public_id FROM portal_v2_workspaces WHERE root_public_id='client-blocked-recovery'")->fetchColumn();
+            $check($workspace,$first,$cutoff);
+        });
+    }
+
     public function testOrdinaryManualSyncDoesNotReplayOrHideTerminalPortalPayloads():void
     {
         $this->withPortalCapabilities([],function():void{
@@ -787,11 +976,15 @@ SQL);
             $insert->execute([$profileId,'revocation',$workspace,4,51,1,'https://operations.example.test/events']);
             $insert->execute([$profileId,'old-contract',$workspace,4,52,0,'https://old.example.test/events']);
 
-            self::assertSame(['queued'=>1,'failed_records'=>1],$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25));
+            try{$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25);self::fail('An unresolved revocation cannot be covered by recovery.');}catch(\DomainException$error){self::assertStringContainsString('no recoverable',$error->getMessage());}
             self::assertSame(1,$this->service->status($this->pdo,'generic_operations')['counts']['failed_revocations']);
-            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_recoveries WHERE state='queued'")->fetchColumn());
+            self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_projection_recoveries WHERE state='queued'")->fetchColumn());
             self::assertSame(1,$this->service->retryFailedRevocations($this->pdo,'generic_operations',7));
             self::assertNull($this->pdo->query("SELECT dead_lettered_at FROM portal_projection_outbox WHERE delivery_id='revocation'")->fetchColumn());
+            self::assertSame(1,(new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,1,static fn():array=>['status'=>204])['delivered']);
+            self::assertSame(['queued'=>1,'failed_records'=>1],$this->service->recoverFailedPortalWorkspaces($this->pdo,'generic_operations',7,25));
+            (new \App\Services\PortalProjectionOutboxSender())->deliverDue($this->pdo,10,static fn():array=>['status'=>204]);
+            self::assertSame(1,$this->service->status($this->pdo,'generic_operations')['counts']['failed_portal'],'Old receiver contract evidence stays unresolved.');
             self::assertNotNull($this->pdo->query("SELECT dead_lettered_at FROM portal_projection_outbox WHERE delivery_id='old-contract'")->fetchColumn());
         });
     }

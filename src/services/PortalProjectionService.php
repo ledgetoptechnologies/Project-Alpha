@@ -107,11 +107,11 @@ final class PortalProjectionService
         if(!$state||empty($state['last_snapshot_hash']))return$onlyAction==='tombstone'?['snapshot'=>null,'events'=>[]]:['snapshot'=>$this->queueWorkspaceSnapshot($pdo,$profile,$workspacePublicId),'events'=>[]];
         $schemaVersion=$this->portalSchemaVersion($profile);$projection=$this->workspaceProjection($pdo,$workspace,$schemaVersion);$current=$this->portalResourceRecords($workspace,$projection,$schemaVersion);$events=[];
         $changes=$this->resourceChanges($pdo,$profileId,$workspacePublicId,'portal',$current);
-        // Adding or removing an assignment changes receiver topology (contact
-        // endpoint plus its relation). Publish that topology atomically as a
-        // replacement generation. A visible update to an already-established
-        // assignment, such as a role or billing flag, remains a strict event.
-        if($schemaVersion===4&&$this->contactTopologyChanged($changes,$onlyAction))return['snapshot'=>$this->queueWorkspaceSnapshot($pdo,$profile,$workspacePublicId),'events'=>[]];
+        // Hierarchy and contact-assignment topology must become visible as one
+        // complete graph. Existing entity metadata or assignment role/billing
+        // changes can remain strict events within an established topology.
+        if(($schemaVersion>=3&&$this->hierarchyTopologyChanged($changes,$onlyAction))
+            ||($schemaVersion===4&&$this->contactTopologyChanged($changes,$onlyAction)))return['snapshot'=>$this->queueWorkspaceSnapshot($pdo,$profile,$workspacePublicId),'events'=>[]];
         foreach($changes as$change){
             if($onlyAction!==null&&$change['action']!==$onlyAction)continue;
             if($change['action']==='upsert')$event=$this->portalUpsertEvent($change['resource'],$change['record']);
@@ -148,9 +148,18 @@ final class PortalProjectionService
             $this->portalResourceRecords($workspace,$projection,$neutralSchemaVersion),
             static fn(array$entry):bool=>in_array((string)$entry['resource'],$allowed,true)
         );
+        $changes=$this->resourceChanges($pdo,$profileId,$workspacePublicId,'portal',$current,$allowed);
+        // The strict receiver cannot expose a child before its relation (or a
+        // project before its lifecycle). A neutral directory mutation cannot
+        // publish a full current-authority snapshot as an incidental side effect.
+        // Defer only positive changes, leaving their published state untouched
+        // for a governed generation. Tombstones must still close stale access
+        // immediately, including when this diff also contains a new child.
+        $deferUpserts=$schemaVersion>=3&&$this->hierarchyTopologyChanged($changes,$onlyAction);
         $events=[];
-        foreach($this->resourceChanges($pdo,$profileId,$workspacePublicId,'portal',$current,$allowed)as$change){
+        foreach($changes as$change){
             if($onlyAction!==null&&$change['action']!==$onlyAction)continue;
+            if($deferUpserts&&$change['action']==='upsert')continue;
             if($change['action']==='upsert')$event=$this->portalUpsertEvent($change['resource'],$change['record']);
             elseif($change['resource']==='project_lifecycle'){ $this->deleteResourceState($pdo,$profileId,$workspacePublicId,'portal',$change['resource'],$change['publicId']);continue; }
             else$event=['resource'=>$change['resource'],'action'=>'tombstone','publicId'=>$change['publicId'],'sourceVersion'=>$change['sourceVersion']];
@@ -411,6 +420,20 @@ final class PortalProjectionService
         foreach($existing as$row){$resource=(string)$row['resource_type'];$publicId=(string)$row['resource_public_id'];$version=PortalSourceVersion::from(['resource'=>$resource,'publicId'=>$publicId,'active'=>false,'previousSourceVersion'=>(string)$row['source_version']]);$changes[]=['action'=>'tombstone','resource'=>$resource,'publicId'=>$publicId,'sourceVersion'=>$version,'record'=>[],'existed'=>true];}
         $upsertOrder=['workspace'=>0,'entity'=>1,'principal'=>2,'entitlement'=>3,'relation'=>4,'project_lifecycle'=>5,'contact_assignment'=>6,'catalog_item'=>0];$tombstoneOrder=['contact_assignment'=>0,'relation'=>1,'entitlement'=>2,'project_lifecycle'=>3,'principal'=>4,'entity'=>5,'workspace'=>6,'catalog_item'=>0];
         usort($changes,static function(array$a,array$b)use($upsertOrder,$tombstoneOrder):int{$aOrder=($a['action']==='upsert'?$upsertOrder:$tombstoneOrder)[$a['resource']]??99;$bOrder=($b['action']==='upsert'?$upsertOrder:$tombstoneOrder)[$b['resource']]??99;return[$a['action']==='tombstone'?0:1,$aOrder,$a['resource'],$a['publicId']]<=>[$b['action']==='tombstone'?0:1,$bOrder,$b['resource'],$b['publicId']];});return$changes;
+    }
+
+    /** @param list<array<string,mixed>> $changes */
+    private function hierarchyTopologyChanged(array$changes,?string$onlyAction):bool
+    {
+        foreach($changes as$change){
+            if($onlyAction!==null&&$change['action']!==$onlyAction)continue;
+            if($change['action']!=='upsert')continue;
+            $resource=$change['resource'];
+            if($resource==='relation'&&!empty($change['record']['active']))return true;
+            if(in_array($resource,['entity','project_lifecycle'],true)
+                &&empty($change['existed']))return true;
+        }
+        return false;
     }
 
     /** @param list<array<string,mixed>> $changes */
