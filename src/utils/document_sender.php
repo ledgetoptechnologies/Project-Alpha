@@ -112,3 +112,85 @@ function document_sender_lines(array $sender): array
 
     return $lines;
 }
+
+/** Resolve a saved issuer snapshot; legacy rows retain their pre-migration policy. */
+function document_sender_for_document(PDO $pdo, array $appConfig, array $document): array
+{
+    if (!empty($document['issuer_snapshot'])) {
+        $snapshot = json_decode((string)$document['issuer_snapshot'], true, 32, JSON_THROW_ON_ERROR);
+        if (!is_array($snapshot['sender'] ?? null)) throw new RuntimeException('Invalid saved document issuer.');
+        return $snapshot['sender'];
+    }
+    if (($document['issuer_mode'] ?? 'legacy') === 'legacy') {
+        return document_sender_for_creator($pdo, $appConfig, !empty($document['created_by']) ? (int)$document['created_by'] : null);
+    }
+    return document_issuer_resolve($pdo, $appConfig, $document)['sender'];
+}
+
+function document_issuer_resolve(PDO $pdo, array $appConfig, array $document): array
+{
+    require_once __DIR__ . '/../services/DocumentIssuerPolicy.php';
+    $creator = null;
+    if (!empty($document['created_by'])) {
+        $statement = $pdo->prepare('SELECT id,username,email,document_sender_enabled,document_sender_name,document_sender_phone,document_sender_email FROM users WHERE id=? LIMIT 1');
+        $statement->execute([(int)$document['created_by']]);
+        $creator = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+    return \App\Services\DocumentIssuerPolicy::resolve($appConfig, $creator, (string)($document['issuer_mode'] ?? 'default'));
+}
+
+/** Fill partial automation settings from the same installation configuration as web requests. */
+function document_issuer_company_configuration(PDO $pdo, array $provided): array
+{
+    $keys = ['brand_name','document_issuer_mode','from_company','from_name','from_email','from_phone',
+        'from_address_line1','from_address_line2','from_city','from_state','from_postal','from_country'];
+    if (count(array_intersect($keys, array_keys($provided))) === count($keys)) return $provided;
+    $installation = (static function (PDO $pdo): array {
+        require __DIR__ . '/../config/app.php';
+        return $appConfig;
+    })($pdo);
+    return array_replace($installation, $provided);
+}
+
+/** Must execute in the same transaction as document creation/edit and revision. */
+function document_issuer_capture(PDO $pdo, array $appConfig, string $type, int $id): ?array
+{
+    $table = ['quote'=>'quotes','contract'=>'contracts','invoice'=>'invoices','project_invoice'=>'project_invoices'][$type] ?? null;
+    if (!$table) throw new InvalidArgumentException('Unsupported issuer document type.');
+    $statement = $pdo->prepare("SELECT * FROM {$table} WHERE id=?" . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql' ? ' FOR UPDATE' : ''));
+    $statement->execute([$id]);
+    $document = $statement->fetch(PDO::FETCH_ASSOC);
+    if (!$document) throw new RuntimeException('Document not found.');
+    // Older schemas remain readable while the release migration is pending.
+    if (!array_key_exists('issuer_mode', $document) || $document['issuer_mode']==='legacy') return null;
+    if (!$pdo->inTransaction()) throw new LogicException('Issuer capture requires a document transaction.');
+    if (!empty($document['issuer_snapshot'])) return json_decode((string)$document['issuer_snapshot'], true, 32, JSON_THROW_ON_ERROR);
+    if (trim((string)($appConfig['from_company'] ?? '')) === '' && trim((string)($appConfig['brand_name'] ?? '')) === '') throw new LogicException('Document issuer requires loaded company configuration.');
+    $issuer = document_issuer_resolve($pdo, $appConfig, $document);
+    $json = json_encode($issuer, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $pdo->prepare("UPDATE {$table} SET issuer_snapshot=? WHERE id=?")->execute([$json,$id]);
+    return $issuer;
+}
+
+/** Existing controller ownership/CSRF checks remain authoritative. */
+function document_issuer_apply_post(PDO $pdo, array $appConfig, string $type, int $id, array $post): void
+{
+    if (!array_key_exists('document_issuer_mode', $post)) return;
+    require_once __DIR__ . '/../services/DocumentIssuerPolicy.php';
+    $requested = (string)$post['document_issuer_mode'];
+    if (!in_array($requested, ['default','company','creator','legacy'], true)) throw new DomainException('Invalid document issuer choice.');
+    $table = ['quote'=>'quotes','contract'=>'contracts','invoice'=>'invoices','project_invoice'=>'project_invoices'][$type] ?? null;
+    if (!$table || !$pdo->inTransaction()) throw new LogicException('Issuer changes require a document transaction.');
+    $statement = $pdo->prepare("SELECT * FROM {$table} WHERE id=?" . ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql' ? ' FOR UPDATE' : ''));
+    $statement->execute([$id]);$row=$statement->fetch(PDO::FETCH_ASSOC);
+    if (!$row) throw new RuntimeException('Document not found.');
+    if (!array_key_exists('issuer_mode',$row)) throw new DomainException('Document issuer settings require the database update.');
+    if ($requested === (string)$row['issuer_mode']) return;
+    // Issued/signed/paid documents keep their historical issuer presentation.
+    if (strtolower((string)($row['status']??'')) !== 'draft' || !empty($row['last_sent_revision']) || !empty($row['finalized_at']) || !empty($row['signed_at'])) {
+        throw new DomainException('The issuer can only be changed before this document is issued.');
+    }
+    if ($requested==='legacy') throw new DomainException('Legacy issuer settings can only be preserved.');
+    \App\Services\DocumentIssuerPolicy::mode($requested, (string)($appConfig['document_issuer_mode'] ?? 'company'));
+    $pdo->prepare("UPDATE {$table} SET issuer_mode=?,issuer_snapshot=NULL WHERE id=?")->execute([$requested,$id]);
+}

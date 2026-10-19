@@ -35,6 +35,7 @@ if ($selectedProjectId > 0) {
   <form id="coCreateForm" method="post" action="/?page=contract/contracts-create" style="display:grid;gap:16px;max-width:900px">
     <input type="hidden" name="_token" value="<?php echo htmlspecialchars($csrf); ?>">
     <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
+    <?php $issuerChoiceRow = []; require __DIR__ . '/../../components/document_issuer_choice.php'; ?>
     <?php if ($selectedProject): ?>
       <input type="hidden" name="return_to_project" value="<?php echo (int)$selectedProject['id']; ?>">
     <?php endif; ?>

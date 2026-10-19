@@ -572,6 +572,8 @@ function project_invoice_create_for_period_result(PDO $pdo, int $projectId, stri
             $createdBy,
         ]);
         $projectInvoiceId = (int)$pdo->lastInsertId();
+        require_once __DIR__ . '/document_sender.php';
+        document_issuer_capture($pdo, document_issuer_company_configuration($pdo, $appConfig), 'project_invoice', $projectInvoiceId);
         if ($shouldFinalize) {
             $pdo->prepare('UPDATE project_invoices SET finalized_at=NOW(), finalization_source="project_billing" WHERE id=?')
                 ->execute([$projectInvoiceId]);

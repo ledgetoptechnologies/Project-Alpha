@@ -41,7 +41,7 @@ try {
 if (empty($signatures)) {
   $signatures = [['signer_title' => 'Client Signature', 'is_required' => 1]];
 }
-$documentSender = document_sender_for_creator($pdo, $appConfig, !empty($contract['created_by']) ? (int)$contract['created_by'] : null);
+$documentSender = document_sender_for_document($pdo, $appConfig, $contract);
 $fromName = $documentSender['name'] ?? '';
 $fromAddress = implode("\n", document_sender_lines($documentSender));
 $fromPhone = $documentSender['phone'] ?? '';

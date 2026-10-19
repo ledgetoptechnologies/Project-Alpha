@@ -17,15 +17,15 @@ Projects give PA a central place for work that spans more than one document or c
 - Project notes and status
 - Public project access settings
 - One primary Project Manager and a Project Team
-- A Business Unit, scheduled Operations, and multi-assignee Tasks
+- Optional work planning (currently paused with the workforce workflows)
 
-## Project Manager, Team, and Business Unit
+## Project Manager and Team
 
 Each Project may have one primary Project Manager. Selecting a manager keeps that user on the Project Team. Replacing a manager leaves the former manager as an ordinary Team member until an administrator ends that membership.
 
-Business Units describe company structure, such as a branch, region, department, or crew. On a new Project, PA first suggests the selected manager's primary Business Unit, then the configured default Unit or the only active Unit. The suggestion remains editable. Changing the manager later does not silently replace an already assigned Unit.
+PA no longer asks for an internal Business Unit or Division when creating or editing a Project. New projects do not inherit an internal division from the manager or a global default. Customer organizations and their departments remain separate and unchanged. Historical internal division IDs are retained as compatibility data until connected integrations complete their authority transition; editing a project does not reassign that historical scope.
 
-Use **Team & Work** on Project details to add Team members, schedule optional Operations, and create Tasks. Operation and Task assignees must be active Project Team members. Open assignments must be resolved before a Team member can be removed.
+The experimental **Team & Work** workforce workflow is paused. Its stored Team, Operation, and Task data is preserved. Operation and Task assignees must be active Project Team members. Open assignments must be resolved before a Team member can be removed.
 
 ## Public Project Links
 

@@ -27,7 +27,7 @@ final class ProjectInvoiceDocumentLayoutTest extends TestCase
             self::assertStringContainsString($partial, $project, $partial);
         }
 
-        self::assertStringContainsString('document_sender_for_creator($pdo, $appConfig', $project);
+        self::assertStringContainsString('document_sender_for_document($pdo, $appConfig', $project);
         self::assertStringContainsString('$documentPartyRecipient = $billingRecipient;', $project);
         self::assertStringContainsString('invoice_content_links_html($contentLinks)', $project);
         self::assertStringContainsString("'Project Invoice PI-' . \$docNum", $project);

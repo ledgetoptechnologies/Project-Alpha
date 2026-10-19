@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/address_book.php';
 require_once __DIR__ . '/../utils/document_organization.php';
+require_once __DIR__ . '/../utils/document_sender.php';
 
 final class DocumentRevisionService
 {
@@ -11,7 +12,7 @@ final class DocumentRevisionService
     private const ITEM_TABLES = ['quote' => 'quote_items', 'contract' => 'contract_items', 'invoice' => 'invoice_items'];
     private const ITEM_KEYS = ['quote' => 'quote_id', 'contract' => 'contract_id', 'invoice' => 'invoice_id'];
 
-    public static function snapshotAndSave(PDO $pdo, string $type, int $id, ?int $userId, bool $increment = true): int
+    public static function snapshotAndSave(PDO $pdo, string $type, int $id, ?int $userId, bool $increment = true, ?array $issuerConfig = null): int
     {
         $table = self::TABLES[$type] ?? null;
         if ($table === null) {
@@ -24,6 +25,15 @@ final class DocumentRevisionService
         if (!$row) {
             throw new RuntimeException('Document not found.');
         }
+        $resolvedIssuerConfig = $issuerConfig ?? [];
+        if (isset($row['issuer_mode']) && $row['issuer_mode'] !== 'legacy' && empty($row['issuer_snapshot'])) {
+            // Automation callers historically pass only scheduling/mail options.
+            // Complete the issuer identity from persisted installation settings.
+            $resolvedIssuerConfig = document_issuer_company_configuration($pdo, $resolvedIssuerConfig);
+        }
+        document_issuer_capture($pdo, $resolvedIssuerConfig, $type, $id);
+        $rowStmt->execute([$id]);
+        $row = $rowStmt->fetch(PDO::FETCH_ASSOC);
         $revision = max(1, (int)($row['revision_number'] ?? 1));
         if ($increment) {
             $revision++;

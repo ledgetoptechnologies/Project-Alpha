@@ -27,6 +27,7 @@ if ($selectedProjectId > 0) {
   </div>
   <form id="quoteForm" method="post" action="/?page=quote/quotes-create" style="display:grid;gap:16px;max-width:900px">
     <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
+    <?php $issuerChoiceRow = []; require __DIR__ . '/../../components/document_issuer_choice.php'; ?>
     <?php if ($selectedProject): ?>
       <input type="hidden" name="return_to_project" value="<?php echo (int)$selectedProject['id']; ?>">
     <?php endif; ?>

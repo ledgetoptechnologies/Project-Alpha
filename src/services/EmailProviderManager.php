@@ -49,7 +49,9 @@ final class EmailProviderManager
             return new SendResult(false, 'The active email credentials could not be decrypted. Check APP_ENCRYPTION_KEY.');
         }
         $message->fromEmail = trim((string)($connection['sender_email'] ?? '')) ?: $message->fromEmail;
-        $message->fromName = trim((string)($connection['sender_name'] ?? '')) ?: $message->fromName;
+        if (empty($context['document_issuer_display'])) {
+            $message->fromName = trim((string)($connection['sender_name'] ?? '')) ?: $message->fromName;
+        }
 
         $messageKey = trim((string)($context['message_key'] ?? ''));
         if ($messageKey === '') {

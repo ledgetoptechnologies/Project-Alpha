@@ -280,6 +280,7 @@ try{
       }
     }
   }
+    document_issuer_apply_post($pdo, $appConfig, 'contract', $id, $_POST);
   pricing_apply_posted_override($pdo,(int)$organizationId,'contract',$id,(int)($_SESSION['user']['id']??0),$_POST);
   pricing_finalize_document_revision(
     $pdo,$organizationId!==null?(int)$organizationId:null,'contract',$id,(int)($_SESSION['user']['id']??0),true,

@@ -186,6 +186,7 @@ try{
   audit_log($pdo, 'contract.create', 'contract', $co_id, ['client_id' => $client_id, 'organization_id' => $__orgId, 'created_by' => $__creator, 'invoice_id' => $invoice_id]);
   audit_log($pdo, 'invoice.create', 'invoice', $invoice_id, ['contract_id' => $co_id, 'client_id' => $client_id, 'organization_id' => $__orgId, 'created_by' => $__creator, 'auto_generated' => true]);
   pricing_apply_posted_override($pdo,(int)$__orgId,'contract',$co_id,(int)$__creator,$_POST);
+    document_issuer_apply_post($pdo, $appConfig, 'contract', $co_id, $_POST);
   pricing_finalize_document_revision(
     $pdo,$__orgId!==null?(int)$__orgId:null,'contract',$co_id,$__creator,false,
     (string)($appConfig['workforce_currency']??'USD'),

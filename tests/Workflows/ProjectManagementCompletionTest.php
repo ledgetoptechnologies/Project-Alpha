@@ -27,14 +27,14 @@ final class ProjectManagementCompletionTest extends TestCase
         self::assertStringContainsString('Team and work planning is temporarily unavailable.', $details);
         self::assertStringContainsString('name="manager_user_id"', $create);
         self::assertStringContainsString('name="manager_user_id"', $edit);
-        self::assertStringContainsString('data-primary-business-unit=', $create);
-        self::assertStringContainsString('data-primary-business-unit=', $edit);
+        self::assertStringNotContainsString('name="business_unit_id"', $create);
+        self::assertStringNotContainsString('name="business_unit_id"', $edit);
         self::assertStringContainsString('manager_user_id', $createController);
         self::assertStringContainsString('manager_user_id', $updateController);
         self::assertStringContainsString('addTeamMember($pdo, $project_id, $managerUserId', $createController);
         self::assertStringContainsString('addTeamMember($pdo, $id, $managerUserId', $updateController);
-        self::assertStringContainsString("config_key='default_business_unit_id'", $updateController);
-        self::assertStringContainsString("SELECT id FROM business_units WHERE is_active=1 ORDER BY id LIMIT 2", $updateController);
+        self::assertStringNotContainsString("default_business_unit_id", $updateController);
+        self::assertStringContainsString('$businessUnitId = $storedBusinessUnitId;', $updateController);
 
         $accountUpdate = (string)file_get_contents($root . '/src/controllers/accounts/accounts_update.php');
         self::assertStringContainsString('Choose a different Project Manager for ', $accountUpdate);

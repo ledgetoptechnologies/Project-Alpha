@@ -240,6 +240,7 @@ try{
     }
 
     pricing_apply_posted_override($pdo,(int)$contractOrgId,'contract',$contract_id,$sessionUserId,$_POST);
+    document_issuer_apply_post($pdo, $appConfig, 'contract', $contract_id, $_POST);
     pricing_finalize_document_revision(
         $pdo,$contractOrgId!==null?(int)$contractOrgId:null,'contract',$contract_id,$sessionUserId,false,
         (string)($appConfig['workforce_currency']??'USD'),

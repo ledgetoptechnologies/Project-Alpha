@@ -29,7 +29,7 @@ if ($quote['pricing_type'] === 'fixed_total') {
 $isHourlyBilling = ($quote['billing_mode'] ?? 'fixed') === 'hourly';
 
 require_once __DIR__ . '/../../../utils/format.php';
-$documentSender = document_sender_for_creator($pdo, $appConfig, !empty($quote['created_by']) ? (int)$quote['created_by'] : null);
+$documentSender = document_sender_for_document($pdo, $appConfig, $quote);
 $fromName = $documentSender['name'] ?? '';
 $fromAddress = implode("\n", document_sender_lines($documentSender));
 $fromPhone = $documentSender['phone'] ?? '';

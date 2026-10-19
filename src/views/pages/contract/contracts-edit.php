@@ -78,6 +78,7 @@ try {
   <?php echo pricing_adjustment_assignment_controls($pdo,(int)($contract['organization_id']??$contract['client_organization_id']??0),'contract',$id,'/?page=contract/contracts-edit&id='.$id,csrf_token()); ?>
   <form id="coEditForm" method="post" action="/?page=contracts-update" style="display:grid;gap:16px;max-width:900px">
     <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
+    <?php $issuerChoiceRow = $contract; require __DIR__ . '/../../components/document_issuer_choice.php'; ?>
     <input type="hidden" name="id" value="<?php echo (int)$contract['id']; ?>">
     <?php echo pricing_adjustment_override_controls($pdo,(int)($contract['organization_id']??$contract['client_organization_id']??0),'contract',$id); ?>
     <div style="display:grid;gap:12px;grid-template-columns:1fr 1fr">
