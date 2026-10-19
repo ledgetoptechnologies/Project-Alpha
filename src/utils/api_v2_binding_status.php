@@ -53,8 +53,56 @@ function api_v2_binding_status_payload(array $identity, string $requestId, array
         'resource' => ['revision' => $binding['resource_revision'], 'present' => true], 'applicationId' => $identity['application_id'], 'requestId' => $requestId];
 }
 
+/** Returns only an exact managed own-client association, never an email match.
+ * Older schemas remain usable for ordinary binding-status clients. */
+function api_v2_binding_status_client_portal_identity(PDO $pdo, array $client): array
+{
+    $unavailable = ['state'=>'unavailable','principalPublicId'=>null,'associationVersion'=>null];
+    try {
+        if (!isset($client['id'], $client['public_id']) || !array_key_exists('archived', $client)
+            || !array_key_exists('deleted_at', $client)) return $unavailable;
+        if ((int)$client['archived'] !== 0 || $client['deleted_at'] !== null)
+            return ['state'=>'revoked','principalPublicId'=>null,'associationVersion'=>null];
+        $read = $pdo->prepare("SELECT eligibility.portal_principal_id,eligibility.manual_state,eligibility.eligibility_status,
+            eligibility.source_version eligibility_version,principal.public_id principal_public_id,
+            principal.source_version principal_version,principal.authorization_version,principal.enabled,principal.revoked_at,
+            root.access_state,root.root_public_id,organization.public_id organization_public_id,
+            organization.archived organization_archived,organization.deleted_at organization_deleted_at,
+            (SELECT COUNT(*) FROM portal_client_login_eligibility other WHERE other.portal_principal_id=eligibility.portal_principal_id) managed_count,
+            (SELECT COUNT(*) FROM portal_principal_clients association WHERE association.portal_principal_id=eligibility.portal_principal_id) association_count,
+            (SELECT COUNT(*) FROM portal_principal_clients association WHERE association.portal_principal_id=eligibility.portal_principal_id AND association.client_id=eligibility.client_id) own_association
+            FROM portal_client_login_eligibility eligibility
+            LEFT JOIN portal_principals principal ON principal.id=eligibility.portal_principal_id
+            LEFT JOIN organizations organization ON organization.id=?
+            LEFT JOIN portal_client_access_roots root
+              ON root.root_type=CASE WHEN ? IS NULL THEN 'standalone_client' ELSE 'organization' END
+              AND root.root_public_id=CASE WHEN ? IS NULL THEN ? ELSE organization.public_id END
+            WHERE eligibility.client_id=? LIMIT 2");
+        $organizationId = $client['organization_id'] ?? null;
+        $read->execute([$organizationId,$organizationId,$organizationId,$client['public_id'],$client['id']]);
+        $rows = $read->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1) return ['state'=>'review_required','principalPublicId'=>null,'associationVersion'=>null];
+        $row = $rows[0];
+        if ($organizationId !== null && ($row['organization_public_id'] === null
+            || (int)$row['organization_archived'] !== 0 || $row['organization_deleted_at'] !== null))
+            return ['state'=>'revoked','principalPublicId'=>null,'associationVersion'=>null];
+        if ($row['manual_state']==='revoked' || $row['eligibility_status']==='revoked' || $row['access_state']==='revoked'
+            || ($row['principal_public_id']!==null && ((int)$row['enabled']!==1 || $row['revoked_at']!==null)))
+            return ['state'=>'revoked','principalPublicId'=>null,'associationVersion'=>null];
+        if ($row['manual_state']!=='automatic' || $row['eligibility_status']!=='eligible' || $row['access_state']!=='active'
+            || (int)$row['managed_count']!==1 || (int)$row['association_count']!==1 || (int)$row['own_association']!==1
+            || !is_string($row['principal_public_id']) || preg_match('/^[0-9a-f]{32}$/D',$row['principal_public_id'])!==1)
+            return ['state'=>'review_required','principalPublicId'=>null,'associationVersion'=>null];
+        $version = hash('sha256',json_encode(['client-portal-own-identity-v1',(string)$client['public_id'],
+            (string)$row['principal_public_id'],(string)$row['eligibility_version'],(string)$row['principal_version'],
+            (string)$row['authorization_version'],(string)$row['root_public_id'],
+            $row['organization_public_id'],$row['organization_archived'],$row['organization_deleted_at']],JSON_THROW_ON_ERROR));
+        return ['state'=>'eligible','principalPublicId'=>$row['principal_public_id'],'associationVersion'=>$version];
+    } catch (PDOException) { return $unavailable; }
+}
+
 /** Reads one binding and rejects drift against the live canonical profile. */
-function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, int $apiKeyId, array $headers, string $requestId): array
+function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, int $apiKeyId, array $headers, string $requestId, bool $includeClientPortalIdentity = false): array
 {
     if (!in_array($type, ['client', 'organization', 'unit'], true) || $apiKeyId < 1) return ['status' => 404];
     $pdo->beginTransaction();
@@ -99,6 +147,8 @@ function api_v2_binding_status_read(PDO $pdo, string $type, string $externalId, 
         if (!hash_equals((string)$stateRow['projection_sha256'], $liveHash) || !hash_equals((string)$row['resource_projection_sha256'], $liveHash)) { $pdo->commit(); return ['status' => 409]; }
         $payload = api_v2_binding_status_payload($identity, $requestId, $row);
         if ($payload === null) throw new RuntimeException('invalid binding');
+        if ($includeClientPortalIdentity && $type === 'client')
+            $payload['clientPortalIdentity'] = api_v2_binding_status_client_portal_identity($pdo,$liveRows[0]);
         $pdo->commit(); return ['status' => 200, 'payload' => $payload];
     } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }
 }
