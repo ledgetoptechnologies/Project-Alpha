@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../../utils/document_pricing_adjustments.php';
 require_once __DIR__ . '/../../components/tax_lookup_control.php';
 $id = (int)($_GET['id'] ?? 0);
 require_record_ownership($pdo, 'contracts', $id);
-$co = $pdo->prepare('SELECT co.*, c.name AS client_name, c.organization_id AS client_organization_id, o.name AS client_organization_name FROM contracts co LEFT JOIN clients c ON c.id = co.client_id LEFT JOIN organizations o ON o.id=c.organization_id WHERE co.id=?');
+$co = $pdo->prepare('SELECT co.* FROM contracts co WHERE co.id=?');
 $co->execute([$id]);
 $contract = $co->fetch(PDO::FETCH_ASSOC);
 if (!$contract) {
@@ -18,6 +18,11 @@ if (!$contract) {
   return;
 }
 try{$contract=DocumentPolicy::assertMutable($pdo,'contract',$id,'commercial');}catch(DocumentLockedException $locked){http_response_code(409);echo '<div class="alert alert-warning">'.htmlspecialchars($locked->getMessage()).' <a href="/?page=contract/contract-details&id='.$id.'">Return to contract</a></div>';return;}
+// Resolve display fields from the policy-checked row's current recipient.
+// Never replace its authoritative document fields with an earlier joined row.
+$recipient = $pdo->prepare('SELECT c.name AS client_name, c.organization_id AS client_organization_id, o.name AS client_organization_name FROM clients c LEFT JOIN organizations o ON o.id=c.organization_id WHERE c.id=?');
+$recipient->execute([(int)($contract['client_id'] ?? 0)]);
+$contract += $recipient->fetch(PDO::FETCH_ASSOC) ?: [];
 $isLongTermContract = ($contract['contract_type'] ?? 'regular') === 'long_term';
 $baseRecurringService = null;
 if ($isLongTermContract) {

@@ -1,3 +1,4 @@
+var itemCounterCo = 0;
 var itemData = getItemData();
 
 //Add loaded data
@@ -144,7 +145,6 @@ function money(n) {
     return '$' + (Number(n) || 0).toFixed(2)
 }
 
-var itemCounterCo = 0;
 function addItemCo(item = '', desc = '', qty = 1, price = 0, billingUnit = 'each', itemLibraryId = '') {
     var wrap = document.createElement('div');
     var itemId = 'itemCo_' + (itemCounterCo++);
