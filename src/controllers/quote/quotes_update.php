@@ -74,6 +74,7 @@ try{
   if($travelItem)$pdo->prepare('INSERT INTO quote_items (quote_id,item,description,quantity,unit_price,line_total,billing_unit,is_travel,pricing_status) VALUES (?,?,?,?,?,?,?,1,?)')->execute([$id,$travelItem['item'],$travelItem['description'],$travelItem['quantity'],$travelItem['unit_price'],$travelItem['line_total'],$travelItem['billing_unit'],$travelItem['pricing_status']]);
   $quoteOrg=$pdo->prepare('SELECT organization_id FROM quotes WHERE id=?');$quoteOrg->execute([$id]);mileage_save_document_rule($pdo,'quote',$id,($quoteOrg->fetchColumn()?:null),$client_id,(int)($_SESSION['user']['id']??0),$travelRule);
   pricing_apply_posted_override($pdo,(int)$organizationId,'quote',$id,(int)($_SESSION['user']['id']??0),$_POST);
+    document_issuer_apply_post($pdo, $appConfig, 'quote', $id, $_POST);
   pricing_finalize_document_revision($pdo,$organizationId!==null?(int)$organizationId:null,'quote',$id,(int)($_SESSION['user']['id']??0),true,(string)($appConfig['workforce_currency']??'USD'));
   if(!empty($existingQuote['job_id']))ScheduleService::syncJob($pdo,(int)$existingQuote['job_id'],(string)($appConfig['timezone']??'UTC'),(int)($_SESSION['user']['id']??0));
   $pdo->commit();

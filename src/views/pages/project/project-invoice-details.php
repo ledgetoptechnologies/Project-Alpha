@@ -89,7 +89,7 @@ $isPdf = defined('PDF_MODE') && PDF_MODE;
 $isPublic = defined('PUBLIC_VIEW') && PUBLIC_VIEW;
 $showEmailPanel = !empty($_GET['email_panel']) || !empty($_GET['content_link_warning']);
 $billingRecipient = pa_document_recipient($pi);
-$documentSender = document_sender_for_creator($pdo, $appConfig, !empty($pi['created_by']) ? (int)$pi['created_by'] : null);
+$documentSender = document_sender_for_document($pdo, $appConfig, $pi);
 ?>
 <section class="document-detail-page" style="max-width:980px;margin:0 auto;padding:<?php echo $isPublic ? '0' : '24px'; ?>">
   <div class="doc-type" style="text-align:center;font-weight:700;font-size:22px;margin-bottom:6px">Project Invoice</div>

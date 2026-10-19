@@ -218,6 +218,7 @@ try {
 
     audit_log($pdo, 'quote.create', 'quote', $quote_id, ['client_id' => $client_id, 'organization_id' => $__orgId, 'created_by' => $__creator]);
     pricing_apply_posted_override($pdo,(int)$__orgId,'quote',$quote_id,(int)$__creator,$_POST);
+    document_issuer_apply_post($pdo, $appConfig, 'quote', $quote_id, $_POST);
     pricing_finalize_document_revision($pdo,$__orgId!==null?(int)$__orgId:null,'quote',$quote_id,$__creator,false,(string)($appConfig['workforce_currency']??'USD'));
 
     $pdo->commit();

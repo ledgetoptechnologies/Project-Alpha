@@ -199,10 +199,11 @@ try {
             $items = $itemsSt->fetchAll(PDO::FETCH_ASSOC);
 
             // Prepare sender info
-            require_once __DIR__ . '/../../utils/email_identity.php';
-            $fromName = pa_email_sender_name($appConfig, false);
-            $fromPhone = $appConfig['from_phone'] ?? '';
-            $fromEmail = $appConfig['from_email'] ?? '';
+            require_once __DIR__ . '/../../utils/document_sender.php';
+            $issuer = document_sender_for_document($pdo, $appConfig, $quote);
+            $fromName = $issuer['name'];
+            $fromPhone = $issuer['phone'];
+            $fromEmail = $issuer['email'];
 
             // Resolve terms: project-level -> quote -> app
             $termsText = '';

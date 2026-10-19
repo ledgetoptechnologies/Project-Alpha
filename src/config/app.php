@@ -16,6 +16,7 @@ $appConfig = [
     'logo_path'  => null,
     // User info for documents
     'from_company' => null,
+    'document_issuer_mode' => 'company',
     'from_name' => null,
     'from_address_line1' => null,
     'from_address_line2' => null,
@@ -209,7 +210,7 @@ try {
             'google_maps_browser_key', 'google_routes_api_key_enc',
             'address_route_assistance_enabled', 'job_project_locations_enabled',
             // General UI settings (now stored in app_config DB)
-            'brand_name', 'logo_path', 'from_company', 'from_name', 'from_address_line1', 'from_address_line2',
+            'document_issuer_mode', 'brand_name', 'logo_path', 'from_company', 'from_name', 'from_address_line1', 'from_address_line2',
             'from_city', 'from_state', 'from_postal', 'from_country', 'from_email', 'from_phone',
             'app_host', 'public_links_in_email', 'primary_state', 'timezone',
             'workforce_currency', 'workforce_default_hourly_rate', 'workforce_default_billing_rate',

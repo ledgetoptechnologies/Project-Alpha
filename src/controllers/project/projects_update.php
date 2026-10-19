@@ -32,8 +32,8 @@ if (!is_array($projectInvoiceLinkClientIds)) { $projectInvoiceLinkClientIds = []
 $parent_id = null; // Parent projects not supported any more
 $organization_id = (int)($_POST['organization_id'] ?? 0);
 $department_id = (int)($_POST['department_id'] ?? 0);
-$businessUnitId = (int)($_POST['business_unit_id'] ?? 0);
-$businessUnitUserSelected = !empty($_POST['business_unit_user_selected']);
+// Internal divisions are retired. Never accept new division assignments.
+$businessUnitId = 0;
 $managerUserIdProvided = array_key_exists('manager_user_id', $_POST);
 $managerUserId = (int)($_POST['manager_user_id'] ?? 0);
 $estimated_start = trim($_POST['estimated_start'] ?? '');
@@ -87,26 +87,8 @@ try {
 if ($storedOrganizationId > 0) {
 	$organization_id = $storedOrganizationId;
 }
-if ($businessUnitId > 0) {
-	$unitStmt = $pdo->prepare('SELECT 1 FROM business_units WHERE id=? AND is_active=1');
-	$unitStmt->execute([$businessUnitId]);
-	if (!$unitStmt->fetchColumn()) {
-		header('Location: '.$editRedirect.'&error=' . urlencode('Selected business unit is unavailable.'));
-		exit;
-	}
-} elseif (!$businessUnitUserSelected && $storedBusinessUnitId < 1) {
-	$businessUnitId = $projectPlanning->primaryBusinessUnitForUser($pdo, $managerUserId);
-	if ($businessUnitId < 1) {
-		$businessUnitId = (int)($pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='default_business_unit_id' LIMIT 1")->fetchColumn() ?: 0);
-	}
-	if ($businessUnitId > 0) {
-		$defaultUnit=$pdo->prepare('SELECT 1 FROM business_units WHERE id=? AND is_active=1');$defaultUnit->execute([$businessUnitId]);if(!$defaultUnit->fetchColumn())$businessUnitId=0;
-	}
-	if ($businessUnitId < 1) {
-		$activeUnitIds = $pdo->query('SELECT id FROM business_units WHERE is_active=1 ORDER BY id LIMIT 2')->fetchAll(PDO::FETCH_COLUMN);
-		$businessUnitId = count($activeUnitIds) === 1 ? (int)$activeUnitIds[0] : 0;
-	}
-}
+// Keep legacy scope IDs unchanged until their integration contract is migrated.
+$businessUnitId = $storedBusinessUnitId;
 if ($department_id > 0) {
 	$departmentStmt = $pdo->prepare('SELECT organization_id FROM organization_departments WHERE id = ? LIMIT 1');
 	$departmentStmt->execute([$department_id]);

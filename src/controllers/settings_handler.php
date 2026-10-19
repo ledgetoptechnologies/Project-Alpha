@@ -276,6 +276,15 @@ if (isset($_POST['long_term_terms'])) {
     $lt = trim((string)$_POST['long_term_terms']);
     $settings['long_term_terms'] = $lt !== '' ? mb_substr($lt, 0, 20000) : null;
 }
+// Document issuer policy is independent of divisions and mail transport.
+if (isset($_POST['document_issuer_mode'])) {
+    $mode = (string)$_POST['document_issuer_mode'];
+    if (!in_array($mode, ['company', 'creator'], true)) {
+        http_response_code(400);
+        exit('Choose company or original creator for the document issuer.');
+    }
+    $settings['document_issuer_mode'] = $mode;
+}
 // Documents valid days (moved to Documents → Customization tab)
 if (isset($_POST['documents_valid_days'])) {
     $dv = (int)$_POST['documents_valid_days'];
@@ -528,7 +537,7 @@ if (!empty($smtpConfigKeys)) {
 // General UI settings persistence: store all non-secret settings in app_config DB
 $generalConfigKeys = [
     'financial_base_currency',
-    'brand_name', 'logo_path', 'from_company', 'from_name', 'from_address_line1', 'from_address_line2',
+    'document_issuer_mode', 'brand_name', 'logo_path', 'from_company', 'from_name', 'from_address_line1', 'from_address_line2',
     'from_city', 'from_state', 'from_postal', 'from_country', 'from_email', 'from_phone',
     'app_host', 'public_links_in_email', 'primary_state', 'timezone',
     'workforce_currency', 'workforce_default_hourly_rate', 'workforce_default_billing_rate',

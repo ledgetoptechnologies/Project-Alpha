@@ -383,6 +383,8 @@ function project_billing_transition_create_statement(
         $actorId,
     ]);
     $statementId = (int)$pdo->lastInsertId();
+    require_once __DIR__ . '/document_sender.php';
+    document_issuer_capture($pdo, $appConfig, 'project_invoice', $statementId);
 
     $item = $pdo->prepare(
         'INSERT INTO project_invoice_items

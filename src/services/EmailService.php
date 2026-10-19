@@ -132,6 +132,22 @@ class EmailService {
         }
         require_once __DIR__ . '/EmailProviderManager.php';
         try {
+            $replyTo = null;
+            $issuerTable = ['quote'=>'quotes','contract'=>'contracts','invoice'=>'invoices','project_invoice'=>'project_invoices'][(string)($options['document_type'] ?? '')] ?? null;
+            if ($issuerTable && (int)($options['document_id'] ?? 0) > 0) {
+                $issuerQuery = $pdo->prepare("SELECT * FROM {$issuerTable} WHERE id=? LIMIT 1");
+                $issuerQuery->execute([(int)$options['document_id']]);
+                $issuerDocument = $issuerQuery->fetch(PDO::FETCH_ASSOC);
+                if (!$issuerDocument) throw new RuntimeException('Document email issuer not found.');
+                if (($issuerDocument['issuer_mode'] ?? 'legacy') !== 'legacy') {
+                    if (empty($issuerDocument['issuer_snapshot'])) throw new RuntimeException('Document issuer must be saved before delivery.');
+                    $issuer = json_decode((string)$issuerDocument['issuer_snapshot'], true, 32, JSON_THROW_ON_ERROR);
+                    $fromName = (string)$issuer['email']['display_name'];
+                    $replyTo = $issuer['email']['reply_to'] ?? null;
+                    if ($replyTo !== null && (!filter_var($replyTo,FILTER_VALIDATE_EMAIL) || strpbrk($replyTo,"\r\n") !== false)) throw new RuntimeException('Invalid document reply address.');
+                    $options['document_issuer_display'] = true;
+                }
+            }
             $manager = new EmailProviderManager($pdo, $appConfig);
             $message = new EmailMessage(
                 $to,
@@ -141,7 +157,8 @@ class EmailService {
                 $fromName,
                 $attachments,
                 $isHtml,
-                $messageId !== '' ? $messageId : null
+                $messageId !== '' ? $messageId : null,
+                $replyTo
             );
             $result = $manager->send($message, $options);
             return [$result->success, $result->message, $result->deliveryLogId];

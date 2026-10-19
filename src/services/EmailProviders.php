@@ -13,7 +13,8 @@ final class EmailMessage
         public string $fromName = '',
         public array $attachments = [],
         public bool $isHtml = true,
-        public ?string $messageId = null
+        public ?string $messageId = null,
+        public ?string $replyTo = null
     ) {}
 }
 
@@ -50,7 +51,11 @@ final class SmtpEmailProvider implements EmailProviderInterface
             $message->fromEmail,
             $message->fromName,
             (string)($this->credentials['username'] ?? $message->fromEmail),
-            $message->attachments
+            $message->attachments,
+            $message->isHtml,
+            (string)($message->messageId ?? ''),
+            300,
+            $message->replyTo
         );
         return new SendResult($ok, $ok ? '' : ($error ?: 'SMTP send failed'), $message->messageId);
     }
@@ -74,7 +79,8 @@ final class GmailEmailProvider implements EmailProviderInterface
             $message->fromName,
             $message->attachments,
             $message->isHtml,
-            $message->messageId
+            $message->messageId,
+            $message->replyTo
         );
         if (!$mimeOk) {
             return new SendResult(false, $mimeError);

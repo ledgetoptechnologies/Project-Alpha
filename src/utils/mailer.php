@@ -43,7 +43,8 @@ function mailer_send(
     array $attachments = [], // each: ['filename'=>string,'content'=>string,'mime'=>string]
     bool $isHtml = true,
     string $messageId = '',
-    int $timeoutSeconds = 300
+    int $timeoutSeconds = 300,
+    ?string $replyTo = null
 ): array
 {
     if (!class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
@@ -78,6 +79,7 @@ function mailer_send(
         // From / to
         $fromEmail = $fromEmail !== '' ? $fromEmail : 'no-reply@localhost';
         $mail->setFrom($fromEmail, $fromName ?: '');
+        if ($replyTo !== null) $mail->addReplyTo($replyTo);
         $mail->addAddress($to);
         if ($envelopeFrom) {
             $mail->Sender = $envelopeFrom; // return-path / envelope sender
@@ -126,7 +128,8 @@ function mailer_build_mime(
     string $fromName = '',
     array $attachments = [],
     bool $isHtml = true,
-    ?string $messageId = null
+    ?string $messageId = null,
+    ?string $replyTo = null
 ): array {
     if (!class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
         return [false, '', 'PHPMailer not installed'];
@@ -136,6 +139,7 @@ function mailer_build_mime(
         $mail = new PHPMailer(true);
         $mail->CharSet = 'UTF-8';
         $mail->setFrom($fromEmail, $fromName);
+        if ($replyTo !== null) $mail->addReplyTo($replyTo);
         $mail->addAddress($to);
         $mail->Subject = $subject;
         if ($isHtml) {

@@ -401,6 +401,7 @@ try {
     if ($__orgId !== null) {
         pricing_apply_posted_override($pdo,(int)$__orgId,'invoice',$invoice_id,(int)($__creator ?? 0),$_POST);
     }
+    document_issuer_apply_post($pdo, $appConfig, 'invoice', $invoice_id, $_POST);
     pricing_finalize_document_revision($pdo,$__orgId !== null ? (int)$__orgId : null,'invoice',$invoice_id,$__creator,false,(string)($appConfig['workforce_currency']??'USD'));
     
     $pdo->commit();

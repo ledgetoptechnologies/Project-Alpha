@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/address_book.php';
 require_once __DIR__ . '/../utils/document_organization.php';
+require_once __DIR__ . '/../utils/document_sender.php';
 
 final class DocumentRevisionService
 {
@@ -11,7 +12,7 @@ final class DocumentRevisionService
     private const ITEM_TABLES = ['quote' => 'quote_items', 'contract' => 'contract_items', 'invoice' => 'invoice_items'];
     private const ITEM_KEYS = ['quote' => 'quote_id', 'contract' => 'contract_id', 'invoice' => 'invoice_id'];
 
-    public static function snapshotAndSave(PDO $pdo, string $type, int $id, ?int $userId, bool $increment = true): int
+    public static function snapshotAndSave(PDO $pdo, string $type, int $id, ?int $userId, bool $increment = true, ?array $issuerConfig = null): int
     {
         $table = self::TABLES[$type] ?? null;
         if ($table === null) {
@@ -24,6 +25,15 @@ final class DocumentRevisionService
         if (!$row) {
             throw new RuntimeException('Document not found.');
         }
+        if ($issuerConfig === null && !isset($GLOBALS['appConfig']) && isset($row['issuer_mode']) && $row['issuer_mode'] !== 'legacy') {
+            // API/cron service callers can lack the interactive controller's global.
+            // Load the same persisted configuration with this connection in scope.
+            require __DIR__ . '/../config/app.php';
+            $issuerConfig = $appConfig;
+        }
+        document_issuer_capture($pdo, $issuerConfig ?? (array)($GLOBALS['appConfig'] ?? []), $type, $id);
+        $rowStmt->execute([$id]);
+        $row = $rowStmt->fetch(PDO::FETCH_ASSOC);
         $revision = max(1, (int)($row['revision_number'] ?? 1));
         if ($increment) {
             $revision++;

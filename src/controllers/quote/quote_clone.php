@@ -15,9 +15,10 @@ try{
   $sourceStatement=$pdo->prepare('SELECT * FROM quotes WHERE id=? FOR UPDATE');$sourceStatement->execute([$id]);$source=$sourceStatement->fetch(PDO::FETCH_ASSOC);if(!$source)throw new RuntimeException('Quote not found.');
   if(in_array(strtolower((string)$source['status']),['draft','pending'],true))throw new RuntimeException('This quote is still editable and does not need to be cloned.');
   $columns=$pdo->query('SHOW COLUMNS FROM quotes')->fetchAll(PDO::FETCH_COLUMN);
-  $excluded=['id','public_id','source_version','status','doc_number','revision_number','last_sent_revision','revision_updated_at','created_at','updated_at','approved_at','rejected_at','expired_at'];
+  $excluded=['id','public_id','source_version','status','doc_number','revision_number','last_sent_revision','revision_updated_at','created_at','updated_at','approved_at','rejected_at','expired_at','created_by','issuer_mode','issuer_snapshot'];
   $copyColumns=array_values(array_filter($columns,static fn($column)=>!in_array($column,$excluded,true)&&array_key_exists($column,$source)));
   $values=array_map(static fn($column)=>$source[$column],$copyColumns);
+  $copyColumns[]='created_by';$values[]=(int)($_SESSION['user']['id']??0);
   $copyColumns[]='status';$values[]='draft';$copyColumns[]='revision_number';$values[]=1;$copyColumns[]='created_at';$values[]=date('Y-m-d H:i:s');
   $placeholders=implode(',',array_fill(0,count($copyColumns),'?'));
   $insert=$pdo->prepare('INSERT INTO quotes (`'.implode('`,`',$copyColumns).'`) VALUES ('.$placeholders.')');$insert->execute($values);$newId=(int)$pdo->lastInsertId();

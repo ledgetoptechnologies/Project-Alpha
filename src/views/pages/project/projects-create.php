@@ -18,15 +18,9 @@ if ($activeOrgId > 0) {
     }
 }
 $isAdmin = (($_SESSION['user']['role'] ?? '') === 'admin');
-$businessUnits = $pdo->query('SELECT id,name,code FROM business_units WHERE is_active=1 ORDER BY name,id')->fetchAll(PDO::FETCH_ASSOC);
 $projectManagers = $pdo->query(
     "SELECT u.id,
-            COALESCE(NULLIF(wp.display_name,''),NULLIF(tm.display_name,''),NULLIF(u.username,''),u.email) AS name,
-            (SELECT bum.business_unit_id FROM business_unit_memberships bum
-             JOIN business_units bu ON bu.id=bum.business_unit_id AND bu.is_active=1
-             WHERE bum.user_id=u.id AND bum.is_primary=1
-               AND (bum.ended_at IS NULL OR bum.ended_at>CURRENT_TIMESTAMP)
-             ORDER BY bum.id DESC LIMIT 1) AS primary_business_unit_id
+            COALESCE(NULLIF(wp.display_name,''),NULLIF(tm.display_name,''),NULLIF(u.username,''),u.email) AS name
      FROM users u
      LEFT JOIN worker_profiles wp ON wp.user_id=u.id
      LEFT JOIN team_members tm ON tm.user_id=u.id
@@ -34,21 +28,6 @@ $projectManagers = $pdo->query(
      ORDER BY name"
 )->fetchAll(PDO::FETCH_ASSOC);
 $defaultManagerUserId = $userId;
-$defaultBusinessUnitId = 0;
-try {
-    $defaultBusinessUnitId = (int)($pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='default_business_unit_id' LIMIT 1")->fetchColumn() ?: 0);
-} catch (Throwable $error) {
-    $defaultBusinessUnitId = 0;
-}
-if ($defaultBusinessUnitId < 1 && count($businessUnits) === 1) {
-    $defaultBusinessUnitId = (int)$businessUnits[0]['id'];
-}
-foreach ($projectManagers as $manager) {
-    if ((int)$manager['id'] === $defaultManagerUserId && (int)($manager['primary_business_unit_id'] ?? 0) > 0) {
-        $defaultBusinessUnitId = (int)$manager['primary_business_unit_id'];
-        break;
-    }
-}
 if ($isAdmin) {
     $clients = $pdo->query('SELECT id, name, email FROM clients WHERE archived = 0 ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
 } elseif ($activeOrgId > 0) {
@@ -227,24 +206,12 @@ if ($activeOrgId > 0) {
       <select id="projectManagerSelect" name="manager_user_id" style="padding:8px;border-radius:8px;border:1px solid #ddd;width:100%">
         <option value="">Unassigned</option>
         <?php foreach ($projectManagers as $manager): ?>
-          <option value="<?php echo (int)$manager['id']; ?>" data-primary-business-unit="<?php echo (int)($manager['primary_business_unit_id'] ?? 0); ?>" <?php echo $defaultManagerUserId === (int)$manager['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars((string)$manager['name']); ?></option>
+          <option value="<?php echo (int)$manager['id']; ?>" <?php echo $defaultManagerUserId === (int)$manager['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars((string)$manager['name']); ?></option>
         <?php endforeach; ?>
       </select>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">The manager is added to the Project Team. Their primary Business Unit is suggested below.</div>
-      <div id="projectManagerUnitSuggestion" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">The manager is added to the Project Team.</div>
     </label>
 
-    <label>
-      <div>Business Unit / Division</div>
-      <select id="projectBusinessUnitSelect" name="business_unit_id" style="padding:8px;border-radius:8px;border:1px solid #ddd;width:100%">
-        <option value="">Unassigned</option>
-        <?php foreach ($businessUnits as $businessUnit): ?>
-          <option value="<?php echo (int)$businessUnit['id']; ?>" <?php echo $defaultBusinessUnitId === (int)$businessUnit['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars((string)$businessUnit['name'] . (!empty($businessUnit['code']) ? ' (' . (string)$businessUnit['code'] . ')' : '')); ?></option>
-        <?php endforeach; ?>
-      </select>
-      <input id="projectBusinessUnitTouched" type="hidden" name="business_unit_user_selected" value="0">
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">Use a unit for a branch, geographic division, department, or operating crew. Operations and Tasks inherit it.</div>
-    </label>
 
      <label style="grid-column:1/2;position:relative">
         <div>Primary billed contact</div>

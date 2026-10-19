@@ -26,6 +26,7 @@
   <h2>Edit Quote Q-<?php echo htmlspecialchars($quote['doc_number'] ?? $quote['id']); ?><?php if (!empty($quote['project_code'])) echo ' (Job ' . htmlspecialchars($quote['project_code']) . ')'; ?></h2>
   <form id="quoteEditForm" method="post" action="/?page=quote/quotes-update" style="display:grid;gap:16px;max-width:900px">
     <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
+    <?php $issuerChoiceRow = $quote; require __DIR__ . '/../../components/document_issuer_choice.php'; ?>
     <input type="hidden" name="id" value="<?php echo (int)$quote['id']; ?>">
     <?php echo pricing_adjustment_override_controls($pdo,(int)($quote['organization_id']??0),'quote',$id); ?>
     <div style="display:grid;gap:12px;grid-template-columns:1fr 1fr">

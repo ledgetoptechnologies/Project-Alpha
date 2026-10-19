@@ -66,7 +66,7 @@ if ($contract['pricing_type'] === 'fixed_total') {
 $isHourlyBilling = ($contract['billing_mode'] ?? 'fixed') === 'hourly';
 
 require_once __DIR__ . '/../../../utils/format.php';
-$documentSender = document_sender_for_creator($pdo, $appConfig, !empty($contract['created_by']) ? (int)$contract['created_by'] : null);
+$documentSender = document_sender_for_document($pdo, $appConfig, $contract);
 $fromName = $documentSender['name'] ?? '';
 $fromAddress = implode("\n", document_sender_lines($documentSender));
 $fromPhone = $documentSender['phone'] ?? '';

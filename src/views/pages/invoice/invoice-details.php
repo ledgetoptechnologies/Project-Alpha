@@ -44,7 +44,7 @@ $items = $pdo->prepare('SELECT item, description, quantity, unit_price, line_tot
 $items->execute([$id]);
 $items = $items->fetchAll();
 $isHourlyBilling = ($inv['billing_mode'] ?? 'fixed') === 'hourly';
-$documentSender = document_sender_for_creator($pdo, $appConfig, !empty($inv['created_by']) ? (int)$inv['created_by'] : null);
+$documentSender = document_sender_for_document($pdo, $appConfig, $inv);
 $fromName = $documentSender['name'] ?? '';
 $fromAddress = implode("\n", document_sender_lines($documentSender));
 $fromPhone = $documentSender['phone'] ?? '';

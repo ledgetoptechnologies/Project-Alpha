@@ -243,6 +243,7 @@ try {
   if ($organizationId !== null) {
     pricing_apply_posted_override($pdo,(int)$organizationId,'invoice',$id,(int)($_SESSION['user']['id']??0),$_POST);
   }
+    document_issuer_apply_post($pdo, $appConfig, 'invoice', $id, $_POST);
   pricing_finalize_document_revision($pdo,$organizationId !== null ? (int)$organizationId : null,'invoice',$id,(int)($_SESSION['user']['id']??0),true,(string)($appConfig['workforce_currency']??'USD'));
   if(!$isDraft)$pdo->prepare('UPDATE public_links SET revoked=1 WHERE document_type="invoice" AND document_id=?')->execute([$id]);
   

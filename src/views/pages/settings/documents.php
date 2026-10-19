@@ -17,6 +17,13 @@ $docTab = isset($_GET['doc_tab']) ? preg_replace('/[^a-z]/i', '', $_GET['doc_tab
   <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
   <input type="hidden" name="tab" value="documents">
   <input type="hidden" name="doc_tab" value="<?php echo htmlspecialchars($docTab); ?>">
+  <label class="field"><span class="label">Default document issuer</span>
+    <select name="document_issuer_mode" class="input">
+      <option value="company" <?php echo ($appConfig['document_issuer_mode'] ?? 'company') === 'company' ? 'selected' : ''; ?>>Company only</option>
+      <option value="creator" <?php echo ($appConfig['document_issuer_mode'] ?? 'company') === 'creator' ? 'selected' : ''; ?>>Original creator and company</option>
+    </select>
+    <small>Applies to new documents. Each draft can use a different issuer. Issued documents retain their saved issuer; the company sending mailbox is unchanged.</small>
+  </label>
 <?php endif; ?>
 <?php if ($docTab === 'quotes'): ?>
   <?php

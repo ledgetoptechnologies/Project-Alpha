@@ -321,3 +321,27 @@ The existing receipt identity and history-epoch keys are unchanged. This support
 five-field binding commands with compare-and-swap and durable acknowledgement
 replay while preserving legacy four-field callers. Apply the normal migration
 chain before deploying the modern binding handler.
+
+
+## Saved document issuer (0110)
+
+`0110_document_issuer_snapshots.sql` adds issuer mode and snapshot columns to
+quotes, contracts, invoices, and project invoices. Existing rows receive
+`legacy`, keeping their previous effective sender policy. The column default
+then changes to `default` for future inserts. Document values, public links,
+creator IDs, and existing revision snapshots are not rewritten. The immutable
+baseline is unchanged.
+
+New documents capture the configured company-only (default) or original-creator
+policy in the document transaction. Saved issuer details are included in future
+document revision snapshots and reused by shared views/PDFs and outgoing email.
+Drafts may explicitly override the default; issued documents cannot change issuer.
+An editor is recorded on the revision without replacing the original creator.
+Email retains the configured provider mailbox, with the saved company/creator
+display name and, in creator mode, a valid creator reply address.
+
+Legacy documents do not gain a reconstructed historical issuer: their original
+presentation may already have changed under the former live-settings resolver.
+They retain that resolver until an editable draft explicitly selects the new
+policy. No backfill claims to recover old settings. Apply and validate the normal
+migration chain before enabling the new draft issuer controls.
