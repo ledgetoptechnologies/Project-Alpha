@@ -255,7 +255,7 @@ try {
   if ($pdo->inTransaction()) {
     $pdo->rollBack();
   }
-  error_log('[invoices_update] ' . get_class($e) . ': ' . $e->getMessage());
+  error_log('[invoices_update] ' . get_class($e) . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
   $error=$e instanceof DocumentLockedException||($e instanceof DomainException&&hash_equals($fixedTotalLockMessage,$e->getMessage()))?$e->getMessage():'Update failed';
   header('Location: /?page=invoice/invoice-details&id='.$id.'&error='.rawurlencode($error));
   exit;

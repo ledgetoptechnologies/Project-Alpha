@@ -88,6 +88,8 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         $revisionsBeforeRejected = $this->revisions();
         $rejected = $this->post('invalid-mode', '9');
         self::assertSame(0, $rejected['exit'], $rejected['stderr']);
+        self::assertStringContainsString('DomainException', $rejected['stderr']);
+        self::assertStringNotContainsString('Invalid document issuer choice.', $rejected['stderr']);
         self::assertSame($beforeRejected, $this->row(), 'Rejected issuer must roll back the entire invoice edit.');
         self::assertSame($revisionsBeforeRejected, $this->revisions());
         foreach (['email_delivery_log', 'public_links'] as $table) {
