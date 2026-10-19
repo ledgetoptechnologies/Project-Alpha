@@ -139,6 +139,19 @@ function document_issuer_resolve(PDO $pdo, array $appConfig, array $document): a
     return \App\Services\DocumentIssuerPolicy::resolve($appConfig, $creator, (string)($document['issuer_mode'] ?? 'default'));
 }
 
+/** Fill partial automation settings from the same installation configuration as web requests. */
+function document_issuer_company_configuration(PDO $pdo, array $provided): array
+{
+    $keys = ['brand_name','document_issuer_mode','from_company','from_name','from_email','from_phone',
+        'from_address_line1','from_address_line2','from_city','from_state','from_postal','from_country'];
+    if (count(array_intersect($keys, array_keys($provided))) === count($keys)) return $provided;
+    $installation = (static function (PDO $pdo): array {
+        require __DIR__ . '/../config/app.php';
+        return $appConfig;
+    })($pdo);
+    return array_replace($installation, $provided);
+}
+
 /** Must execute in the same transaction as document creation/edit and revision. */
 function document_issuer_capture(PDO $pdo, array $appConfig, string $type, int $id): ?array
 {

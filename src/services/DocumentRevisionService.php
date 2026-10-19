@@ -25,13 +25,13 @@ final class DocumentRevisionService
         if (!$row) {
             throw new RuntimeException('Document not found.');
         }
-        if ($issuerConfig === null && !isset($GLOBALS['appConfig']) && isset($row['issuer_mode']) && $row['issuer_mode'] !== 'legacy') {
-            // API/cron service callers can lack the interactive controller's global.
-            // Load the same persisted configuration with this connection in scope.
-            require __DIR__ . '/../config/app.php';
-            $issuerConfig = $appConfig;
+        $resolvedIssuerConfig = $issuerConfig ?? (array)($GLOBALS['appConfig'] ?? []);
+        if (isset($row['issuer_mode']) && $row['issuer_mode'] !== 'legacy' && empty($row['issuer_snapshot'])) {
+            // Automation callers historically pass only scheduling/mail options.
+            // Complete the issuer identity from persisted installation settings.
+            $resolvedIssuerConfig = document_issuer_company_configuration($pdo, $resolvedIssuerConfig);
         }
-        document_issuer_capture($pdo, $issuerConfig ?? (array)($GLOBALS['appConfig'] ?? []), $type, $id);
+        document_issuer_capture($pdo, $resolvedIssuerConfig, $type, $id);
         $rowStmt->execute([$id]);
         $row = $rowStmt->fetch(PDO::FETCH_ASSOC);
         $revision = max(1, (int)($row['revision_number'] ?? 1));

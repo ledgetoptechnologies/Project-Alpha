@@ -104,6 +104,21 @@ final class DocumentIssuerSnapshotTest extends TestCase
         document_issuer_apply_post($this->pdo,$this->config,'invoice',1,['document_issuer_mode'=>'creator']);
     }
 
+    public function testPartialAutomationSettingsLoadInstallationIssuerConfiguration(): void
+    {
+        $resolved = document_issuer_company_configuration($this->pdo, ['net_terms_days'=>14]);
+        self::assertArrayHasKey('document_issuer_mode',$resolved);
+        self::assertArrayHasKey('from_company',$resolved);
+        self::assertNotSame('',trim((string)$resolved['brand_name']));
+        self::assertSame(14,$resolved['net_terms_days']);
+        $this->pdo->exec("INSERT INTO invoices(id,created_by,status) VALUES(1,2,'draft')");
+        $this->pdo->beginTransaction();
+        $issuer=document_issuer_capture($this->pdo,$resolved,'invoice',1);
+        self::assertSame('company',$issuer['mode']);
+        self::assertSame(trim((string)($resolved['from_company']??'')) ?: $resolved['brand_name'],$issuer['sender']['name']);
+        $this->pdo->rollBack();
+    }
+
     public function testMissingConfigurationCannotFreezeGenericCompany(): void
     {
         $this->pdo->exec("INSERT INTO invoices(id,created_by,status) VALUES(1,2,'draft')");
