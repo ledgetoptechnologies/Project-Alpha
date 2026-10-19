@@ -606,6 +606,10 @@ final class PortalClientProvisioningService
             ? $this->reconcileMissingCompletedRootClients($pdo, $applicationKey, $profile, max(0, $limit - $summary['considered']))
             : ['considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0];
         foreach (['considered','completed','retrying'] as $key) $summary[$key] += $missing[$key];
+        if (isset($missing['ready']) && !$missing['ready']) {
+            $summary['ready'] = false;
+            $summary['preflight_codes'] = $missing['preflight_codes'];
+        }
         $summary['remaining'] = $this->historicalRemaining($pdo, $profile);
         $failed = $pdo->prepare("SELECT COUNT(*) FROM portal_client_provisioning_backfill WHERE integration_profile_id=? AND contract_fingerprint=? AND state='failed'");
         $failed->execute([$profileId,$fingerprint]);
@@ -666,7 +670,7 @@ final class PortalClientProvisioningService
     /** @return array{considered:int,completed:int,retrying:int,failed:int} */
     private function reconcileMissingCompletedRootClients(PDO $pdo, string $applicationKey, array $profile, int $limit): array
     {
-        $summary = ['considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0];
+        $summary = ['ready'=>true,'preflight_codes'=>[],'considered'=>0,'completed'=>0,'retrying'=>0,'failed'=>0];
         $query = $this->missingCompletedRootClientQuery($pdo, $profile);
         if ($query === null) return $summary;
         $profileId = (int)$profile['id'];
@@ -682,9 +686,16 @@ final class PortalClientProvisioningService
             try {
                 $pdo->beginTransaction();
                 PortalProjectionService::lockProfileContract($pdo, $profileId);
+                $currentStatus = $this->status($pdo, $applicationKey);
+                if (empty($currentStatus['ready'])) {
+                    $pdo->rollBack();
+                    $summary['ready'] = false;
+                    $summary['preflight_codes'] = $this->safePreflightCodes((array)($currentStatus['preflight'] ?? []));
+                    break;
+                }
                 $currentProfile = $this->requireReadyProfile($pdo, $applicationKey);
                 if ((int)$currentProfile['id'] !== $profileId || $this->backfillContractFingerprint($currentProfile) !== $fingerprint) {
-                    $pdo->rollBack(); break;
+                    $pdo->rollBack(); $summary['ready'] = false; break;
                 }
                 $this->assertOnlyProducer($pdo, $profileId);
                 $currentQuery = $this->missingCompletedRootClientQuery($pdo, $currentProfile);
@@ -712,6 +723,13 @@ final class PortalClientProvisioningService
                 $pdo->beginTransaction();
                 try {
                     PortalProjectionService::lockProfileContract($pdo, $profileId);
+                    $currentStatus = $this->status($pdo, $applicationKey);
+                    if (empty($currentStatus['ready'])) {
+                        $pdo->rollBack();
+                        $summary['ready'] = false;
+                        $summary['preflight_codes'] = $this->safePreflightCodes((array)($currentStatus['preflight'] ?? []));
+                        break;
+                    }
                     $currentProfile = $this->requireReadyProfile($pdo, $applicationKey);
                     if ((int)$currentProfile['id'] === $profileId && $this->backfillContractFingerprint($currentProfile) === $fingerprint) {
                         $retryQuery = $this->missingCompletedRootClientQuery($pdo, $currentProfile);

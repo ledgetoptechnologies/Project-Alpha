@@ -1153,6 +1153,28 @@ SQL);
         }
     }
 
+    public function testMissingPersonAdministrativePauseUnderLockDoesNotConsumeRetry():void
+    {
+        foreach(['producer_delivery','outbound_runtime','authoritative_hooks']as$case){$this->setUp();
+            $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function()use($case):void{
+                $this->prepareCompletedOrganizationWithMissingPerson();$fired=false;$before=$this->existingPersonAuthority();
+                $this->pdo->afterMissingClientSelection=function()use($case,&$fired):void{
+                    $fired=true;$this->pdo->exec(match($case){
+                        'producer_delivery'=>'UPDATE portal_integration_profiles SET delivery_enabled=0',
+                        'outbound_runtime'=>"UPDATE app_config SET config_value='0' WHERE config_key='portal_outbound_delivery_enabled'",
+                        default=>"UPDATE app_config SET config_value='0' WHERE config_key='portal_authoritative_hooks_enabled'",
+                    });
+                };
+                $summary=$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations');
+                self::assertTrue($fired);self::assertFalse($summary['ready']);self::assertContains($case,$summary['preflight_codes']);
+                self::assertSame(0,$summary['completed']);self::assertSame(0,$summary['retrying']);self::assertSame(0,$summary['failed']);
+                self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_integration_audit WHERE action='portal.client_provisioning.missing_client_failed'")->fetchColumn());
+                self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+                self::assertSame($before,$this->existingPersonAuthority());
+            });
+        }
+    }
+
     public function testMissingPersonFailureRollsBackAndDoesNotStarveOtherClientsOrReopenRoot():void
     {
         $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
