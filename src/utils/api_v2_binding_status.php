@@ -66,7 +66,8 @@ function api_v2_binding_status_client_portal_identity(PDO $pdo, array $client): 
         $read = $pdo->prepare("SELECT eligibility.portal_principal_id,eligibility.manual_state,eligibility.eligibility_status,
             eligibility.source_version eligibility_version,principal.public_id principal_public_id,
             principal.source_version principal_version,principal.authorization_version,principal.enabled,principal.revoked_at,
-            root.access_state,root.root_public_id,
+            root.access_state,root.root_public_id,organization.public_id organization_public_id,
+            organization.archived organization_archived,organization.deleted_at organization_deleted_at,
             (SELECT COUNT(*) FROM portal_client_login_eligibility other WHERE other.portal_principal_id=eligibility.portal_principal_id) managed_count,
             (SELECT COUNT(*) FROM portal_principal_clients association WHERE association.portal_principal_id=eligibility.portal_principal_id) association_count,
             (SELECT COUNT(*) FROM portal_principal_clients association WHERE association.portal_principal_id=eligibility.portal_principal_id AND association.client_id=eligibility.client_id) own_association
@@ -82,6 +83,9 @@ function api_v2_binding_status_client_portal_identity(PDO $pdo, array $client): 
         $rows = $read->fetchAll(PDO::FETCH_ASSOC);
         if (count($rows) !== 1) return ['state'=>'review_required','principalPublicId'=>null,'associationVersion'=>null];
         $row = $rows[0];
+        if ($organizationId !== null && ($row['organization_public_id'] === null
+            || (int)$row['organization_archived'] !== 0 || $row['organization_deleted_at'] !== null))
+            return ['state'=>'revoked','principalPublicId'=>null,'associationVersion'=>null];
         if ($row['manual_state']==='revoked' || $row['eligibility_status']==='revoked' || $row['access_state']==='revoked'
             || ($row['principal_public_id']!==null && ((int)$row['enabled']!==1 || $row['revoked_at']!==null)))
             return ['state'=>'revoked','principalPublicId'=>null,'associationVersion'=>null];
@@ -91,7 +95,8 @@ function api_v2_binding_status_client_portal_identity(PDO $pdo, array $client): 
             return ['state'=>'review_required','principalPublicId'=>null,'associationVersion'=>null];
         $version = hash('sha256',json_encode(['client-portal-own-identity-v1',(string)$client['public_id'],
             (string)$row['principal_public_id'],(string)$row['eligibility_version'],(string)$row['principal_version'],
-            (string)$row['authorization_version'],(string)$row['root_public_id']],JSON_THROW_ON_ERROR));
+            (string)$row['authorization_version'],(string)$row['root_public_id'],
+            $row['organization_public_id'],$row['organization_archived'],$row['organization_deleted_at']],JSON_THROW_ON_ERROR));
         return ['state'=>'eligible','principalPublicId'=>$row['principal_public_id'],'associationVersion'=>$version];
     } catch (PDOException) { return $unavailable; }
 }

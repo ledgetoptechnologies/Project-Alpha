@@ -10,7 +10,7 @@ final class ApiV2BindingStatusPortalIdentityTest extends TestCase
     {
         require_once dirname(__DIR__,2).'/src/utils/api_v2_binding_status.php';
         $this->pdo=new \PDO('sqlite::memory:',null,null,[\PDO::ATTR_ERRMODE=>\PDO::ERRMODE_EXCEPTION]);
-        $this->pdo->exec("CREATE TABLE organizations(id INTEGER,public_id TEXT);
+        $this->pdo->exec("CREATE TABLE organizations(id INTEGER,public_id TEXT,archived INTEGER,deleted_at TEXT);
           CREATE TABLE portal_principals(id INTEGER,public_id TEXT,source_version TEXT,authorization_version INTEGER,enabled INTEGER,revoked_at TEXT);
           CREATE TABLE portal_client_login_eligibility(client_id INTEGER,portal_principal_id INTEGER,manual_state TEXT,eligibility_status TEXT,source_version TEXT);
           CREATE TABLE portal_principal_clients(portal_principal_id INTEGER,client_id INTEGER);
@@ -32,10 +32,19 @@ final class ApiV2BindingStatusPortalIdentityTest extends TestCase
     public function testOrganizationRootUsesExactParentAndRevocationBlocksIt(): void
     {
         $this->client['organization_id']=4;
-        $this->pdo->exec("INSERT INTO organizations VALUES(4,'".str_repeat('c',32)."');INSERT INTO portal_client_access_roots VALUES('organization','".str_repeat('c',32)."','active')");
+        $this->pdo->exec("INSERT INTO organizations VALUES(4,'".str_repeat('c',32)."',0,NULL);INSERT INTO portal_client_access_roots VALUES('organization','".str_repeat('c',32)."','active')");
         self::assertSame('eligible',$this->proof()['state']);
         $this->pdo->exec("UPDATE portal_client_access_roots SET access_state='revoked' WHERE root_type='organization'");
         self::assertSame('revoked',$this->proof()['state']);self::assertNull($this->proof()['principalPublicId']);
+    }
+    public function testArchivedDeletedOrMissingParentNeverInheritsStaleActiveRoot(): void
+    {
+        $this->client['organization_id']=4;
+        $this->pdo->exec("INSERT INTO organizations VALUES(4,'".str_repeat('c',32)."',1,NULL);INSERT INTO portal_client_access_roots VALUES('organization','".str_repeat('c',32)."','active')");
+        self::assertSame('revoked',$this->proof()['state']);
+        $this->pdo->exec("UPDATE organizations SET archived=0,deleted_at='2026-10-18 01:00:00'");
+        self::assertSame('revoked',$this->proof()['state']);
+        $this->pdo->exec('DELETE FROM organizations');self::assertSame('revoked',$this->proof()['state']);
     }
     public function testAmbiguousOrOtherClientAssociationsNeverGrantOwnProfile(): void
     {
