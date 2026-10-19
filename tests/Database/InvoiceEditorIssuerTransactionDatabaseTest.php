@@ -63,6 +63,7 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
     {
         $this->fixture();
         $before = $this->row();
+        $initialRevision = $this->revisions()[0];
         $result = $this->post('creator');
         self::assertSame(0, $result['exit'], $result['stderr']);
         self::assertStringNotContainsString('There is no active transaction', $result['stderr']);
@@ -76,14 +77,23 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         $revisions = $this->revisions();
         self::assertCount(2, $revisions);
         self::assertSame($this->users[1], (int)$revisions[1]['created_by']);
-        self::assertSame(hash('sha256', $revisions[1]['snapshot']), $revisions[1]['content_hash']);
+        // MySQL stores snapshot as native JSON and can normalize its serialization.
+        // Preserve the complete stored revision/hash rather than rehashing its text.
+        self::assertSame($initialRevision, $revisions[0]);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $revisions[1]['content_hash']);
+        self::assertNotSame($initialRevision['content_hash'], $revisions[1]['content_hash']);
+        $creatorRevision = $revisions[1];
         $first = json_decode($revisions[0]['snapshot'], true, 512, JSON_THROW_ON_ERROR);
         self::assertSame('company', json_decode($first['document']['issuer_snapshot'], true)['mode']);
 
         self::assertSame(0, $this->post('company')['exit']);
         $company = $this->row();
         self::assertSame('company', json_decode($company['issuer_snapshot'], true)['mode']);
-        self::assertCount(3, $this->revisions());
+        $companyRevisions = $this->revisions();
+        self::assertCount(3, $companyRevisions);
+        self::assertSame($initialRevision, $companyRevisions[0]);
+        self::assertSame($creatorRevision, $companyRevisions[1]);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $companyRevisions[2]['content_hash']);
         $beforeRejected = $company;
         $revisionsBeforeRejected = $this->revisions();
         $rejected = $this->post('invalid-mode', '9');
