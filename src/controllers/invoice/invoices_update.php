@@ -147,6 +147,9 @@ $customFieldsJson = !empty($customFieldValues) ? json_encode($customFieldValues)
 $organizationId = $isGeneralRecipientInvoice ? null : resolve_client_context_org_id($pdo, $client_id, !empty($invoiceState['project_id']) ? (int)$invoiceState['project_id'] : null, request_client_org_id() ?: null);
 $showContactOnDocument = $organizationId && !empty($_POST['show_contact_on_document']) ? 1 : 0;
 
+// The legacy compatibility helper can issue MySQL DDL, which implicitly commits.
+// Complete it before taking the document lock or changing an invoice/revision.
+invoice_ensure_payments_schema($pdo);
 $pdo->beginTransaction();
 try {
   $invoiceState=DocumentPolicy::assertMutable($pdo,'invoice',$id,'monetary_adjustment',true);
@@ -249,7 +252,10 @@ try {
   
   $pdo->commit();
 } catch (Throwable $e) {
-  $pdo->rollBack();
+  if ($pdo->inTransaction()) {
+    $pdo->rollBack();
+  }
+  error_log('[invoices_update] ' . get_class($e) . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
   $error=$e instanceof DocumentLockedException||($e instanceof DomainException&&hash_equals($fixedTotalLockMessage,$e->getMessage()))?$e->getMessage():'Update failed';
   header('Location: /?page=invoice/invoice-details&id='.$id.'&error='.rawurlencode($error));
   exit;

@@ -67,38 +67,52 @@ function invoice_public_base_url(array $appConfig): string
 }
 function invoice_table_has_column(PDO $pdo, string $table, string $column): bool
 {
-    static $cache = [];
+    static $cache;
+    $cache ??= new WeakMap();
     $key = $table . ':' . $column;
-    if (array_key_exists($key, $cache)) {
-        return $cache[$key];
+    if (isset($cache[$pdo][$key])) {
+        return true;
     }
     if (!preg_match('/^[A-Za-z0-9_]+$/', $table) || !preg_match('/^[A-Za-z0-9_]+$/', $column)) {
-        $cache[$key] = false;
         return false;
     }
-
     try {
-        $stmt = $pdo->prepare(
-            'SELECT 1 FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
-             LIMIT 1'
-        );
-        $stmt->execute([$table, $column]);
-        $cache[$key] = $stmt->fetchColumn() !== false;
-        return $cache[$key];
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $columns = $pdo->query('PRAGMA table_info(' . $table . ')')->fetchAll(PDO::FETCH_ASSOC);
+            $found = in_array($column, array_column($columns, 'name'), true);
+        } else {
+            $stmt = $pdo->prepare(
+                'SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+                 LIMIT 1'
+            );
+            $stmt->execute([$table, $column]);
+            $found = $stmt->fetchColumn() !== false;
+        }
+        // A compatibility repair can add a previously absent column in this request.
+        if ($found) {
+            $known = $cache[$pdo] ?? [];
+            $known[$key] = true;
+            $cache[$pdo] = $known;
+        }
+        return $found;
     } catch (Throwable $e) {
-        $cache[$key] = false;
         return false;
     }
 }
 
 function invoice_ensure_payments_schema(PDO $pdo): void
 {
-    static $done = false;
-    if ($done) {
+    static $done;
+    $done ??= new WeakMap();
+    if (isset($done[$pdo])) {
         return;
     }
-
+    // The compatibility DDL below is MySQL-specific. SQLite fixtures already own
+    // their schema, and must never receive MySQL ALTER/INDEX statements.
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'mysql') {
+        return;
+    }
     $columns = [
         'project_invoice_payment_id' => 'BIGINT NULL AFTER invoice_id',
         'contract_id' => 'INT NULL AFTER project_invoice_payment_id',
@@ -117,38 +131,58 @@ function invoice_ensure_payments_schema(PDO $pdo): void
         'processor_fee_policy' => "VARCHAR(32) NOT NULL DEFAULT 'unknown' AFTER processor_net_amount",
         'processor_fee_source' => "VARCHAR(32) NOT NULL DEFAULT 'unknown' AFTER processor_fee_policy",
     ];
-
-    try {
-        $pdo->exec('ALTER TABLE payments MODIFY COLUMN client_id INT NULL');
-    } catch (Throwable $e) {
-        @error_log('[invoice_lifecycle] Failed to relax payments.client_id: ' . $e->getMessage());
+    $metadata = $pdo->query(
+        "SELECT COLUMN_NAME,IS_NULLABLE,DATA_TYPE,CHARACTER_MAXIMUM_LENGTH,COLUMN_DEFAULT
+         FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='payments'"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $actual = array_column($metadata, null, 'COLUMN_NAME');
+    if (!isset($actual['client_id'], $actual['payment_method'])) {
+        throw new RuntimeException('Payments schema is unavailable; apply database migrations first.');
     }
-    try {
-        $pdo->exec("ALTER TABLE payments MODIFY COLUMN payment_method VARCHAR(50) NOT NULL DEFAULT 'cash'");
-    } catch (Throwable $e) {
-        @error_log('[invoice_lifecycle] Failed to widen payments.payment_method: ' . $e->getMessage());
+    $ddl = [];
+    if ($actual['client_id']['IS_NULLABLE'] !== 'YES') {
+        $ddl[] = 'ALTER TABLE payments MODIFY COLUMN client_id INT NULL';
     }
-
+    $method = $actual['payment_method'];
+    if ($method['DATA_TYPE'] !== 'varchar' || (int)$method['CHARACTER_MAXIMUM_LENGTH'] < 50
+        || $method['IS_NULLABLE'] !== 'NO' || $method['COLUMN_DEFAULT'] !== 'cash') {
+        $width = max(50, $method['DATA_TYPE'] === 'varchar' ? (int)$method['CHARACTER_MAXIMUM_LENGTH'] : 50);
+        $ddl[] = "ALTER TABLE payments MODIFY COLUMN payment_method VARCHAR({$width}) NOT NULL DEFAULT 'cash'";
+    }
     foreach ($columns as $column => $definition) {
-        if (!invoice_table_has_column($pdo, 'payments', $column)) {
-            try {
-                $pdo->exec("ALTER TABLE payments ADD COLUMN {$column} {$definition}");
-            } catch (Throwable $e) {
-                @error_log('[invoice_lifecycle] Failed to repair payments.' . $column . ': ' . $e->getMessage());
-            }
+        if (!isset($actual[$column])) {
+            $ddl[] = "ALTER TABLE payments ADD COLUMN {$column} {$definition}";
         }
     }
-
-    try {
-        $pdo->exec('CREATE UNIQUE INDEX uq_payments_processor_payment ON payments (processor_provider, processor_payment_id)');
-    } catch (Throwable $e) {
+    $indexRows = $pdo->query(
+        "SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME FROM information_schema.statistics
+         WHERE table_schema=DATABASE() AND table_name='payments' ORDER BY INDEX_NAME,SEQ_IN_INDEX"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $indexes = [];
+    foreach ($indexRows as $row) {
+        $indexes[$row['INDEX_NAME']][] = [(int)$row['NON_UNIQUE'], $row['COLUMN_NAME']];
     }
-    try {
-        $pdo->exec('CREATE INDEX idx_payments_processor_transaction ON payments (processor_transaction_id)');
-    } catch (Throwable $e) {
+    $requiredIndexes = [
+        'uq_payments_processor_payment' => [[0, 'processor_provider'], [0, 'processor_payment_id']],
+        'idx_payments_processor_transaction' => [[1, 'processor_transaction_id']],
+    ];
+    foreach ($requiredIndexes as $name => $shape) {
+        if (isset($indexes[$name])) {
+            if ($indexes[$name] !== $shape) {
+                throw new RuntimeException('Payments index schema is incompatible; apply database migrations first.');
+            }
+        } else {
+            $ddl[] = ($shape[0][0] === 0 ? 'CREATE UNIQUE INDEX ' : 'CREATE INDEX ') . $name
+                . ' ON payments (' . implode(', ', array_column($shape, 1)) . ')';
+        }
     }
-
-    $done = true;
+    if ($ddl && $pdo->inTransaction()) {
+        throw new LogicException('Payments schema repair must finish before starting a document transaction.');
+    }
+    foreach ($ddl as $statement) {
+        $pdo->exec($statement);
+    }
+    $done[$pdo] = true;
 }
 
 function invoice_expire_active_checkout(PDO $pdo, string $table, int $id, array $appConfig): void

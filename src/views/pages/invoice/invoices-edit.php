@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/document_fields.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/general_recipient_invoices.php';
 require_once __DIR__ . '/../../../services/DocumentPolicy.php';
@@ -81,7 +82,7 @@ if (!empty($inv['contract_id'])) {
     <div style="display:grid;gap:6px"><?php foreach ($contractEstimateLines as $estimateLine): ?><div style="display:flex;justify-content:space-between;gap:16px"><span><?= htmlspecialchars((string)$estimateLine['item']) ?> · <?= number_format((float)$estimateLine['quantity'],2) ?> hr × $<?= number_format((float)$estimateLine['unit_price'],2) ?></span><strong>$<?= number_format((float)$estimateLine['line_total'],2) ?> estimated</strong></div><?php endforeach; ?></div>
   </div>
   <?php endif; ?>
-  <?php if (!$isGeneralRecipientInvoice): ?>
+  <?php if (pa_workforce_enabled() && !$isGeneralRecipientInvoice): ?>
   <div style="display:grid;gap:10px;max-width:900px;margin:0 0 18px;padding:14px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff">
     <div>
       <div style="font-weight:700;color:#1e3a8a">Add confirmed time to this draft</div>

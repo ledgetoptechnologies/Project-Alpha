@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/document_fields.php';
+require_once __DIR__ . '/../../../utils/workforce_availability.php';
 require_once __DIR__ . '/../../components/tax_lookup_control.php';
 $clients = $pdo->query("SELECT id, name FROM clients ORDER BY name ASC")->fetchAll();
 $netDays = (int)($appConfig['net_terms_days'] ?? 30); if ($netDays < 0) { $netDays = 0; }
@@ -118,8 +119,10 @@ if ($selectedProjectId > 0) {
       <div id="itemsInv" style="display:grid;gap:8px"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px">
         <button type="button" onclick="addItemInv()" style="padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#fff">+ Add Item</button>
+        <?php if (pa_workforce_enabled()): ?>
         <button type="button" id="btnAddFromTrackedTime" style="padding:8px 12px;border-radius:8px;border:1px solid #2ea3d6;background:#eff6ff;color:#0b4a6a;font-weight:600">+ Add from Tracked Time</button>
         <button type="button" id="btnAddFromMileage" style="padding:8px 12px;border-radius:8px;border:1px solid #2ea3d6;background:#eff6ff;color:#0b4a6a;font-weight:600">+ Add Billable Mileage</button>
+        <?php endif; ?>
       </div>
     </div>
 
@@ -143,6 +146,7 @@ if ($selectedProjectId > 0) {
   </form>
 </section>
 
+<?php if (pa_workforce_enabled()): ?>
 <!-- Tracked Time Modal -->
 <div id="trackedTimeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100;align-items:center;justify-content:center;padding:16px">
   <div class="card" style="width:100%;max-width:800px;max-height:90vh;overflow:auto">
@@ -199,6 +203,7 @@ if ($selectedProjectId > 0) {
   </div>
 </div>
 
+<?php endif; ?>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/invoices-create-logic.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
