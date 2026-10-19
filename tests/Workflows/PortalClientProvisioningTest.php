@@ -1155,13 +1155,14 @@ SQL);
 
     public function testMissingPersonAdministrativePauseUnderLockDoesNotConsumeRetry():void
     {
-        foreach(['producer_delivery','outbound_runtime','authoritative_hooks']as$case){$this->setUp();
+        foreach(['producer_delivery','outbound_runtime','authoritative_hooks','external_connection']as$case){$this->setUp();
             $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function()use($case):void{
                 $this->prepareCompletedOrganizationWithMissingPerson();$fired=false;$before=$this->existingPersonAuthority();
                 $this->pdo->afterMissingClientSelection=function()use($case,&$fired):void{
                     $fired=true;$this->pdo->exec(match($case){
                         'producer_delivery'=>'UPDATE portal_integration_profiles SET delivery_enabled=0',
                         'outbound_runtime'=>"UPDATE app_config SET config_value='0' WHERE config_key='portal_outbound_delivery_enabled'",
+                        'external_connection'=>"UPDATE app_config SET config_value='0' WHERE config_key='external_ops_enabled'",
                         default=>"UPDATE app_config SET config_value='0' WHERE config_key='portal_authoritative_hooks_enabled'",
                     });
                 };
