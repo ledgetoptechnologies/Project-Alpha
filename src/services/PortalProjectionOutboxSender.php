@@ -48,9 +48,81 @@ final class PortalProjectionOutboxSender
     /** @return array<string,mixed>|null */
     private function claimNext(PDO $pdo):?array
     {
-        $now=self::dbNow();$expired=(new DateTimeImmutable('now',new DateTimeZone('UTC')))->modify('-'.self::CLAIM_TTL_SECONDS.' seconds')->format('Y-m-d H:i:s.u');
-        $candidate=$pdo->prepare("SELECT o.id,o.integration_profile_id FROM portal_projection_outbox o JOIN portal_integration_profiles p ON p.id=o.integration_profile_id WHERE p.delivery_enabled=1 AND (o.is_revocation=1 OR (p.enabled=1 AND ((o.route_type='portal' AND p.portal_projection_enabled=1) OR (o.route_type='catalog' AND p.catalog_projection_enabled=1) OR (o.route_type='service_assignments' AND p.service_assignment_projection_enabled=1)))) AND o.delivered_at IS NULL AND o.dead_lettered_at IS NULL AND o.next_attempt_at<=? AND (o.claimed_at IS NULL OR o.claimed_at<?) AND o.attempts<p.delivery_max_attempts AND NOT EXISTS(SELECT 1 FROM portal_projection_outbox prior WHERE prior.integration_profile_id=o.integration_profile_id AND prior.workspace_public_id=o.workspace_public_id AND prior.route_type=o.route_type AND prior.id<o.id AND prior.delivered_at IS NULL AND prior.dead_lettered_at IS NULL AND (o.is_revocation=0 OR prior.is_revocation=1 OR (prior.claimed_at IS NOT NULL AND prior.claimed_at>=?))) ORDER BY o.id LIMIT 1");$candidate->execute([$now,$expired,$expired]);$id=$candidate->fetch(PDO::FETCH_ASSOC);if(!$id)return null;
-        $pdo->beginTransaction();try{$profile=PortalProjectionService::lockProfileContract($pdo,(int)$id['integration_profile_id']);if(empty($profile['delivery_enabled'])){$pdo->rollBack();return null;}$suffix=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';$row=$pdo->prepare('SELECT * FROM portal_projection_outbox WHERE id=?'.$suffix);$row->execute([(int)$id['id']]);$claim=$row->fetch(PDO::FETCH_ASSOC);if(!$claim||!$this->profileAllows($profile,$claim)||!empty($claim['delivered_at'])||!empty($claim['dead_lettered_at'])||(!empty($claim['claimed_at'])&&(string)$claim['claimed_at']>=$expired)){$pdo->rollBack();return null;}if(!empty($claim['is_revocation'])){$pdo->prepare("UPDATE portal_projection_outbox SET dead_lettered_at=?,last_error_code='profile_disabled_superseded',claim_token=NULL,claimed_at=NULL WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=? AND id<? AND is_revocation=0 AND delivered_at IS NULL AND dead_lettered_at IS NULL AND (claimed_at IS NULL OR claimed_at<?)")->execute([$now,(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id'],(string)$claim['route_type'],(int)$claim['id'],$expired]);}$token=self::uuid();$pdo->prepare('UPDATE portal_projection_outbox SET claim_token=?,claimed_at=? WHERE id=?')->execute([$token,$now,(int)$claim['id']]);$pdo->commit();return array_merge($profile,$claim,['claim_token'=>$token,'profile_id'=>(int)$profile['id']]);}catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+        $now=self::dbNow();$expired=self::expiredClaim();
+        $eligibility=$this->eligibilitySql($pdo);
+        $sql="SELECT o.id,o.integration_profile_id FROM portal_projection_outbox o JOIN portal_integration_profiles p ON p.id=o.integration_profile_id WHERE {$eligibility}";
+        $candidate=$pdo->prepare($sql.' ORDER BY o.id LIMIT 1');$candidate->execute([$now,$expired,$expired,$expired]);$id=$candidate->fetch(PDO::FETCH_ASSOC);if(!$id)return null;
+        $pdo->beginTransaction();try{
+            $profile=PortalProjectionService::lockProfileContract($pdo,(int)$id['integration_profile_id']);
+            // Candidate selection is advisory. Re-run the complete ordering and
+            // recovery fence after acquiring the same lock used by producers.
+            $candidate=$pdo->prepare($sql.' AND o.id=?');$candidate->execute([$now,$expired,$expired,$expired,(int)$id['id']]);
+            if(!$candidate->fetch(PDO::FETCH_ASSOC)){$pdo->rollBack();return null;}
+            $suffix=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+            $row=$pdo->prepare('SELECT * FROM portal_projection_outbox WHERE id=?'.$suffix);$row->execute([(int)$id['id']]);$claim=$row->fetch(PDO::FETCH_ASSOC);
+            if(!$claim||!$this->profileAllows($profile,$claim)){$pdo->rollBack();return null;}
+            if($this->isRecoveryDelivery($pdo,$claim)){
+                try{$this->requireRecoveryAuthority($pdo,$profile,$claim);}catch(DomainException$error){$pdo->rollBack();return null;}
+            }
+            if(!empty($claim['is_revocation'])){$pdo->prepare("UPDATE portal_projection_outbox SET dead_lettered_at=?,last_error_code='profile_disabled_superseded',claim_token=NULL,claimed_at=NULL WHERE integration_profile_id=? AND workspace_public_id=? AND route_type=? AND id<? AND is_revocation=0 AND delivered_at IS NULL AND dead_lettered_at IS NULL AND (claimed_at IS NULL OR claimed_at<?)")->execute([$now,(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id'],(string)$claim['route_type'],(int)$claim['id'],$expired]);}
+            $token=self::uuid();$pdo->prepare('UPDATE portal_projection_outbox SET claim_token=?,claimed_at=? WHERE id=?')->execute([$token,$now,(int)$claim['id']]);
+            $pdo->commit();return array_merge($profile,$claim,['claim_token'=>$token,'profile_id'=>(int)$profile['id']]);
+        }catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+    }
+
+    private static function expiredClaim():string{return(new DateTimeImmutable('now',new DateTimeZone('UTC')))->modify('-'.self::CLAIM_TTL_SECONDS.' seconds')->format('Y-m-d H:i:s.u');}
+
+    /** SQL is composed only from fixed aliases, never request input. */
+    private function jsonField(PDO $pdo,string $alias,string $field):string
+    {
+        $sql="json_extract({$alias}.payload_json,'$.{$field}')";
+        return $pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?"json_unquote({$sql})":$sql;
+    }
+
+    /** Exact replacement activation is the durable recovery intent. */
+    private function recoveryContractSql(PDO $pdo,string $recovery='r',string $activation='a'):string
+    {
+        $generation=$this->jsonField($pdo,$activation,'sourceGeneration');$delivery=$this->jsonField($pdo,$activation,'deliveryId');
+        $workspace=$this->jsonField($pdo,$activation,'workspaceId');$sequence=$this->jsonField($pdo,$activation,'sourceSequence');$kind=$this->jsonField($pdo,$activation,'kind');
+        return "{$activation}.integration_profile_id={$recovery}.integration_profile_id AND {$activation}.workspace_public_id={$recovery}.workspace_public_id AND {$activation}.route_type='portal' AND {$activation}.is_revocation=0 AND {$activation}.delivery_kind='snapshot.activate' AND {$activation}.id>{$recovery}.failed_row_cutoff_id AND {$generation}={$recovery}.source_generation AND {$delivery}={$activation}.delivery_id AND {$workspace}={$activation}.workspace_public_id AND {$sequence}={$activation}.source_sequence AND {$kind}='snapshot.activate'";
+    }
+
+    private function coveredSql(PDO $pdo,string $row,string $states):string
+    {
+        $contract=$this->recoveryContractSql($pdo);
+        return "({$row}.route_type='portal' AND {$row}.is_revocation=0 AND EXISTS(SELECT 1 FROM portal_projection_recoveries r JOIN portal_projection_outbox a ON a.delivery_id=r.activation_delivery_id WHERE r.route_type='portal' AND r.state IN ({$states}) AND {$contract} AND r.integration_profile_id={$row}.integration_profile_id AND r.workspace_public_id={$row}.workspace_public_id AND {$row}.destination_url=a.destination_url AND {$row}.id<=r.failed_row_cutoff_id AND (r.state='queued' OR a.delivered_at IS NOT NULL)))";
+    }
+
+    private function replacementSql(PDO $pdo,string $row,?string $prior=null):string
+    {
+        $contract=$this->recoveryContractSql($pdo);$generation=$this->jsonField($pdo,$row,'sourceGeneration');$hash=$this->jsonField($pdo,$row,'snapshotHash');$activationHash=$this->jsonField($pdo,'a','snapshotHash');
+        $kind=$this->jsonField($pdo,$row,'kind');$delivery=$this->jsonField($pdo,$row,'deliveryId');$workspace=$this->jsonField($pdo,$row,'workspaceId');$sequence=$this->jsonField($pdo,$row,'sourceSequence');
+        $priorGuard=$prior===null?'':" AND {$prior}.is_revocation=0 AND {$prior}.id<=r.failed_row_cutoff_id AND {$prior}.destination_url=a.destination_url";
+        return "({$row}.route_type='portal' AND {$row}.is_revocation=0 AND {$row}.delivery_kind IN ('snapshot.page','snapshot.activate') AND EXISTS(SELECT 1 FROM portal_projection_recoveries r JOIN portal_projection_outbox a ON a.delivery_id=r.activation_delivery_id WHERE r.state='queued' AND r.route_type='portal' AND {$contract} AND r.integration_profile_id={$row}.integration_profile_id AND r.workspace_public_id={$row}.workspace_public_id AND {$row}.id>r.failed_row_cutoff_id AND {$row}.id<=a.id AND {$row}.destination_url=a.destination_url AND {$row}.source_sequence=a.source_sequence AND {$row}.schema_version=a.schema_version AND {$generation}=r.source_generation AND {$hash}={$activationHash} AND {$kind}={$row}.delivery_kind AND {$delivery}={$row}.delivery_id AND {$workspace}={$row}.workspace_public_id AND {$sequence}={$row}.source_sequence AND ({$row}.delivery_kind='snapshot.page' OR {$row}.id=a.id){$priorGuard}))";
+    }
+
+    private function eligibilitySql(PDO $pdo):string
+    {
+        $covered=$this->coveredSql($pdo,'o',"'queued','complete'");$completedPrior=$this->coveredSql($pdo,'prior',"'complete'");
+        $bypass=$this->replacementSql($pdo,'o','prior');$replacement=$this->replacementSql($pdo,'o');
+        return "p.delivery_enabled=1 AND (o.is_revocation=1 OR (p.enabled=1 AND ((o.route_type='portal' AND p.portal_projection_enabled=1) OR (o.route_type='catalog' AND p.catalog_projection_enabled=1) OR (o.route_type='service_assignments' AND p.service_assignment_projection_enabled=1)))) AND o.delivered_at IS NULL AND o.dead_lettered_at IS NULL AND o.next_attempt_at<=? AND (o.claimed_at IS NULL OR o.claimed_at<?) AND o.attempts<p.delivery_max_attempts AND NOT {$covered} AND NOT ({$replacement} AND EXISTS(SELECT 1 FROM portal_projection_outbox rev WHERE rev.integration_profile_id=o.integration_profile_id AND rev.workspace_public_id=o.workspace_public_id AND rev.route_type='portal' AND rev.is_revocation=1 AND rev.delivered_at IS NULL)) AND NOT EXISTS(SELECT 1 FROM portal_projection_outbox prior WHERE prior.integration_profile_id=o.integration_profile_id AND prior.workspace_public_id=o.workspace_public_id AND prior.route_type=o.route_type AND prior.id<o.id AND prior.delivered_at IS NULL AND prior.dead_lettered_at IS NULL AND NOT {$completedPrior} AND (o.is_revocation=0 OR prior.is_revocation=1 OR (prior.claimed_at IS NOT NULL AND prior.claimed_at>=?)) AND NOT ({$bypass} AND (prior.claimed_at IS NULL OR prior.claimed_at<?)))";
+    }
+
+    private function isRecoveryDelivery(PDO $pdo,array $claim):bool
+    {
+        $q=$pdo->prepare('SELECT 1 FROM portal_projection_outbox o WHERE o.id=? AND '.$this->replacementSql($pdo,'o'));
+        $q->execute([(int)$claim['id']]);return(bool)$q->fetchColumn();
+    }
+
+    private function requireRecoveryAuthority(PDO $pdo,array $profile,array $claim):void
+    {
+        if(!$this->profileAllows($profile,$claim)||!hash_equals((string)$profile['portal_route'],(string)$claim['destination_url']))throw new DomainException('portal-recovery-contract-changed');
+        $workspace=(new PortalWorkspaceAuthorizationService())->requireWorkspace($pdo,(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id']);
+        $payload=json_decode((string)$claim['payload_json'],true,64,JSON_THROW_ON_ERROR);
+        if(!is_array($payload)||($payload['applicationKey']??null)!==$profile['application_key'])throw new DomainException('portal-recovery-contract-changed');
+        if(($claim['delivery_kind']??'')==='snapshot.page'&&(($payload['workspace']['rootType']??null)!==$workspace['root_type']||($payload['workspace']['rootPublicId']??null)!==$workspace['root_public_id']))throw new DomainException('portal-recovery-workspace-changed');
+        $q=$pdo->prepare("SELECT 1 FROM portal_projection_outbox WHERE integration_profile_id=? AND workspace_public_id=? AND route_type='portal' AND is_revocation=1 AND delivered_at IS NULL LIMIT 1");
+        $q->execute([(int)$claim['integration_profile_id'],(string)$claim['workspace_public_id']]);if($q->fetchColumn())throw new DomainException('portal-recovery-revocation-pending');
     }
 
     /** @param array<string,mixed> $claim @return array{status:int,body?:string,error?:string} */
@@ -71,6 +143,11 @@ final class PortalProjectionOutboxSender
             ? ExternalOpsSigner::headersFromCredentials(['hmac_secret'=>(string)$config['hmac_secret']],$timestamp,$body)
             : (new ExternalOpsConfigService())->signingHeaders($pdo,$timestamp,$body);
         $headers=array_merge($headers,$signingHeaders);
+        // Fresh authorization immediately before sending a replacement; the
+        // recovery intent does not revive a withdrawn workspace or contract.
+        if($this->isRecoveryDelivery($pdo,$claim)){
+            $pdo->beginTransaction();try{$profile=PortalProjectionService::lockProfileContract($pdo,(int)$claim['integration_profile_id']);$this->requireRecoveryAuthority($pdo,$profile,$claim);$pdo->commit();}catch(Throwable$error){if($pdo->inTransaction())$pdo->rollBack();throw$error;}
+        }
         return$transport($route,$headers,$body,max(2,min(30,(int)$config['timeout_seconds'])));
     }
 

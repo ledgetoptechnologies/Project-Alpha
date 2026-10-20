@@ -124,6 +124,18 @@ jobs:
             web vendor/bin/phpunit --do-not-cache-result --fail-on-skipped \
             tests/Database/InvoiceEditorIssuerTransactionDatabaseTest.php
 
+      - name: MySQL portal snapshot recovery and legacy replan regressions
+        shell: bash
+        run: |
+          root_password="$(docker compose exec -T db printenv MYSQL_ROOT_PASSWORD)"
+          test -n "$root_password"
+          MYSQL_PASSWORD="$root_password" docker compose run --rm --no-deps --entrypoint php \
+            --env MYSQL_USER=root --env MYSQL_PASSWORD \
+            --env PA_DISPOSABLE_SCHEMA_PROOF=1 \
+            --env PA_PORTAL_RECOVERY_MYSQL_ALLOW=isolated-disposable-only \
+            web vendor/bin/phpunit --do-not-cache-result --fail-on-skipped \
+            tests/Database/PortalProjectionRecoveryDatabaseTest.php
+
       - name: MySQL concurrent portal scope-lock regressions
         shell: pwsh
         env:

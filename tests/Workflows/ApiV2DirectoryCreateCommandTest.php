@@ -262,7 +262,7 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
         self::assertSame(1,(int)$rollback->query('SELECT COUNT(*) FROM api_v2_directory_create_command_receipts')->fetchColumn());
     }
 
-    public function testExistingWorkspaceReceivesOnlyNeutralOutboxChanges(): void
+    public function testExistingWorkspaceDefersNeutralTopologyWithoutPublishingAuthority(): void
     {
         $pdo=$this->database(true, true);
         $organization=api_v2_directory_create_command_write($pdo,'organization',$this->organizationCommand(),7,$this->headers(),'organization');
@@ -275,6 +275,8 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
               (1,'workspace-existing','portal','principal','principal-drift','principal-v1','" . str_repeat('a',64) . "','{}'),
               (1,'workspace-existing','portal','entitlement','entitlement-drift','entitlement-v1','" . str_repeat('b',64) . "','{}')");
 
+        $publishedBefore=$pdo->query('SELECT * FROM portal_projection_resource_state ORDER BY resource_type,resource_public_id')->fetchAll(PDO::FETCH_ASSOC);
+        $checkpointBefore=$pdo->query('SELECT * FROM portal_projection_state')->fetchAll(PDO::FETCH_ASSOC);
         $client=$this->clientCommand(['externalId'=>'org-1','expectedRevision'=>'1'],'1');
         self::assertSame(201,api_v2_directory_create_command_write($pdo,'client',$client,7,$this->headers(),'client')['status']);
 
@@ -283,10 +285,9 @@ final class ApiV2DirectoryCreateCommandTest extends TestCase
             $event=json_decode((string)$payload,true,32,JSON_THROW_ON_ERROR)['event']??[];
             $resources[]=(string)($event['resource']??'');
         }
-        self::assertNotEmpty($resources);
-        self::assertSame([],array_values(array_intersect(['principal','entitlement','contact_assignment'],$resources)));
-        self::assertContains('entity',$resources);
-        self::assertContains('relation',$resources);
+        self::assertSame([],$resources);
+        self::assertSame($publishedBefore,$pdo->query('SELECT * FROM portal_projection_resource_state ORDER BY resource_type,resource_public_id')->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame($checkpointBefore,$pdo->query('SELECT * FROM portal_projection_state')->fetchAll(PDO::FETCH_ASSOC));
         self::assertSame(2,(int)$pdo->query("SELECT COUNT(*) FROM portal_projection_resource_state WHERE resource_type IN ('principal','entitlement')")->fetchColumn());
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_v2_workspaces')->fetchColumn());
         self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM portal_integration_profile_workspaces')->fetchColumn());
