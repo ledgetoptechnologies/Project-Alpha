@@ -113,6 +113,19 @@ jobs:
       - name: PHPUnit
         run: docker compose exec -T web vendor/bin/phpunit --colors=always
 
+      - name: MySQL Stripe invoice payment lifecycle regressions
+        shell: bash
+        run: |
+          root_password="$(docker compose exec -T db printenv MYSQL_ROOT_PASSWORD)"
+          test -n "$root_password"
+          PA_STRIPE_HANDLER_TEST_PASSWORD="$root_password" docker compose run --rm --no-deps --entrypoint php \
+            --env PA_STRIPE_HANDLER_TEST_USER=root --env PA_STRIPE_HANDLER_TEST_PASSWORD \
+            --env PA_DISPOSABLE_SCHEMA_PROOF=1 \
+            --env PA_STRIPE_HANDLER_TEST_ALLOW=isolated-disposable-only \
+            --env 'PA_STRIPE_HANDLER_TEST_DSN=mysql:host=db;port=3306;dbname=project_alpha;charset=utf8mb4' \
+            web vendor/bin/phpunit --do-not-cache-result --fail-on-skipped \
+            tests/Payments/StripeInvoiceHandlersTest.php
+
       - name: MySQL invoice issuer transaction and schema regressions
         shell: bash
         run: |

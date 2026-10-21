@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../utils/notifications.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
 require_once __DIR__ . '/../../utils/stripe_payment_accounting.php';
 require_once __DIR__ . '/../../utils/stripe_invoice_payment_amounts.php';
+require_once __DIR__ . '/../../utils/stripe_invoice_payment_state.php';
 require_once __DIR__ . '/../../utils/public_links.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
 
@@ -87,32 +88,29 @@ function handleCheckoutSessionCompleted($pdo, $session) {
     $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_session_id = ? OR (stripe_payment_intent_id IS NOT NULL AND stripe_payment_intent_id = ?)');
     $existsStmt->execute([$session['id'], $paymentIntentId]);
     $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
+    $transitionPaymentId = 0;
     if ($existingPaymentId > 0) {
-        $deliveryState = $pdo->prepare(
-            'SELECT p.amount,i.status FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.id=?'
-        );
-        $deliveryState->execute([$existingPaymentId]);
-        $existing = $deliveryState->fetch(PDO::FETCH_ASSOC);
-        if (!$existing || !is_numeric($existing['amount'] ?? null)
-            || !is_finite((float)$existing['amount']) || (float)$existing['amount'] <= 0) {
-            throw new RuntimeException('Existing Stripe payment has no valid positive principal; manual review is required.');
+        $existing = stripe_invoice_existing_payment($pdo, $existingPaymentId, $invoiceId, $paymentIntentId);
+        if ($existing['transition_required']) {
+            $transitionPaymentId = $existingPaymentId;
+        } else {
+            stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
+            $pdo->commit();
+            if ($existing) {
+                require_once __DIR__ . '/../../utils/payment_receipts.php';
+                payment_email_attempt_all(
+                    static fn() => notify_admin_invoice_paid(
+                        $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, (float)$existing['amount'],
+                        (string)$existing['invoice_status'], false, true, null, 'payment:' . $existingPaymentId
+                    ),
+                    static fn() => payment_receipt_issue(
+                        $pdo, $existingPaymentId, $GLOBALS['appConfig'] ?? [], true, null, true
+                    )
+                );
+            }
+            @error_log('[StripeWebhook] Session ' . $session['id'] . ' already processed - skipping');
+            return;
         }
-        stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
-        $pdo->commit();
-        if ($existing) {
-            require_once __DIR__ . '/../../utils/payment_receipts.php';
-            payment_email_attempt_all(
-                static fn() => notify_admin_invoice_paid(
-                    $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, (float)$existing['amount'],
-                    (string)$existing['status'], false, true, null, 'payment:' . $existingPaymentId
-                ),
-                static fn() => payment_receipt_issue(
-                    $pdo, $existingPaymentId, $GLOBALS['appConfig'] ?? [], true, null, true
-                )
-            );
-        }
-        @error_log('[StripeWebhook] Session ' . $session['id'] . ' already processed - skipping');
-        return;
     }
 
     // A checkout can complete while staff is closing monthly billing. Once the
@@ -120,6 +118,9 @@ function handleCheckoutSessionCompleted($pdo, $session) {
     // that statement so the same balance cannot be collected twice.
     $assignedProjectInvoiceId = (int)($invoice['assigned_project_invoice_id'] ?? 0);
     if ($assignedProjectInvoiceId > 0) {
+        if ($transitionPaymentId > 0) {
+            throw new RuntimeException('Failed Stripe attempt belongs to an assigned Project Invoice; manual review is required.');
+        }
         require_once __DIR__ . '/../../utils/project_invoice_billing.php';
         $projectSession = $session;
         $projectSession['metadata'] = array_merge($metadata, [
@@ -135,21 +136,29 @@ function handleCheckoutSessionCompleted($pdo, $session) {
     }
     
         // Record the payment
-        $stmt = $pdo->prepare('
-            INSERT INTO payments
-                (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_session_id, stripe_payment_intent_id,
-                 processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
-                 processor_fee_policy, processor_fee_source, status, payment_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
-        ');
-        $processorFields = stripe_processor_fields_from_normalized($processorTx, $GLOBALS['appConfig'] ?? [], $paymentAmount, $surchargeAmount);
-        $stmt->execute([
-            $clientId, $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $session['id'], $paymentIntentId,
-            $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
-            $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
-            $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
-        ]);
-        $paymentId = (int)$pdo->lastInsertId();
+        if ($transitionPaymentId > 0) {
+            stripe_invoice_promote_failed_payment(
+                $pdo, $transitionPaymentId, $invoiceId, (string)$paymentIntentId, (string)$session['id'],
+                $paymentAmount, $surchargeAmount, $processorTx, $GLOBALS['appConfig'] ?? []
+            );
+            $paymentId = $transitionPaymentId;
+        } else {
+            $stmt = $pdo->prepare('
+                INSERT INTO payments
+                    (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_session_id, stripe_payment_intent_id,
+                     processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
+                     processor_fee_policy, processor_fee_source, status, payment_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
+            ');
+            $processorFields = stripe_processor_fields_from_normalized($processorTx, $GLOBALS['appConfig'] ?? [], $paymentAmount, $surchargeAmount);
+            $stmt->execute([
+                $clientId, $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $session['id'], $paymentIntentId,
+                $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
+                $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
+                $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
+            ]);
+            $paymentId = (int)$pdo->lastInsertId();
+        }
         stripe_link_pending_financial_events($pdo, $paymentId, $paymentIntentId);
         
         // Update invoice status

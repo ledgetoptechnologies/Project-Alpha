@@ -6,6 +6,7 @@ require_once __DIR__ . '/../services/PaymentProcessorImportService.php';
 require_once __DIR__ . '/stripe_financial_events.php';
 require_once __DIR__ . '/stripe_payment_accounting.php';
 require_once __DIR__ . '/stripe_invoice_payment_amounts.php';
+require_once __DIR__ . '/stripe_invoice_payment_state.php';
 require_once __DIR__ . '/public_links.php';
 require_once __DIR__ . '/invoice_lifecycle.php';
 require_once __DIR__ . '/notifications.php';
@@ -80,65 +81,74 @@ function stripe_reconcile_payment_intents(
             $surchargeAmount = $amounts['surcharge_amount'];
             $processorTx = $stripe->normalizePaymentIntentForImport($pi);
 
-            $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_payment_intent_id = ?');
-            $existsStmt->execute([$piId]);
-            $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
-            if ($existingPaymentId > 0) {
-                $deliveryState = $pdo->prepare(
-                    'SELECT p.amount,i.status FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.id=?'
-                );
-                $deliveryState->execute([$existingPaymentId]);
-                $existing = $deliveryState->fetch(PDO::FETCH_ASSOC);
-                if (!$existing || !is_numeric($existing['amount'] ?? null)
-                    || !is_finite((float)$existing['amount']) || (float)$existing['amount'] <= 0) {
-                    throw new RuntimeException('Existing Stripe payment has no valid positive principal; manual review is required.');
-                }
-                stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $appConfig);
-                if ($existing) {
-                    payment_email_attempt_all(
-                        static fn() => notify_admin_invoice_paid(
-                            $pdo, $appConfig, $invoiceId, (float)$existing['amount'],
-                            (string)$existing['status'], false, true, null, 'payment:' . $existingPaymentId
-                        ),
-                        static fn() => payment_receipt_issue(
-                            $pdo, $existingPaymentId, $appConfig, true, null, true
-                        )
-                    );
-                }
-                $result['duplicates']++;
-                $result['reconciled']++;
-                continue;
-            }
-
-            $invStmt = $pdo->prepare('SELECT id, total, status, client_id FROM invoices WHERE id = ?');
+            // Use the same lock order as success and failure webhooks.
+            $pdo->beginTransaction();
+            $invStmt = $pdo->prepare('SELECT id, total, status, client_id FROM invoices WHERE id = ? FOR UPDATE');
             $invStmt->execute([$invoiceId]);
             $invoice = $invStmt->fetch(PDO::FETCH_ASSOC);
             if (!$invoice) {
+                $pdo->rollBack();
                 @error_log("[stripe_reconciliation] Invoice {$invoiceId} not found for PI {$piId}");
                 $result['skipped']++;
                 continue;
             }
 
-            if (($invoice['status'] ?? '') === 'paid') {
+            $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_payment_intent_id = ?');
+            $existsStmt->execute([$piId]);
+            $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
+            $transitionPaymentId = 0;
+            if ($existingPaymentId > 0) {
+                $existing = stripe_invoice_existing_payment($pdo, $existingPaymentId, $invoiceId, $piId);
+                if ($existing['transition_required']) {
+                    $transitionPaymentId = $existingPaymentId;
+                } else {
+                    stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $appConfig);
+                    $pdo->commit();
+                    if ($existing) {
+                        payment_email_attempt_all(
+                            static fn() => notify_admin_invoice_paid(
+                                $pdo, $appConfig, $invoiceId, (float)$existing['amount'],
+                                (string)$existing['invoice_status'], false, true, null, 'payment:' . $existingPaymentId
+                            ),
+                            static fn() => payment_receipt_issue(
+                                $pdo, $existingPaymentId, $appConfig, true, null, true
+                            )
+                        );
+                    }
+                    $result['duplicates']++;
+                    $result['reconciled']++;
+                    continue;
+                }
+            }
+
+            if (($invoice['status'] ?? '') === 'paid' && $transitionPaymentId === 0) {
+                $pdo->rollBack();
                 $result['skipped']++;
                 continue;
             }
 
-            $pdo->beginTransaction();
-            $processorFields = stripe_processor_fields_from_normalized($processorTx, $appConfig, $paymentAmount, $surchargeAmount);
-            $pdo->prepare('
-                INSERT INTO payments
-                    (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_payment_intent_id, auto_pay_attempt,
-                     processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
-                     processor_fee_policy, processor_fee_source, status, payment_date, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), NOW())
-            ')->execute([
-                (int)$invoice['client_id'], $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $piId, 0,
-                $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
-                $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
-                $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
-            ]);
-            $paymentId = (int)$pdo->lastInsertId();
+            if ($transitionPaymentId > 0) {
+                stripe_invoice_promote_failed_payment(
+                    $pdo, $transitionPaymentId, $invoiceId, $piId, null,
+                    $paymentAmount, $surchargeAmount, $processorTx, $appConfig
+                );
+                $paymentId = $transitionPaymentId;
+            } else {
+                $processorFields = stripe_processor_fields_from_normalized($processorTx, $appConfig, $paymentAmount, $surchargeAmount);
+                $pdo->prepare('
+                    INSERT INTO payments
+                        (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_payment_intent_id, auto_pay_attempt,
+                         processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
+                         processor_fee_policy, processor_fee_source, status, payment_date, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), NOW())
+                ')->execute([
+                    (int)$invoice['client_id'], $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $piId, 0,
+                    $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
+                    $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
+                    $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
+                ]);
+                $paymentId = (int)$pdo->lastInsertId();
+            }
             stripe_link_pending_financial_events($pdo, $paymentId, $piId);
 
             $sumStmt = $pdo->prepare('SELECT COALESCE(SUM(GREATEST(amount-refunded_amount,0)), 0) FROM payments WHERE invoice_id = ? AND status = "succeeded"');

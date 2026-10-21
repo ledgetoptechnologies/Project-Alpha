@@ -20,10 +20,13 @@ function handlePaymentIntentFailed($pdo, $paymentIntent) {
     
     // Record failed payment attempt (optional - for tracking)
     try {
-        $invStmt = $pdo->prepare('SELECT client_id FROM invoices WHERE id = ?');
+        // Serialize with successful settlement of this same PaymentIntent.
+        $pdo->beginTransaction();
+        $invStmt = $pdo->prepare('SELECT client_id FROM invoices WHERE id = ? FOR UPDATE');
         $invStmt->execute([$invoiceId]);
         $clientId = (int)$invStmt->fetchColumn();
         if ($clientId <= 0) {
+            $pdo->rollBack();
             @error_log('[StripeWebhook] Failed payment invoice not found: ' . $invoiceId);
             return;
         }
@@ -31,6 +34,7 @@ function handlePaymentIntentFailed($pdo, $paymentIntent) {
         $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_payment_intent_id = ?');
         $existsStmt->execute([$piId]);
         if ($existsStmt->fetchColumn()) {
+            $pdo->commit();
             return;
         }
 
@@ -41,11 +45,14 @@ function handlePaymentIntentFailed($pdo, $paymentIntent) {
             0, // Amount is 0 for failed payments
             'stripe',
             $piId,
-            !empty($metadata['auto_pay']) ? 1 : 0,
+            0, // Failed retries do not re-enable the retired AutoPay workflow.
             'failed'
         ]);
+        $pdo->commit();
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         @error_log('[StripeWebhook] Failed to record failed payment: ' . $e->getMessage());
+        throw $e;
     }
     
     // Future: Send notification to admin about failed payment
