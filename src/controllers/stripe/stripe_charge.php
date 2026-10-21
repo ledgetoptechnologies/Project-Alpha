@@ -126,11 +126,11 @@ try {
             'doc_number' => $docNumber,
             'charged_by' => 'admin_hosted_checkout',
             'admin_user_id' => (string)($_SESSION['user']['id'] ?? ''),
-            'surcharge_amount' => (string)$surchargeAmount,
-            'original_amount' => (string)$amountDue,
+            'surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
+            'original_amount' => number_format($amountDue, 2, '.', ''),
             'pa_fee_policy' => (string)($surchargeInfo['surcharge_type'] ?? 'merchant'),
-            'pa_invoice_amount' => (string)$amountDue,
-            'pa_surcharge_amount' => (string)$surchargeAmount,
+            'pa_invoice_amount' => number_format($amountDue, 2, '.', ''),
+            'pa_surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
             'pa_fee_split_percent' => (string)($appConfig['stripe_surcharge_split_percent'] ?? '')
         ]
     );

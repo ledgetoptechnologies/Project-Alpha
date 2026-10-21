@@ -5,6 +5,7 @@ require_once __DIR__ . '/../services/StripeService.php';
 require_once __DIR__ . '/../services/PaymentProcessorImportService.php';
 require_once __DIR__ . '/stripe_financial_events.php';
 require_once __DIR__ . '/stripe_payment_accounting.php';
+require_once __DIR__ . '/stripe_invoice_payment_amounts.php';
 require_once __DIR__ . '/public_links.php';
 require_once __DIR__ . '/invoice_lifecycle.php';
 require_once __DIR__ . '/notifications.php';
@@ -74,21 +75,25 @@ function stripe_reconcile_payment_intents(
 
             $invoiceId = (int)$invoiceId;
             $piId = (string)($pi['id'] ?? '');
-            $amount = ((int)($pi['amount'] ?? 0)) / 100;
-            $paymentAmount = isset($pi['metadata']['original_amount']) ? (float)$pi['metadata']['original_amount'] : $amount;
-            $surchargeAmount = isset($pi['metadata']['surcharge_amount']) ? (float)$pi['metadata']['surcharge_amount'] : max(0, $amount - $paymentAmount);
+            $amounts = stripe_invoice_payment_amounts($pi, 'payment_intent');
+            $paymentAmount = $amounts['payment_amount'];
+            $surchargeAmount = $amounts['surcharge_amount'];
             $processorTx = $stripe->normalizePaymentIntentForImport($pi);
 
             $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_payment_intent_id = ?');
             $existsStmt->execute([$piId]);
             $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
             if ($existingPaymentId > 0) {
-                stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $appConfig);
                 $deliveryState = $pdo->prepare(
                     'SELECT p.amount,i.status FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.id=?'
                 );
                 $deliveryState->execute([$existingPaymentId]);
                 $existing = $deliveryState->fetch(PDO::FETCH_ASSOC);
+                if (!$existing || !is_numeric($existing['amount'] ?? null)
+                    || !is_finite((float)$existing['amount']) || (float)$existing['amount'] <= 0) {
+                    throw new RuntimeException('Existing Stripe payment has no valid positive principal; manual review is required.');
+                }
+                stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $appConfig);
                 if ($existing) {
                     payment_email_attempt_all(
                         static fn() => notify_admin_invoice_paid(

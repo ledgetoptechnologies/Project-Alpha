@@ -2,12 +2,13 @@
 // src/controllers/webhook/stripe_payment_succeeded.php
 // Handler for payment_intent.succeeded events
 
-require_once __DIR__ . '/../../config/db.php';
+// The signed webhook router owns the database connection.
 require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../services/PaymentProcessorImportService.php';
 require_once __DIR__ . '/../../utils/notifications.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
 require_once __DIR__ . '/../../utils/stripe_payment_accounting.php';
+require_once __DIR__ . '/../../utils/stripe_invoice_payment_amounts.php';
 require_once __DIR__ . '/../../utils/public_links.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
 
@@ -59,9 +60,10 @@ function handlePaymentIntentSucceeded($pdo, $paymentIntent) {
     }
     
     $invoiceId = (int)$invoiceId;
-    $amountTotal = ($paymentIntent['amount'] ?? 0) / 100; // Convert from cents
-    $paymentAmount = isset($metadata['original_amount']) ? (float)$metadata['original_amount'] : $amountTotal;
-    $surchargeAmount = isset($metadata['surcharge_amount']) ? (float)$metadata['surcharge_amount'] : max(0, $amountTotal - $paymentAmount);
+    $amounts = stripe_invoice_payment_amounts($paymentIntent, 'payment_intent');
+    $amountTotal = $amounts['gross_amount'];
+    $paymentAmount = $amounts['payment_amount'];
+    $surchargeAmount = $amounts['surcharge_amount'];
     $processorTx = [
         'provider' => 'stripe',
         'provider_payment_id' => (string)$piId,
@@ -100,13 +102,17 @@ function handlePaymentIntentSucceeded($pdo, $paymentIntent) {
     $existsStmt->execute([$piId]);
     $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
     if ($existingPaymentId > 0) {
-        stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
-        $pdo->commit();
         $deliveryState = $pdo->prepare(
             'SELECT p.amount,i.status FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.id=?'
         );
         $deliveryState->execute([$existingPaymentId]);
         $existing = $deliveryState->fetch(PDO::FETCH_ASSOC);
+        if (!$existing || !is_numeric($existing['amount'] ?? null)
+            || !is_finite((float)$existing['amount']) || (float)$existing['amount'] <= 0) {
+            throw new RuntimeException('Existing Stripe payment has no valid positive principal; manual review is required.');
+        }
+        stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
+        $pdo->commit();
         if ($existing) {
             require_once __DIR__ . '/../../utils/payment_receipts.php';
             payment_email_attempt_all(
@@ -147,6 +153,7 @@ function handlePaymentIntentSucceeded($pdo, $paymentIntent) {
         // COMPLIANCE: If the card was debit/prepaid, refund the surcharge (Durbin Amendment)
         $surchargePaid = (float)$surchargeAmount;
         if ($surchargePaid > 0) {
+            require_once __DIR__ . '/../../services/PaymentProcessorInterface.php';
             require_once __DIR__ . '/../../services/StripeProcessor.php';
             $processor = StripeProcessor::fromAppConfig($GLOBALS['appConfig'] ?? []);
             if ($processor && !$processor->isCreditCardPayment($paymentIntent)) {
