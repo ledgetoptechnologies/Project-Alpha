@@ -203,12 +203,12 @@ try {
             'project_invoice_id' => (string)$invoiceId,
             'doc_number' => (string)$docNumber,
             'token' => $token,
-            'original_amount' => (string)$amountDue,
-            'surcharge_amount' => (string)$surchargeAmount,
+            'original_amount' => number_format($amountDue, 2, '.', ''),
+            'surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
             'surcharge_type' => (string)($surchargeInfo['surcharge_type'] ?? 'merchant'),
             'pa_fee_policy' => (string)($surchargeInfo['surcharge_type'] ?? 'merchant'),
-            'pa_invoice_amount' => (string)$amountDue,
-            'pa_surcharge_amount' => (string)$surchargeAmount,
+            'pa_invoice_amount' => number_format($amountDue, 2, '.', ''),
+            'pa_surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
             'pa_fee_split_percent' => (string)($appConfig['stripe_surcharge_split_percent'] ?? ''),
         ]
         : [
@@ -216,12 +216,12 @@ try {
             'invoice_id' => (string)$invoiceId,
             'doc_number' => (string)$docNumber,
             'token' => $token,
-            'original_amount' => (string)$amountDue,
-            'surcharge_amount' => (string)$surchargeAmount,
+            'original_amount' => number_format($amountDue, 2, '.', ''),
+            'surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
             'surcharge_type' => (string)($surchargeInfo['surcharge_type'] ?? 'merchant'),
             'pa_fee_policy' => (string)($surchargeInfo['surcharge_type'] ?? 'merchant'),
-            'pa_invoice_amount' => (string)$amountDue,
-            'pa_surcharge_amount' => (string)$surchargeAmount,
+            'pa_invoice_amount' => number_format($amountDue, 2, '.', ''),
+            'pa_surcharge_amount' => number_format($surchargeAmount, 2, '.', ''),
             'pa_fee_split_percent' => (string)($appConfig['stripe_surcharge_split_percent'] ?? ''),
         ];
     

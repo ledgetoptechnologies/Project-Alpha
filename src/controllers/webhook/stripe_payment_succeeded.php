@@ -2,12 +2,14 @@
 // src/controllers/webhook/stripe_payment_succeeded.php
 // Handler for payment_intent.succeeded events
 
-require_once __DIR__ . '/../../config/db.php';
+// The signed webhook router owns the database connection.
 require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../services/PaymentProcessorImportService.php';
 require_once __DIR__ . '/../../utils/notifications.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
 require_once __DIR__ . '/../../utils/stripe_payment_accounting.php';
+require_once __DIR__ . '/../../utils/stripe_invoice_payment_amounts.php';
+require_once __DIR__ . '/../../utils/stripe_invoice_payment_state.php';
 require_once __DIR__ . '/../../utils/public_links.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
 
@@ -59,9 +61,10 @@ function handlePaymentIntentSucceeded($pdo, $paymentIntent) {
     }
     
     $invoiceId = (int)$invoiceId;
-    $amountTotal = ($paymentIntent['amount'] ?? 0) / 100; // Convert from cents
-    $paymentAmount = isset($metadata['original_amount']) ? (float)$metadata['original_amount'] : $amountTotal;
-    $surchargeAmount = isset($metadata['surcharge_amount']) ? (float)$metadata['surcharge_amount'] : max(0, $amountTotal - $paymentAmount);
+    $amounts = stripe_invoice_payment_amounts($paymentIntent, 'payment_intent');
+    $amountTotal = $amounts['gross_amount'];
+    $paymentAmount = $amounts['payment_amount'];
+    $surchargeAmount = $amounts['surcharge_amount'];
     $processorTx = [
         'provider' => 'stripe',
         'provider_payment_id' => (string)$piId,
@@ -99,54 +102,64 @@ function handlePaymentIntentSucceeded($pdo, $paymentIntent) {
     $existsStmt = $pdo->prepare('SELECT id FROM payments WHERE stripe_payment_intent_id = ?');
     $existsStmt->execute([$piId]);
     $existingPaymentId = (int)($existsStmt->fetchColumn() ?: 0);
+    $transitionPaymentId = 0;
     if ($existingPaymentId > 0) {
-        stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
-        $pdo->commit();
-        $deliveryState = $pdo->prepare(
-            'SELECT p.amount,i.status FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.id=?'
-        );
-        $deliveryState->execute([$existingPaymentId]);
-        $existing = $deliveryState->fetch(PDO::FETCH_ASSOC);
-        if ($existing) {
-            require_once __DIR__ . '/../../utils/payment_receipts.php';
-            payment_email_attempt_all(
-                static fn() => notify_admin_invoice_paid(
-                    $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, (float)$existing['amount'],
-                    (string)$existing['status'], false, true, null, 'payment:' . $existingPaymentId
-                ),
-                static fn() => payment_receipt_issue(
-                    $pdo, $existingPaymentId, $GLOBALS['appConfig'] ?? [], true, null, true
-                )
-            );
+        $existing = stripe_invoice_existing_payment($pdo, $existingPaymentId, $invoiceId, (string)$piId);
+        if ($existing['transition_required']) {
+            $transitionPaymentId = $existingPaymentId;
+        } else {
+            stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
+            $pdo->commit();
+            if ($existing) {
+                require_once __DIR__ . '/../../utils/payment_receipts.php';
+                payment_email_attempt_all(
+                    static fn() => notify_admin_invoice_paid(
+                        $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, (float)$existing['amount'],
+                        (string)$existing['invoice_status'], false, true, null, 'payment:' . $existingPaymentId
+                    ),
+                    static fn() => payment_receipt_issue(
+                        $pdo, $existingPaymentId, $GLOBALS['appConfig'] ?? [], true, null, true
+                    )
+                );
+            }
+            @error_log('[StripeWebhook] PaymentIntent already recorded: ' . $piId);
+            return;
         }
-        @error_log('[StripeWebhook] PaymentIntent already recorded: ' . $piId);
-        return;
     }
     
         // Record the payment
         // Legacy metadata is retained only as Stripe-side history. It never
         // grants collection authority or re-enables PA's retired AutoPay path.
         $isAutoPay = 0;
-        $stmt = $pdo->prepare('
-            INSERT INTO payments
-                (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_payment_intent_id, auto_pay_attempt,
-                 processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
-                 processor_fee_policy, processor_fee_source, status, payment_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
-        ');
-        $processorFields = stripe_processor_fields_from_normalized($processorTx, $GLOBALS['appConfig'] ?? [], $paymentAmount, $surchargeAmount);
-        $stmt->execute([
-            $clientId, $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $piId, $isAutoPay,
-            $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
-            $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
-            $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
-        ]);
-        $paymentId = (int)$pdo->lastInsertId();
+        if ($transitionPaymentId > 0) {
+            stripe_invoice_promote_failed_payment(
+                $pdo, $transitionPaymentId, $invoiceId, (string)$piId, null,
+                $paymentAmount, $surchargeAmount, $processorTx, $GLOBALS['appConfig'] ?? []
+            );
+            $paymentId = $transitionPaymentId;
+        } else {
+            $stmt = $pdo->prepare('
+                INSERT INTO payments
+                    (client_id, invoice_id, amount, surcharge_paid, payment_method, stripe_payment_intent_id, auto_pay_attempt,
+                     processor_provider, processor_payment_id, processor_gross_amount, processor_fee_amount, processor_net_amount,
+                     processor_fee_policy, processor_fee_source, status, payment_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
+            ');
+            $processorFields = stripe_processor_fields_from_normalized($processorTx, $GLOBALS['appConfig'] ?? [], $paymentAmount, $surchargeAmount);
+            $stmt->execute([
+                $clientId, $invoiceId, $paymentAmount, $surchargeAmount, 'stripe', $piId, $isAutoPay,
+                $processorFields['processor_provider'], $processorFields['processor_payment_id'] ?: null,
+                $processorFields['processor_gross_amount'], $processorFields['processor_fee_amount'], $processorFields['processor_net_amount'],
+                $processorFields['processor_fee_policy'], $processorFields['processor_fee_source'], 'succeeded'
+            ]);
+            $paymentId = (int)$pdo->lastInsertId();
+        }
         stripe_link_pending_financial_events($pdo, $paymentId, $piId);
         
         // COMPLIANCE: If the card was debit/prepaid, refund the surcharge (Durbin Amendment)
         $surchargePaid = (float)$surchargeAmount;
         if ($surchargePaid > 0) {
+            require_once __DIR__ . '/../../services/PaymentProcessorInterface.php';
             require_once __DIR__ . '/../../services/StripeProcessor.php';
             $processor = StripeProcessor::fromAppConfig($GLOBALS['appConfig'] ?? []);
             if ($processor && !$processor->isCreditCardPayment($paymentIntent)) {
