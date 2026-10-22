@@ -100,6 +100,19 @@ function stripe_reconciliation_reason(string $code): string
 }
 function stripe_reconciliation_hold(string $reason): never { throw new StripeReconciliationHold($reason); }
 
+/** Financially read-only previews still write their one-time session confirmation state. */
+function stripe_reconciliation_preview_token(array &$session, int $paymentId, array $report): ?string
+{
+    if ($paymentId <= 0) throw new InvalidArgumentException('An existing payment is required.');
+    if (($report['eligible'] ?? false) !== true || ($report['reason'] ?? '') !== 'ready') {
+        unset($session['stripe_reconciliation_preview'][$paymentId]);
+        return null;
+    }
+    $token = bin2hex(random_bytes(32));
+    $session['stripe_reconciliation_preview'][$paymentId] = ['token' => $token, 'at' => time()];
+    return $token;
+}
+
 /** Provider GETs only. Never reads a different payment inferred from descriptions or user-supplied PI IDs. */
 function stripe_single_payment_fetch(PDO $pdo, StripeService $stripe, int $paymentId): array
 {

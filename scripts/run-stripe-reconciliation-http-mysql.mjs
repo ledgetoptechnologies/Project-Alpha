@@ -14,7 +14,7 @@ let id = '';
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true,
     shell: false, timeout: 300_000, ...options });
-  assert.equal(result.status, 0, result.stderr || result.stdout || `${command} failed`);
+  assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join('\n') || `${command} failed`);
   return result.stdout.trim();
 }
 try {
