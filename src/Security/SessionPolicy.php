@@ -71,7 +71,9 @@ final class SessionPolicy
             return false;
         }
         if ($page === 'account' || $page === 'account-edit' || $page === 'accounts'
-            || $page === 'passkeys' || str_starts_with($page, 'account/')) {
+            || $page === 'passkeys' || str_starts_with($page, 'account/')
+            // This view mints or clears its session-bound confirmation token.
+            || $page === 'payments/stripe-reconcile-preview') {
             return false;
         }
 

@@ -38,13 +38,15 @@ final class StripeReconciliationHttpMySqlTest extends TestCase
             INSERT INTO clients(id,name,email) VALUES(90001,'Synthetic HTTP client','client@example.invalid');
             INSERT INTO invoices(id,client_id,status,total,amount_paid,balance_due) VALUES(90001,90001,'unpaid',527.50,0,527.50);
             INSERT INTO payments(id,client_id,invoice_id,payment_method,stripe_payment_intent_id,status,amount,payment_date) VALUES(90001,90001,90001,'stripe','pi_synthetic_http','failed',0,CURDATE())");
-        $admin = $this->session($pdo, 90001, 'admin');
+        $stalePreviewToken = bin2hex(random_bytes(32));
+        $admin = $this->session($pdo, 90001, 'admin', [90001 => ['token' => $stalePreviewToken, 'at' => time()]]);
         $member = $this->session($pdo, 90002, 'member');
         // A previously verified preview can outlive removal of Stripe config.
         $previousPreviewToken = bin2hex(random_bytes(32));
         $previousPreview = $this->session($pdo, 90001, 'admin', [90001 => ['token' => $previousPreviewToken, 'at' => time()]]);
         $before = $this->financialSnapshot($pdo);
-        $this->withServer((int)$match[1], function (string $base) use ($admin, $member, $previousPreview, $previousPreviewToken, $pdo, $before): void {
+        $this->assertFreshPreviewConfirmationPersists($root);
+        $this->withServer((int)$match[1], function (string $base) use ($admin, $member, $previousPreview, $previousPreviewToken, $stalePreviewToken, $pdo, $before): void {
             $preview = '/?page=payments/stripe-reconcile-preview&payment_id=90001';
             $action = '/?page=payments/stripe-reconcile';
             $anonymous = $this->request($base . $preview);
@@ -57,6 +59,14 @@ final class StripeReconciliationHttpMySqlTest extends TestCase
             self::assertStringContainsString('Stripe', $response['body']);
             self::assertStringContainsString('provider_unavailable', $response['body']);
             self::assertStringNotContainsString('name="preview_token"', $response['body']);
+            // A preview is read-only for financial data, but must persist its
+            // one-time confirmation state (including clearing a held preview).
+            $handler = new DatabaseSessionHandler($pdo);
+            $persistedSession = $handler->read($admin['id']);
+            self::assertTrue($handler->close());
+            self::assertIsString($persistedSession);
+            self::assertStringNotContainsString($stalePreviewToken, $persistedSession,
+                'The preview view must persist session mutations before the next request');
             self::assertSame($before, $this->financialSnapshot($pdo), 'GET preview must not alter financial records');
             $missing = $this->request($base . $action, $admin['id'], ['payment_id' => '90001']);
             $this->assertCanonicalFailure($missing);
@@ -78,6 +88,45 @@ final class StripeReconciliationHttpMySqlTest extends TestCase
             $result = $pdo->query($sql);
             if ($result !== false) $result->closeCursor();
         }
+    }
+
+    /** Real PHP sessions and DB handler, with synthetic eligible evidence and no provider calls. */
+    private function assertFreshPreviewConfirmationPersists(string $root): void
+    {
+        $program = <<<'PHP'
+require $argv[1] . '/vendor/autoload.php';
+require $argv[1] . '/src/utils/stripe_single_payment_reconciliation.php';
+$pdo = new PDO(getenv('STRIPE_RECONCILIATION_HTTP_DSN'), 'root', getenv('STRIPE_RECONCILIATION_HTTP_PASSWORD'), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+session_set_save_handler(new App\Security\DatabaseSessionHandler($pdo), true);
+session_id(bin2hex(random_bytes(24)));
+session_start();
+$_SESSION = ['user' => ['id' => 90001], 'csrf' => str_repeat('a', 64), 'last_activity' => time(),
+    'authn' => ['authenticated_at' => time(), 'absolute_expires_at' => time() + 3600]];
+if (App\Security\SessionPolicy::canReleaseBeforeViewRendering('GET', 'payments/stripe-reconcile-preview', $_SESSION)) session_write_close();
+$token = stripe_reconciliation_preview_token($_SESSION, 90001, ['eligible' => true, 'reason' => 'ready']);
+session_write_close();
+$_SESSION = [];
+session_start();
+$persisted = is_string($token) && strlen($token) === 64
+    && hash_equals($token, $_SESSION['stripe_reconciliation_preview'][90001]['token'] ?? '')
+    && ($_SESSION['stripe_reconciliation_preview'][90001]['at'] ?? 0) >= time() - 30
+    && !isset($_SESSION['stripe_reconciliation_preview'][90002]);
+$clearing = stripe_reconciliation_preview_token($_SESSION, 90001, ['eligible' => false, 'reason' => 'amount']);
+session_write_close();
+$_SESSION = [];
+session_start();
+$cleared = $clearing === null && !isset($_SESSION['stripe_reconciliation_preview'][90001]);
+session_write_close();
+echo json_encode(['persisted' => $persisted, 'cleared' => $cleared], JSON_THROW_ON_ERROR);
+PHP;
+        $process = proc_open([PHP_BINARY, '-r', $program, $root], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes,
+            $root, getenv(), ['bypass_shell' => true]);
+        self::assertIsResource($process);
+        fclose($pipes[0]);
+        $output = stream_get_contents($pipes[1]); fclose($pipes[1]);
+        $error = stream_get_contents($pipes[2]); fclose($pipes[2]);
+        self::assertSame(0, proc_close($process), $error);
+        self::assertSame(['persisted' => true, 'cleared' => true], json_decode($output, true, 512, JSON_THROW_ON_ERROR));
     }
 
     private function financialSnapshot(PDO $pdo): array

@@ -48,6 +48,8 @@ final class SessionSecurityPolicyTest extends TestCase
         self::assertFalse(SessionPolicy::canReleaseBeforeViewRendering('POST', 'home', $session));
         self::assertFalse(SessionPolicy::canReleaseBeforeViewRendering('GET', 'home', []));
         self::assertFalse(SessionPolicy::canReleaseBeforeViewRendering('GET', 'account', $session));
+        self::assertFalse(SessionPolicy::canReleaseBeforeViewRendering('GET', 'payments/stripe-reconcile-preview', $session));
+        self::assertTrue(SessionPolicy::canReleaseBeforeViewRendering('GET', 'payments/payments-list', $session));
 
         foreach (['flash_api_key', 'flash_backup', 'flash_general_recipient_link',
                   'flash_quote_approve', 'client_onboarding_link', 'tax_import_summary'] as $key) {

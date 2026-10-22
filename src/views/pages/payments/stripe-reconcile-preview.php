@@ -18,11 +18,7 @@ if(!$paymentId||!can_access_record($pdo,'payments',$paymentId,$userId)){
 $stripe=StripeService::fromAppConfig($appConfig);
 $report=$stripe?stripe_preview_existing_payment($pdo,$stripe,$paymentId):[
     'eligible'=>false,'reason'=>'provider_unavailable','message'=>stripe_reconciliation_reason('provider_unavailable')];
-$token=null;
-if(!empty($report['eligible'])&&$report['reason']==='ready'){
-    $token=bin2hex(random_bytes(32));
-    $_SESSION['stripe_reconciliation_preview'][$paymentId]=['token'=>$token,'at'=>time()];
-}else unset($_SESSION['stripe_reconciliation_preview'][$paymentId]);
+$token=stripe_reconciliation_preview_token($_SESSION,$paymentId,$report);
 $money=static fn(?int $cents):string=>$cents===null?'Not verified':number_format($cents/100,2).' '.($report['currency']??'');
 $rows=[
     'Invoice principal'=>$report['amounts']['payment_cents']??null,
