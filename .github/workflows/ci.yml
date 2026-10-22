@@ -123,7 +123,8 @@ jobs:
             --env PA_STRIPE_HANDLER_TEST_ALLOW=isolated-disposable-only \
             --env 'PA_STRIPE_HANDLER_TEST_DSN=mysql:host=db;port=3306;dbname=project_alpha;charset=utf8mb4' \
             web vendor/bin/phpunit --do-not-cache-result --fail-on-skipped \
-            tests/Payments/StripeInvoiceHandlersTest.php
+            tests/Payments/StripeInvoiceHandlersTest.php \
+            tests/Payments/StripeSinglePaymentReconciliationTest.php
 
       - name: MySQL invoice issuer transaction and schema regressions
         shell: bash
