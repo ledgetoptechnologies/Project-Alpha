@@ -246,10 +246,14 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString('APP_ENV: production', $compose);
         self::assertStringContainsString('- "1627:80"', $compose);
 
-        $portalOverride = $this->read('docker-compose.portal-only.yml');
-        self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:latest"', $portalOverride);
-        self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:cron-latest"', $portalOverride);
-        self::assertStringContainsString('command: ["entrypoint.sh", "portal-only"]', $portalOverride);
+        // The test image copies only the canonical Compose; validate this
+        // reviewed optional override when running from a full source checkout.
+        if (is_file($this->root . '/docker-compose.portal-only.yml')) {
+            $portalOverride = $this->read('docker-compose.portal-only.yml');
+            self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:latest"', $portalOverride);
+            self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:cron-latest"', $portalOverride);
+            self::assertStringContainsString('command: ["entrypoint.sh", "portal-only"]', $portalOverride);
+        }
     }
 
     public function testMysqlNativeEncryptionDeploymentFailsClosed(): void
