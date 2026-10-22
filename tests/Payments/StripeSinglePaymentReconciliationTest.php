@@ -220,4 +220,88 @@ final class StripeSinglePaymentReconciliationTest extends TestCase
         } finally { $this->clean($pdo, $fixture); }
     }
 
+    private static function addCustomerSurcharge(SinglePaymentStripeFixture $stripe): void
+    {
+        $stripe->intent['metadata']['surcharge_amount']='15.60';
+        $stripe->intent['amount']=$stripe->intent['amount_received']=54310;
+        $stripe->intent['latest_charge']['amount']=54310;
+        $stripe->intent['latest_charge']['balance_transaction']['amount']=54310;
+        $stripe->intent['latest_charge']['balance_transaction']['fee']=1605;
+        $stripe->intent['latest_charge']['balance_transaction']['net']=52705;
+    }
+
+    public function testExplicitCapturedCustomerSurchargePreservesPrincipalAndActualProcessorAmounts(): void
+    {
+        $pdo=$this->database();$fixture=$this->fixture($pdo);[, $invoiceId,$paymentId,$actorId,$stripe]=$fixture;
+        self::addCustomerSurcharge($stripe);
+        try{
+            $paymentBefore=$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC);
+            $invoiceBefore=$pdo->query('SELECT * FROM invoices WHERE id='.$invoiceId)->fetch(PDO::FETCH_ASSOC);
+            $auditBefore=(int)$pdo->query('SELECT COUNT(*) FROM system_audit')->fetchColumn();
+            $report=stripe_preview_existing_payment($pdo,$stripe,$paymentId);
+            self::assertTrue($report['eligible']);self::assertSame('ready',$report['reason']);
+            self::assertSame(52750,$report['amounts']['payment_cents']);self::assertSame(1560,$report['amounts']['surcharge_cents']);
+            self::assertSame(54310,$report['gross_cents']);self::assertSame(1605,$report['processor_fee_cents']);self::assertSame(52705,$report['processor_net_cents']);
+            self::assertSame($paymentBefore,$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC));
+            self::assertSame($invoiceBefore,$pdo->query('SELECT * FROM invoices WHERE id='.$invoiceId)->fetch(PDO::FETCH_ASSOC));
+            self::assertSame($auditBefore,(int)$pdo->query('SELECT COUNT(*) FROM system_audit')->fetchColumn());
+            self::assertSame(0,(int)$pdo->query('SELECT revoked FROM public_links WHERE document_id='.$invoiceId.' AND document_type="invoice"')->fetchColumn());
+            // Confirmation must fetch again; a changed capture cannot reuse the preview.
+            $stripe->intent['latest_charge']['captured']=false;
+            try{stripe_reconcile_existing_payment($pdo,$stripe,[],$paymentId,$actorId);self::fail('Must revalidate fresh evidence');}
+            catch(StripeReconciliationHold $hold){self::assertSame('charge',$hold->reason);}
+            self::assertSame($paymentBefore,$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC));
+            $stripe->intent['latest_charge']['captured']=true;
+            self::assertSame('reconciled',stripe_reconcile_existing_payment($pdo,$stripe,[],$paymentId,$actorId)['status']);
+            $payment=$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC);
+            self::assertSame(527.50,(float)$payment['amount']);self::assertSame(15.60,(float)$payment['surcharge_paid']);
+            self::assertSame(543.10,(float)$payment['processor_gross_amount']);self::assertSame(16.05,(float)$payment['processor_fee_amount']);
+            self::assertSame(527.05,(float)$payment['processor_net_amount']);
+            self::assertSame(527.50,(float)$pdo->query('SELECT amount_paid FROM invoices WHERE id='.$invoiceId)->fetchColumn());
+            self::assertSame('unchanged',stripe_reconcile_existing_payment($pdo,$stripe,[],$paymentId,$actorId)['status']);
+            self::assertSame('unchanged',stripe_preview_existing_payment($pdo,$stripe,$paymentId)['reason']);
+            self::assertSame(1,(int)$pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoiceId)->fetchColumn());
+            self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM payment_receipts WHERE payment_id='.$paymentId)->fetchColumn());
+        }finally{$this->clean($pdo,$fixture);}
+    }
+
+    public function testPreviewExplainsUnfinalizedInvoiceWithoutChangingLedger():void
+    {
+        $pdo=$this->database();$fixture=$this->fixture($pdo);[, $invoiceId,$paymentId,,$stripe]=$fixture;
+        try{
+            $pdo->exec('UPDATE invoices SET finalized_at=NULL WHERE id='.$invoiceId);
+            $before=$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC);
+            $report=stripe_preview_existing_payment($pdo,$stripe,$paymentId);
+            self::assertFalse($report['eligible']);self::assertSame('invoice_not_finalized',$report['reason']);
+            self::assertSame(52750,$report['gross_cents']);
+            self::assertSame($before,$pdo->query('SELECT * FROM payments WHERE id='.$paymentId)->fetch(PDO::FETCH_ASSOC));
+            self::assertStringNotContainsString($stripe->intent['id'],json_encode($report));
+        }finally{$this->clean($pdo,$fixture);}
+    }
+
+    public function testInferredOrConflictingSurchargeCannotPassPreview():void
+    {
+        [$pi,$context,$invoice,$payment]=self::evidence();
+        $stripe=new SinglePaymentStripeFixture($pi);self::addCustomerSurcharge($stripe);unset($stripe->intent['metadata']['surcharge_amount']);
+        try{stripe_single_payment_evidence($stripe->intent,$context,$invoice,$payment);self::fail('Inferred fee must be held');}
+        catch(StripeReconciliationHold $hold){self::assertSame('amount',$hold->reason);}
+        $stripe->intent['metadata']['surcharge_amount']='15.60';$stripe->intent['metadata']['pa_surcharge_amount']='15.61';
+        try{stripe_single_payment_evidence($stripe->intent,$context,$invoice,$payment);self::fail('Conflicting fee must be held');}
+        catch(StripeReconciliationHold $hold){self::assertSame('amount',$hold->reason);}
+    }
+
+    public function testWholeDollarAndZeroProcessorFeesRemainIdempotent():void
+    {
+        foreach([0,1500] as $fee){
+            $pdo=$this->database();$fixture=$this->fixture($pdo);[,,$paymentId,$actorId,$stripe]=$fixture;
+            try{
+                $stripe->intent['latest_charge']['balance_transaction']['fee']=$fee;
+                $stripe->intent['latest_charge']['balance_transaction']['net']=52750-$fee;
+                self::assertSame('reconciled',stripe_reconcile_existing_payment($pdo,$stripe,[],$paymentId,$actorId)['status']);
+                self::assertSame('unchanged',stripe_reconcile_existing_payment($pdo,$stripe,[],$paymentId,$actorId)['status']);
+                self::assertSame('unchanged',stripe_preview_existing_payment($pdo,$stripe,$paymentId)['reason']);
+            }finally{$this->clean($pdo,$fixture);}
+        }
+    }
+
 }

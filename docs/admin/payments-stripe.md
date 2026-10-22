@@ -35,17 +35,33 @@ Check the Stripe endpoint URL, HTTPS certificate, test/live mode, webhook secret
 ## Verify one existing declined Stripe attempt
 
 An administrator or owner with Settings management and invoice-payment permission
-can use **Payments > Verify Stripe settlement** on an existing failed, zero-dollar
+can use **Payments > Preview Stripe settlement** on an existing failed, zero-dollar
 Stripe invoice attempt. PA reads the configured Stripe account and that exact
-PaymentIntent again, verifies the captured amount, currency, invoice/contact
-identity, charge and actual processor fee evidence, and settles the same payment
-row. It updates the invoice balance and historical settlement date in the same
-transaction as the audit record. It sends no charge, refund, receipt or email.
+PaymentIntent again and previews captured amounts, currency, invoice/contact
+identity, charge and actual processor fee evidence. After confirmation it settles
+the same payment row. It updates the invoice balance and historical settlement
+date in the same transaction as the audit record. It sends no charge, refund, receipt or email.
 
 This bounded recovery supports finalized, named-recipient direct invoices whose
-single captured payment equals the full invoice principal, without a client
-surcharge. Refund/dispute history, another settled payment, project-statement
+single captured payment equals the full invoice principal plus any explicitly
+declared customer surcharge. Nonzero fees require explicit, consistent principal
+and surcharge metadata. Only principal credits the invoice; the customer fee and
+actual processor fee/net are recorded separately. Refund/dispute history, another
+settled payment, project-statement
 assignments, incomplete or unrelated Checkout sessions and ambiguous references
 are held for review. It does not scan or import unrelated Stripe payments.
 Repeated verification of the same correctly settled row is a no-op. Apply normal
 database migrations before using the action; it does not repair schema.
+
+
+The preview is read-only and shows Stripe principal, customer surcharge, captured
+gross, processor fee/net and reported refund/dispute evidence. A held preview
+shows a stable safety-check code and operator message without returning raw
+provider errors, credentials or payment metadata. It does not change invoices,
+payments, audit records, public links or schema.
+
+Confirmation requires the same administrator's per-payment preview token, valid
+for five minutes, plus normal CSRF protection. The POST fetches Stripe again and
+rechecks authoritative locked rows; it never trusts amounts from the page.
+Success and CSRF failures return to the canonical
+`/?page=payments/payments-list` route.
