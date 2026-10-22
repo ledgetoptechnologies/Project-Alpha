@@ -199,11 +199,7 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
               <?php if ($canReconcileStripe && $r['status'] === 'failed' && $amount === 0.0
                 && $r['payment_method'] === 'stripe' && !empty($r['invoice_id']) && !empty($r['stripe_payment_intent_id'])
                 && empty($r['project_invoice_payment_id'])): ?>
-                <form method="post" action="/?page=payments/stripe-reconcile">
-                  <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                  <input type="hidden" name="payment_id" value="<?php echo (int)$r['id']; ?>">
-                  <button type="submit" title="Read Stripe settlement and repair this existing attempt. No charge or email is sent." style="padding:6px 9px;border-radius:6px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8">Verify Stripe settlement</button>
-                </form>
+                <a href="/?page=payments/stripe-reconcile-preview&amp;payment_id=<?php echo (int)$r['id']; ?>" title="Preview fresh Stripe settlement without changing this payment." style="padding:6px 9px;border-radius:6px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8">Preview Stripe settlement</a>
               <?php endif; ?>
               <?php if ($canCorrect): ?>
                 <a href="/?page=payments/payment-correction&payment_id=<?php echo (int)$r['id']; ?>" style="padding:6px 9px;border-radius:6px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;white-space:nowrap">Correct allocation</a>

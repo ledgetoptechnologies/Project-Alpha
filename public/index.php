@@ -1250,7 +1250,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     //   legal/tos-accept             - controller validates CSRF (csrf_sf_verify_or_redirect 'auth')
     // This controller resolves an entity-specific return path before validating
     // its own CSRF token and authorization contract.
-    $skipCsrfFor = ['auth', 'reset-request', 'reset-verify', 'reset-update', '2fa-setup-action', '2fa-verify-action', 'public-quote-action', 'public-contract-sign', 'public-contract-action', 'public-project-upload', 'organization/org-create', 'organization/organization-update-notes', 'stripe-webhook', 'stripe-webhook-legacy', 'settings/link-test-connection', 'settings/link-resolver-run', 'settings/managed-delivery-test', 'settings/managed-delivery-send', 'settings/managed-delivery-revoke', 'settings/managed-delivery-retry', 'legal/tos-accept', 'portal/service-assignments-handler'];
+    // The Stripe reconciliation controller validates CSRF itself and returns failures to the canonical payment list.
+    $skipCsrfFor = ["payments/stripe-reconcile", 'auth', 'reset-request', 'reset-verify', 'reset-update', '2fa-setup-action', '2fa-verify-action', 'public-quote-action', 'public-contract-sign', 'public-contract-action', 'public-project-upload', 'organization/org-create', 'organization/organization-update-notes', 'stripe-webhook', 'stripe-webhook-legacy', 'settings/link-test-connection', 'settings/link-resolver-run', 'settings/managed-delivery-test', 'settings/managed-delivery-send', 'settings/managed-delivery-revoke', 'settings/managed-delivery-retry', 'legal/tos-accept', 'portal/service-assignments-handler'];
     if (!in_array($page, $skipCsrfFor, true)) {
         csrf_verify_post_or_redirect($page);
     }

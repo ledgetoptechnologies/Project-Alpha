@@ -198,6 +198,7 @@ function page_permission_map(): array
         'payments/payments-list'    => 'payments.view',
         'payments-list'             => 'payments.view',
         'payments/payments-create'  => 'invoices.mark_paid',
+        'payments/stripe-reconcile-preview' => 'settings.manage',
         'payments/stripe-reconcile' => 'settings.manage',
         'payments/payment-refund'   => 'invoices.mark_paid',
         'payments/payment-reverse'  => 'invoices.mark_paid',

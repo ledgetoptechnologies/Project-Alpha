@@ -126,6 +126,11 @@ jobs:
             tests/Payments/StripeInvoiceHandlersTest.php \
             tests/Payments/StripeSinglePaymentReconciliationTest.php
 
+      - name: Stripe reconciliation front-controller HTTP security regressions
+        env:
+          STRIPE_RECONCILIATION_HTTP_TEST_IMAGE: ghcr.io/ledgetoptechnologies/project-alpha:latest
+        run: node scripts/run-stripe-reconciliation-http-mysql.mjs
+
       - name: MySQL invoice issuer transaction and schema regressions
         shell: bash
         run: |
