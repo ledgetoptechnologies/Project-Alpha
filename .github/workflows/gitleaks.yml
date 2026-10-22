@@ -1,9 +1,8 @@
 name: Gitleaks Secret Scanning
 on:
   push:
-    branches: [main, dev]
-  pull_request:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read

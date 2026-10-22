@@ -2,14 +2,14 @@ name: CodeQL
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
   schedule:
     - cron: '0 4 * * 1'
 
 jobs:
   analyze:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       actions: read

@@ -230,7 +230,7 @@ final class SecurityHardeningTest extends TestCase
         $composeFiles = glob($this->root . '/docker-compose*.yml') ?: [];
         $productionComposeFiles = array_values(array_filter(
             $composeFiles,
-            static fn(string $path): bool => !preg_match('/docker-compose\.(?:staging|truenas)\.yml$/', $path)
+            static fn(string $path): bool => !preg_match('/docker-compose\.(?:staging|truenas|portal-only)\.yml$/', $path)
         ));
         sort($productionComposeFiles);
         self::assertSame([$this->root . '/docker-compose.yml'], $productionComposeFiles);
@@ -245,6 +245,11 @@ final class SecurityHardeningTest extends TestCase
         self::assertLessThanOrEqual(160, count(file($this->root . '/docker-compose.yml') ?: []));
         self::assertStringContainsString('APP_ENV: production', $compose);
         self::assertStringContainsString('- "1627:80"', $compose);
+
+        $portalOverride = $this->read('docker-compose.portal-only.yml');
+        self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:latest"', $portalOverride);
+        self::assertStringContainsString('image: "ghcr.io/ledgetoptechnologies/project-alpha:cron-latest"', $portalOverride);
+        self::assertStringContainsString('command: ["entrypoint.sh", "portal-only"]', $portalOverride);
     }
 
     public function testMysqlNativeEncryptionDeploymentFailsClosed(): void
@@ -482,8 +487,8 @@ final class SecurityHardeningTest extends TestCase
     {
         $docker = $this->read('.github/workflows/docker-publish.yml');
 
-        self::assertStringContainsString('branches: ["dev", "main"]', $docker);
-        self::assertStringContainsString('workflow_dispatch:', $docker);
+        self::assertStringContainsString('branches: [main]', $docker);
+        self::assertStringNotContainsString('workflow_dispatch:', $docker);
         self::assertStringContainsString('group: docker-${{ github.ref_name }}', $docker);
         self::assertStringContainsString('cancel-in-progress: true', $docker);
         self::assertStringNotContainsString('pull_request_target:', $docker);
