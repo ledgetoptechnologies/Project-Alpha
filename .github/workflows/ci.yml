@@ -32,6 +32,11 @@ jobs:
           docker build --target cron -t ghcr.io/ledgetoptechnologies/project-alpha:cron-latest .
           docker build --target db -t ghcr.io/ledgetoptechnologies/project-alpha:db-latest .
 
+      - name: Assert patched PHP runtime in web and cron images
+        run: |
+          docker run --rm --entrypoint php ghcr.io/ledgetoptechnologies/project-alpha:latest -r 'if (PHP_VERSION_ID < 80512) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); }'
+          docker run --rm --entrypoint php ghcr.io/ledgetoptechnologies/project-alpha:cron-latest -r 'if (PHP_VERSION_ID < 80512) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); }'
+
       - name: Build and start real compose path
         run: |
           docker compose up -d

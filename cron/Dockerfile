@@ -1,5 +1,5 @@
 # ---------- Stage 1: Install PHP dependencies with Composer ----------
-FROM php:8.5-cli AS vendor
+FROM php:8.5.12-cli AS vendor
 WORKDIR /app
 
 COPY composer.json ./
@@ -18,7 +18,7 @@ RUN composer install \
     --optimize-autoloader
 
 # ---------- Stage 2: Runtime image ----------
-FROM php:8.5-cli
+FROM php:8.5.12-cli
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         default-mysql-client \
