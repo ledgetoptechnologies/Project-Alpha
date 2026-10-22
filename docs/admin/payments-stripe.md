@@ -31,3 +31,21 @@ Project statement payments are allocated to child invoices. The project statemen
 
 Check the Stripe endpoint URL, HTTPS certificate, test/live mode, webhook secret, PA logs, and Stripe delivery attempts.
 
+
+## Verify one existing declined Stripe attempt
+
+An administrator or owner with Settings management and invoice-payment permission
+can use **Payments > Verify Stripe settlement** on an existing failed, zero-dollar
+Stripe invoice attempt. PA reads the configured Stripe account and that exact
+PaymentIntent again, verifies the captured amount, currency, invoice/contact
+identity, charge and actual processor fee evidence, and settles the same payment
+row. It updates the invoice balance and historical settlement date in the same
+transaction as the audit record. It sends no charge, refund, receipt or email.
+
+This bounded recovery supports finalized, named-recipient direct invoices whose
+single captured payment equals the full invoice principal, without a client
+surcharge. Refund/dispute history, another settled payment, project-statement
+assignments, incomplete or unrelated Checkout sessions and ambiguous references
+are held for review. It does not scan or import unrelated Stripe payments.
+Repeated verification of the same correctly settled row is a no-op. Apply normal
+database migrations before using the action; it does not repair schema.

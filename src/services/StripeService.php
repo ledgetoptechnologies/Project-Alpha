@@ -593,6 +593,18 @@ class StripeService {
         ]));
     }
 
+    /** Read-only account/mode evidence for an operator-requested ledger reconciliation. */
+    public function getReconciliationContext(): array {
+        if (!is_string($this->apiKey) || !preg_match('/\A(?:sk|rk)_(live|test)_/', $this->apiKey, $matches)) {
+            throw new RuntimeException('Stripe key mode cannot be verified.');
+        }
+        $account = $this->apiRequest('GET', 'account');
+        if (($account['object'] ?? '') !== 'account' || !preg_match('/\Aacct_[A-Za-z0-9]+\z/D', (string)($account['id'] ?? ''))) {
+            throw new RuntimeException('Stripe account identity cannot be verified.');
+        }
+        return ['account_id' => $account['id'], 'livemode' => $matches[1] === 'live'];
+    }
+
     /**
      * Fetch a Stripe Charge with balance transaction details expanded.
      */
