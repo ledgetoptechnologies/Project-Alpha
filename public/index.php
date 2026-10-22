@@ -1174,6 +1174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'invoice/invoice-reenable',
         'invoice/email-send',
         'payments/payments-create',
+        'payments/stripe-reconcile',
 
         // Documents / forms / receipts
         'document-reenable',
@@ -1583,6 +1584,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($page === 'payments/payments-create') {
         require_once __DIR__ . '/../src/controllers/payments_create.php';
+        exit;
+    }
+    if ($page === 'payments/stripe-reconcile') {
+        require_once __DIR__ . '/../src/controllers/payments_stripe_reconcile.php';
         exit;
     }
     if ($page === 'payments/payment-refund') {

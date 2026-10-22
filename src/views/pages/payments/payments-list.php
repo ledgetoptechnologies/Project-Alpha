@@ -6,6 +6,10 @@ require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/payment_accounting.php';
 
+$canReconcileStripe = in_array(acl_user_role($pdo, (int)$_SESSION['user']['id']), ['admin', 'owner'], true)
+    && user_can($pdo, (int)$_SESSION['user']['id'], 'settings.manage', 0)
+    && user_can($pdo, (int)$_SESSION['user']['id'], 'invoices.mark_paid', 0);
+
 $client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
 $client_name = trim($_GET['client'] ?? '');
 $start = $_GET['start'] ?? '';
@@ -62,6 +66,9 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
   </div>
   <?php if (!empty($_GET['saved'])): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Payment saved.</div>
+  <?php endif; ?>
+  <?php if (!empty($_GET['stripe_reconciled'])): ?>
+    <div role="status" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46">Stripe settlement verified. The existing payment and invoice are reconciled; no charge or email was sent.</div>
   <?php endif; ?>
   <?php if (!empty($_GET['refunded'])): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Refund recorded.</div>
@@ -189,6 +196,15 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
             <td style="padding:10px"><?php echo $r['payment_date'] ? date('m/d/Y', strtotime($r['payment_date'])) : ''; ?></td>
             <td style="padding:10px">
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:190px">
+              <?php if ($canReconcileStripe && $r['status'] === 'failed' && $amount === 0.0
+                && $r['payment_method'] === 'stripe' && !empty($r['invoice_id']) && !empty($r['stripe_payment_intent_id'])
+                && empty($r['project_invoice_payment_id'])): ?>
+                <form method="post" action="/?page=payments/stripe-reconcile">
+                  <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
+                  <input type="hidden" name="payment_id" value="<?php echo (int)$r['id']; ?>">
+                  <button type="submit" title="Read Stripe settlement and repair this existing attempt. No charge or email is sent." style="padding:6px 9px;border-radius:6px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8">Verify Stripe settlement</button>
+                </form>
+              <?php endif; ?>
               <?php if ($canCorrect): ?>
                 <a href="/?page=payments/payment-correction&payment_id=<?php echo (int)$r['id']; ?>" style="padding:6px 9px;border-radius:6px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;white-space:nowrap">Correct allocation</a>
               <?php elseif ($isSucceeded && !empty($r['invoice_id']) && (string)($r['collection_mode'] ?? 'direct') === 'direct' && empty($r['project_invoice_payment_id']) && empty($r['has_correction_target'])): ?>
