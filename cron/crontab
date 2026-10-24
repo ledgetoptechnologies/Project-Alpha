@@ -26,6 +26,9 @@ CRON_LOG=/var/www/config/logs/cron/cron.log
 # Generate recurring invoices - daily at 2:00 AM
 0 2 * * * root . /etc/environment && php /var/www/src/cron/generate_recurring_invoices.php >> $CRON_LOG 2>&1
 
+# Deliver queued invoice emails and due retries independently of daily scheduling.
+*/5 * * * * root . /etc/environment && php /var/www/src/cron/process_invoice_notifications.php >> $CRON_LOG 2>&1
+
 # Generate predictable recurring expenses - daily at 2:15 AM
 15 2 * * * root . /etc/environment && php /var/www/src/cron/generate_recurring_expenses.php >> $CRON_LOG 2>&1
 

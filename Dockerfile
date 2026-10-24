@@ -175,9 +175,11 @@ ENV APP_VERSION=${APP_VERSION}
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
         default-mysql-client cron curl tzdata zlib1g-dev libzip-dev libcurl4-openssl-dev \
+        libpng-dev libjpeg62-turbo-dev libfreetype6-dev libonig-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN docker-php-ext-install -j"$(nproc)" zip pdo_mysql mysqli curl \
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" gd mbstring zip pdo_mysql mysqli curl \
     && php -m | grep -qx sodium
 
 WORKDIR /var/www
