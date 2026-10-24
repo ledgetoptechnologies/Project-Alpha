@@ -699,6 +699,28 @@ function project_invoice_send_email_result(PDO $pdo, int $projectInvoiceId, arra
                  WHERE id=? AND status<>"void" AND finalized_at IS NULL AND balance_due>0.005'
             )->execute([$projectInvoiceId]);
         }
+        $notificationType = ($allowResend || $manualIntent) ? 'manual' : 'on_generate';
+        foreach ($recipients as $recipient) {
+            $email = trim((string)($recipient['email'] ?? ''));
+            $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
+            $error = $status === 'suppressed' ? 'Missing or invalid project invoice recipient email.' : null;
+            $deliveryKey = $allowResend
+                ? 'manual:' . date('YmdHis') . ':' . bin2hex(random_bytes(4))
+                : 'generated';
+            project_invoice_notification_enqueue(
+                $pdo, $projectInvoiceId, $notificationType, $deliveryKey, $email, $status, $error
+            );
+            if ($notificationType === 'manual' && $status === 'pending') {
+                // Publish the manual occurrence and suppress its pending automatic
+                // counterpart atomically, before another worker sees the new row.
+                $pdo->prepare(
+                    'UPDATE project_invoice_notifications
+                     SET delivery_status="suppressed",next_attempt_at=NULL,last_error=?
+                     WHERE project_invoice_id=? AND notification_type="on_generate" AND recipient_key=?
+                       AND delivery_status IN ("pending","retry")'
+                )->execute(['Superseded by a manual project invoice email.', $projectInvoiceId, invoice_notification_recipient_key($email)]);
+            }
+        }
         if ($ownsTransaction) {
             $pdo->commit();
         }
@@ -711,18 +733,6 @@ function project_invoice_send_email_result(PDO $pdo, int $projectInvoiceId, arra
         return $result;
     }
 
-    $notificationType = ($allowResend || $manualIntent) ? 'manual' : 'on_generate';
-    foreach ($recipients as $recipient) {
-        $email = trim((string)($recipient['email'] ?? ''));
-        $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
-        $error = $status === 'suppressed' ? 'Missing or invalid project invoice recipient email.' : null;
-        $deliveryKey = $allowResend
-            ? 'manual:' . date('YmdHis') . ':' . bin2hex(random_bytes(4))
-            : 'generated';
-        project_invoice_notification_enqueue(
-            $pdo, $projectInvoiceId, $notificationType, $deliveryKey, $email, $status, $error
-        );
-    }
     $stats = project_invoice_notification_process($pdo, $appConfig, $sender, null, 100, $projectInvoiceId);
     $result['sent'] = (int)$stats['sent'];
     $result['retry'] = (int)$stats['retry'];

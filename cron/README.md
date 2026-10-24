@@ -48,6 +48,7 @@ before selecting it.
 | Daily 05:00 | `sync_merchant_rate.php` | Calculate the observed Stripe processing rate |
 | Daily 06:00 | `process_audit_schedules.php` | Generate and deliver scheduled audit exports |
 | Daily 08:00 | `send_invoice_reminders.php` | Send enabled due and overdue reminders |
+| Every 5 minutes | `process_invoice_notifications.php` | Deliver pending invoice and project invoice emails and due retries, up to 100 rows per queue |
 | Paused in code | `process_workforce_deadlines.php` | Workforce reminders and automatic confirmation are shelved; the crontab entry is commented out and direct invocation exits without database access |
 
 All output is appended to `/var/www/config/logs/cron/cron.log` in the cron container. A repository-owned, non-root sweep runs once per minute, rotating `.log` and `.txt` files at 10 MiB. Rotation uses rename-and-recreate so open writers finish safely; quiescent archives are integrity-checked, compressed, and retained according to the deployment policy.
@@ -55,6 +56,8 @@ All output is appended to `/var/www/config/logs/cron/cron.log` in the cron conta
 If the PA system timezone is changed in Settings, restart or recreate the cron container so the daemon reloads `/etc/localtime`. Individual PHP jobs also load `config/app.php`, so their date math uses the configured timezone.
 
 ## Runtime
+
+Invoice reminder occurrences are created by the daily 08:00 job. The five-minute delivery worker drains existing queues without creating reminders, so queued generation emails, manual project emails, and failed deliveries can retry even when reminder scheduling is disabled. It honors `cron_enabled`; each delivery also rechecks the recipient and relevant email setting before sending. Retry counts are recorded in the job result, and queue-processing errors mark the run failed while allowing the other queue to run. This worker is included only in the full execution profile.
 
 The multi-stage root `Dockerfile` builds the cron image and copies the current `src/`, Composer dependencies, migrations, crontab, and entrypoint into the image. Application source is not bind-mounted by the published Compose configuration; rebuild or pull a new cron image after PHP cron changes.
 

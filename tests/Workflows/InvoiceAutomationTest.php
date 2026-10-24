@@ -487,6 +487,63 @@ final class InvoiceAutomationTest extends TestCase
         self::assertSame(2, (int)$statementCount->fetchColumn());
     }
 
+    public function testExplicitProjectSendReplacesPendingGeneratedNoticeWithoutDuplicateDelivery(): void
+    {
+        foreach ([false, true] as $allowResend) {
+            $recipientId = $this->client('replace-generated-' . (int)$allowResend . '@example.invalid');
+            $orgId = $this->ids['organizations'][0];
+            $this->pdo->prepare(
+                'INSERT INTO projects (client_id,organization_id,name,status,invoice_billing_period,project_invoice_auto_email)
+                 VALUES (?, ?, ?, "active", "monthly", 1)'
+            )->execute([$recipientId, $orgId, 'Replace Generated Email']);
+            $projectId = (int)$this->pdo->lastInsertId();
+            $this->ids['projects'][] = $projectId;
+            project_invoice_sync_recipients($this->pdo, $projectId, [$recipientId]);
+            $childId = $this->invoice($recipientId, 'regular', '2026-08-10', '2026-09-09', 30, 'terms');
+            $this->pdo->prepare('UPDATE invoices SET project_id=?,collection_mode="project_aggregate" WHERE id=?')
+                ->execute([$projectId, $childId]);
+            $generation = project_invoice_create_for_period_result(
+                $this->pdo, $projectId, '2026-08-01', '2026-08-15', $this->config
+            );
+            self::assertSame('created', $generation['status']);
+            $projectInvoiceId = (int)$generation['project_invoice_id'];
+            $this->ids['project_invoices'][] = $projectInvoiceId;
+            $email = 'replace-generated-' . (int)$allowResend . '@example.invalid';
+            project_invoice_notification_enqueue(
+                $this->pdo, $projectInvoiceId, 'on_generate', 'generated', $email,
+                $allowResend ? 'retry' : 'pending', null, new DateTimeImmutable('-1 minute')
+            );
+            $delivered = [];
+            $pdo = $this->pdo;
+            $sender = static function (string $to) use (&$delivered, $pdo): array {
+                self::assertFalse($pdo->inTransaction(), 'Email transport must run after the queue transaction commits.');
+                $delivered[] = $to;
+                return [true, ''];
+            };
+            $delivery = project_invoice_send_email_result(
+                $this->pdo, $projectInvoiceId, $this->config, null, $allowResend, null, true, $sender
+            );
+            self::assertSame(1, $delivery['sent']);
+            self::assertSame([$email], $delivered);
+            $notices = $this->pdo->prepare(
+                'SELECT notification_type,delivery_status FROM project_invoice_notifications WHERE project_invoice_id=? ORDER BY id'
+            );
+            $notices->execute([$projectInvoiceId]);
+            self::assertSame([
+                ['notification_type' => 'on_generate', 'delivery_status' => 'suppressed'],
+                ['notification_type' => 'manual', 'delivery_status' => 'sent'],
+            ], $notices->fetchAll(PDO::FETCH_ASSOC));
+            if (!$allowResend) {
+                $repeat = project_invoice_send_email_result(
+                    $this->pdo, $projectInvoiceId, $this->config, null, false, null, true, $sender
+                );
+                self::assertSame(0, $repeat['sent']);
+                self::assertSame(1, $repeat['already_sent']);
+                self::assertSame([$email], $delivered);
+            }
+        }
+    }
+
     public function testZeroBalanceProjectStatementNeverQueuesEmail(): void
     {
         $recipientId = $this->client('zero-project-statement@example.invalid');
