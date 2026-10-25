@@ -88,6 +88,7 @@ if ($isLongTermContract) {
   $pricePerInvoice = $pricingType === 'per_invoice' ? (float)($_POST['price_per_invoice'] ?? 0) : null;
   try {
     $recurringRate = pa_document_recurring_rate($_POST, $existingContract, $billingIntervalCount, $billingIntervalUnit, $pricingType, $pricePerInvoice === null ? null : (string)$pricePerInvoice);
+    pa_document_recurring_rate_validate_period($recurringRate, $billingIntervalCount, $billingIntervalUnit, $nextInvoiceDate ?: $startDate, $endDate);
     $pricePerInvoice = $recurringRate['amount'];
   } catch (DomainException|InvalidArgumentException $e) {
     header('Location: /?page=' . $detailPage . '&id=' . $id . '&error=' . rawurlencode($e->getMessage())); exit;

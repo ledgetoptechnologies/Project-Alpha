@@ -43,6 +43,7 @@ $billing_start_mode = in_array($billing_start_mode_val, ['on_upload', 'manual'],
 $price_per_invoice = ($pricing_type === 'per_invoice') ? (float)($_POST['price_per_invoice'] ?? $_POST['lt_price_per_invoice'] ?? 0) : null;
 try {
     $recurringRate = pa_document_recurring_rate($_POST, [], $billing_interval_count, $billing_interval_unit, $pricing_type, $price_per_invoice === null ? null : (string)$price_per_invoice);
+    pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
     $price_per_invoice = $recurringRate['amount'];
 } catch (DomainException|InvalidArgumentException $e) {
     header('Location: /?page=contract/contracts-create&error=' . rawurlencode($e->getMessage())); exit;

@@ -61,4 +61,35 @@ final class DocumentRecurringRateTest extends TestCase
         $pdo->rollBack();
         self::assertSame('per_period', $pdo->query('SELECT rate_basis FROM quotes')->fetchColumn());
     }
+
+    public function testAnnualMonthlyRateRejectsHalfYearServiceTerm(): void
+    {
+        $this->expectException(DomainException::class);
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'monthly'], 1, 'year', '2027-01-01', '2027-06-30');
+    }
+
+    public function testAnnualMonthlyRateAcceptsExactlyTwelveMonthsInclusive(): void
+    {
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'monthly'], 1, 'year', '2027-01-01', '2027-12-31');
+        $this->addToAssertionCount(1);
+    }
+
+    public function testDelayedFirstInvoiceMustStillFitFullPeriod(): void
+    {
+        $this->expectException(DomainException::class);
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'monthly'], 1, 'year', '2027-02-01', '2027-12-31');
+    }
+
+    public function testOpenEndedMonthlyRateAndLegacyPerPeriodRemainSupported(): void
+    {
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'monthly'], 1, 'year', '2027-02-01', null);
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'per_period'], 1, 'year', '2027-01-01', '2027-06-30');
+        $this->addToAssertionCount(2);
+    }
+
+    public function testMonthlyRateRejectsInvalidFixedEndDate(): void
+    {
+        $this->expectException(DomainException::class);
+        pa_document_recurring_rate_validate_period(['rate_basis'=>'monthly'], 1, 'month', '2027-02-01', '2027-02-30');
+    }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 
 require_once dirname(__DIR__, 2) . '/src/migrations/migration_lib.php';
+require_once dirname(__DIR__, 2) . '/src/utils/recurring_billing.php';
 
 /** Actual controller execution with synthetic authenticated sessions and real MySQL. */
 final class DocumentRecurringRateControllerTest extends TestCase
@@ -179,6 +180,61 @@ final class DocumentRecurringRateControllerTest extends TestCase
         $this->post('contract/long_term_contracts_create.php',$post);
         $this->post('quote/quotes_create.php',$post);
         self::assertCount(0,$this->rows('contracts'));self::assertCount(0,$this->rows('quotes'));self::assertCount(0,$this->rows('invoices'));
+    }
+
+    public function testFixedEndRejectsPartialAnnualQuoteAndContractButAcceptsFullYear(): void
+    {
+        $post=array_replace($this->basePost(),['end_date_type'=>'fixed','lt_end_date_type'=>'fixed','end_date'=>'2026-06-30','lt_end_date'=>'2026-06-30']);
+        $this->post('contract/long_term_contracts_create.php',$post);
+        $this->post('quote/quotes_create.php',$post);
+        self::assertCount(0,$this->rows('contracts'));self::assertCount(0,$this->rows('quotes'));
+        $post['end_date']='2026-12-31';$post['lt_end_date']='2026-12-31';
+        $contractResult=$this->post('contract/long_term_contracts_create.php',$post);
+        $quoteResult=$this->post('quote/quotes_create.php',$post);
+        self::assertCount(1,$this->rows('contracts'),$contractResult['log']);self::assertCount(1,$this->rows('quotes'),$quoteResult['log']);
+    }
+
+    public function testDraftQuoteRejectsAnnualFrequencyPastItsExistingFixedEnd(): void
+    {
+        $post=array_replace($this->basePost(),['billing_interval_unit'=>'month','lt_billing_interval_unit'=>'month','end_date_type'=>'fixed','lt_end_date_type'=>'fixed','end_date'=>'2026-06-30','lt_end_date'=>'2026-06-30']);
+        $result=$this->post('quote/quotes_create.php',$post);
+        $rows=$this->rows('quotes');self::assertCount(1,$rows,$result['log']);$before=$rows[0];
+        $this->post('quote/quotes_update.php',array_replace($this->basePost(),['id'=>$before['id']]));
+        self::assertSame($before,$this->rows('quotes')[0],'Rejected annual cadence must preserve original dates, price and rate.');
+    }
+
+    public function testOngoingContractIgnoresStaleHiddenEndDateOnCreateAndEdit(): void
+    {
+        $post=array_replace($this->basePost(),['end_date_type'=>'ongoing','end_date'=>'2026-06-30']);
+        $result=$this->post('contract/long_term_contracts_create.php',$post);
+        $rows=$this->rows('contracts');self::assertCount(1,$rows,$result['log']);
+        self::assertNull($rows[0]['end_date']);
+        $post['id']=$rows[0]['id'];$post['monthly_rate']='125.03';$post['next_invoice_date']='2026-01-01';
+        $result=$this->post('contract/contracts_update.php',$post);
+        self::assertSame('1500.36',$this->rows('contracts')[0]['price_per_invoice'],$result['log']);self::assertNull($this->rows('contracts')[0]['end_date']);
+    }
+
+    public function testNewAnnualServiceUsesFirstInvoiceAnniversaryAndRejectsPartialYear(): void
+    {
+        $result = $this->post('contract/long_term_contracts_create.php',$this->basePost());
+        $contracts = $this->rows('contracts');self::assertCount(1,$contracts,$result['log']);$id = (int)$contracts[0]['id'];
+        $year = (int)date('Y') + 1;
+        $first = $year . '-02-01';
+        $this->pdo->prepare('UPDATE contracts SET status="active",signed_pdf_path="synthetic.pdf" WHERE id=?')->execute([$id]);
+        $post = ['contract_id'=>$id,'service_id'=>0,'name'=>'Delayed annual service','amount'=>'1','rate_basis'=>'monthly','monthly_rate'=>'100.01','billing_interval_count'=>1,'billing_interval_unit'=>'year','effective_from'=>$year.'-01-01','next_invoice_date'=>$first,'client_approved'=>1,'effective_until'=>$year.'-06-30'];
+        $this->post('contract/long_term_recurring_service_save.php',$post);
+        $stmt=$this->pdo->prepare('SELECT * FROM contract_recurring_services WHERE contract_id=? AND is_base=0');$stmt->execute([$id]);
+        self::assertSame([], $stmt->fetchAll(PDO::FETCH_ASSOC),'Short service end must reject the new annual schedule.');
+        unset($post['effective_until']);
+        $result=$this->post('contract/long_term_recurring_service_save.php',$post);
+        $stmt->execute([$id]);$services=$stmt->fetchAll(PDO::FETCH_ASSOC);self::assertCount(1,$services,$result['log']);
+        self::assertSame($first,$services[0]['billing_anchor_date']);
+        $invoice=generate_recurring_invoice($this->pdo,['id'=>$id],['invoice_auto_email_on_generate'=>0,'brand_name'=>'Synthetic tests','from_company'=>'Synthetic tests'],new DateTimeImmutable($first));
+        self::assertNotNull($invoice);
+        $coverage=$this->pdo->prepare('SELECT * FROM recurring_invoice_coverage WHERE invoice_id=?');$coverage->execute([$invoice]);$period=$coverage->fetch(PDO::FETCH_ASSOC);
+        self::assertSame($first,$period['coverage_start']);
+        self::assertSame(($year+1).'-02-01',$period['coverage_end'],'Annual monthly-rate invoice must cover twelve months from its first billing date.');
+        self::assertSame('1200.12',$period['amount']);
     }
 
     public function testServiceSaveRejectsStaleBoundaryAndUnauthorizedUserBeforeQueuingApprovedChange(): void

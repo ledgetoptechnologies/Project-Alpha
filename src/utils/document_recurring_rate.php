@@ -24,3 +24,20 @@ function pa_document_recurring_rate_save(PDO $pdo, string $type, int $id, array 
     $pdo->prepare("UPDATE {$table} SET rate_basis=?,monthly_rate=? WHERE id=?")
         ->execute([$rate['rate_basis'], $rate['monthly_rate'], $id]);
 }
+
+/** Draft previews must fit a complete billing period within the selected service term. */
+function pa_document_recurring_rate_validate_period(array $rate, int $count, string $unit, ?string $firstInvoiceDate, ?string $endDate): void
+{
+    if (($rate['rate_basis'] ?? 'per_period') !== 'monthly' || $firstInvoiceDate === null || $firstInvoiceDate === '') return;
+    if (!pa_recurring_valid_date($firstInvoiceDate) || ($endDate !== null && $endDate !== '' && !pa_recurring_valid_date($endDate))) {
+        throw new DomainException('Choose valid service start and end dates.');
+    }
+    pa_recurring_service_period_end([
+        'rate_basis' => 'monthly',
+        'effective_from' => $firstInvoiceDate,
+        'billing_anchor_date' => $firstInvoiceDate,
+        'effective_until' => $endDate ?: null,
+        'billing_interval_count' => $count,
+        'billing_interval_unit' => $unit,
+    ], $firstInvoiceDate);
+}

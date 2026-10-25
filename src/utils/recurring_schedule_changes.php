@@ -51,11 +51,18 @@ function pa_recurring_service_queue_change(PDO $pdo, array $service, array $valu
     $existing = $pdo->prepare("SELECT id FROM contract_recurring_service_changes WHERE recurring_service_id=? AND state IN ('pending','approved')");
     $existing->execute([$service['id']]);
     if ($existing->fetchColumn()) throw new DomainException('Cancel the existing scheduled change before replacing it.');
+    // Renewal is the amendment's effective date. Its calendar anniversary is
+    // independent: preserve it for rate-only changes, restart it for cadence changes.
+    $sameCadence = (int)$values['billing_interval_count'] === (int)$service['billing_interval_count']
+        && (string)$values['billing_interval_unit'] === (string)$service['billing_interval_unit']
+        && (string)($values['rate_basis'] ?? 'per_period') === (string)($service['rate_basis'] ?? 'per_period');
+    $values['billing_anchor_date'] = $sameCadence ? (string)($service['billing_anchor_date'] ?? $service['effective_from']) : $boundary;
     $values['effective_from'] = $boundary;
     $values['next_invoice_date'] = $boundary;
     if (!empty($values['effective_until']) && $values['effective_until'] < $boundary) {
         throw new DomainException('The service end date precedes the next renewal.');
     }
+    pa_recurring_service_period_end($values, $boundary);
     $stmt = $pdo->prepare('INSERT INTO contract_recurring_service_changes (contract_id,recurring_service_id,effective_date,state,old_values,new_values,signed_document_path,created_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?)');
     $stmt->execute([(int)$service['contract_id'], (int)$service['id'], $boundary, $approved ? 'approved' : 'pending',
         json_encode(pa_recurring_service_snapshot($service), JSON_THROW_ON_ERROR), json_encode($values, JSON_THROW_ON_ERROR),
@@ -75,12 +82,19 @@ function pa_recurring_service_apply_change(PDO $pdo, array $service): array
         throw new DomainException('The approved schedule change no longer matches the renewal date. Review the service before billing.');
     }
     $values = json_decode($change['new_values'], true, 32, JSON_THROW_ON_ERROR);
-    $update = $pdo->prepare('UPDATE contract_recurring_services SET name=?,description=?,amount=?,billing_interval_count=?,billing_interval_unit=?,effective_from=?,effective_until=?,rate_basis=?,monthly_rate=? WHERE id=? AND contract_id=?');
+    $sameCadence = (int)$values['billing_interval_count'] === (int)$service['billing_interval_count']
+        && (string)$values['billing_interval_unit'] === (string)$service['billing_interval_unit']
+        && (string)($values['rate_basis'] ?? 'per_period') === (string)($service['rate_basis'] ?? 'per_period');
+    $anchor = (string)($values['billing_anchor_date'] ?? ($sameCadence ? ($service['billing_anchor_date'] ?? $service['effective_from']) : $change['effective_date']));
+    if (!pa_recurring_valid_date($anchor) || $anchor > $change['effective_date']) throw new DomainException('The approved schedule has an invalid calendar anchor.');
+    $update = $pdo->prepare('UPDATE contract_recurring_services SET name=?,description=?,amount=?,billing_interval_count=?,billing_interval_unit=?,effective_from=?,effective_until=?,rate_basis=?,monthly_rate=?,billing_anchor_date=? WHERE id=? AND contract_id=?');
     $update->execute([$values['name'], $values['description'], $values['amount'], $values['billing_interval_count'], $values['billing_interval_unit'],
-        $change['effective_date'], $values['effective_until'], $values['rate_basis'], $values['monthly_rate'], $service['id'], $service['contract_id']]);
+        $change['effective_date'], $values['effective_until'], $values['rate_basis'], $values['monthly_rate'], $anchor, $service['id'], $service['contract_id']]);
     $pdo->prepare("UPDATE contract_recurring_service_changes SET state='applied',applied_at=CURRENT_TIMESTAMP WHERE id=? AND state='approved'")->execute([$change['id']]);
     // Lifecycle/approval are current service state, not stale values from the proposal.
-    return array_replace($service, array_intersect_key($values, array_flip(['name','description','amount','billing_interval_count','billing_interval_unit','effective_from','effective_until','rate_basis','monthly_rate'])));
+    $values['effective_from'] = $change['effective_date'];
+    $values['billing_anchor_date'] = $anchor;
+    return array_replace($service, array_intersect_key($values, array_flip(['name','description','amount','billing_interval_count','billing_interval_unit','effective_from','effective_until','rate_basis','monthly_rate','billing_anchor_date'])));
 }
 
 function pa_recurring_service_change_action(PDO $pdo, array $service, int $changeId, string $action, ?string $today = null): array
@@ -99,4 +113,18 @@ function pa_recurring_service_change_action(PDO $pdo, array $service, int $chang
         throw new DomainException('Invalid schedule change action.');
     }
     return $change;
+}
+
+/** Calendar coverage for one complete charge; no implicit proration or overrun. */
+function pa_recurring_service_period_end(array $service, string $start): string
+{
+    $anchor = (string)($service['billing_anchor_date'] ?? $service['effective_from'] ?? $start);
+    $end = pa_recurring_service_next_date($start, (int)$service['billing_interval_count'], (string)$service['billing_interval_unit'], $anchor);
+    if (($service['rate_basis'] ?? 'per_period') === 'monthly' && !empty($service['effective_until'])) {
+        $lastCoveredDay = (new DateTimeImmutable($end))->modify('-1 day')->format('Y-m-d');
+        if ((string)$service['effective_until'] < $lastCoveredDay) {
+            throw new DomainException('This billing period extends beyond the service end date. Extend the end date or choose a shorter billing frequency; no automatic proration is applied.');
+        }
+    }
+    return $end;
 }

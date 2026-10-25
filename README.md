@@ -62,6 +62,11 @@ when payment collection is delayed. It does not automatically refund or prorate 
 existing invoice. Outstanding overdue billing must be resolved before changing
 the renewal schedule.
 
+Rate-only changes preserve calendar anniversaries, including month-end and leap-day
+renewals. A new monthly-rate service starts its full billing period on its first
+invoice date. A full monthly or annual charge must fit within the service end date;
+choose a shorter frequency or revise the agreed end date when it does not.
+
 Signed agreement terms and previous invoices remain unchanged. New recurring
 invoices show their service coverage and monthly-rate calculation. Pending and
 approved changes can be cancelled before they take effect. Draft initial terms

@@ -59,7 +59,7 @@ final class RecurringScheduleBillingDatabaseTest extends TestCase
         return generate_recurring_invoice($pdo ?? $this->pdo, ['id'=>$this->contractId], ['invoice_auto_email_on_generate'=>0,'from_company'=>'Synthetic billing tests','brand_name'=>'Synthetic billing tests'], new DateTimeImmutable($date));
     }
 
-    private function queue(string $unit, bool $approved = true, string $today = '2026-07-01'): int
+    private function queue(string $unit, bool $approved = true, string $today = '2026-07-01', string $monthlyRate = '100.01'): int
     {
         $this->pdo->beginTransaction();
         $statement = $this->pdo->prepare('SELECT id FROM contracts WHERE id=? FOR UPDATE');
@@ -68,8 +68,8 @@ final class RecurringScheduleBillingDatabaseTest extends TestCase
         $statement->execute([$this->serviceId]);
         $service = $statement->fetch(PDO::FETCH_ASSOC);
         $proposal = array_replace(pa_recurring_service_snapshot($service), [
-            'rate_basis'=>'monthly','monthly_rate'=>'100.01','billing_interval_count'=>1,'billing_interval_unit'=>$unit,
-            'amount'=>pa_recurring_service_period_amount('100.01', 1, $unit),
+            'rate_basis'=>'monthly','monthly_rate'=>$monthlyRate,'billing_interval_count'=>1,'billing_interval_unit'=>$unit,
+            'amount'=>pa_recurring_service_period_amount($monthlyRate, 1, $unit),
         ]);
         $id = pa_recurring_service_queue_change($this->pdo, $service, $proposal, $approved, null, null, $today);
         $this->pdo->commit();
@@ -145,6 +145,115 @@ final class RecurringScheduleBillingDatabaseTest extends TestCase
         foreach (['amount','billing_interval_count','billing_interval_unit','effective_from','rate_basis','monthly_rate'] as $field) self::assertSame($before[$field], $service[$field]);
         self::assertSame('per_period', $service['rate_basis']);
         self::assertNull($service['monthly_rate']);
+    }
+
+    private function moveInitialAnchor(string $date): void
+    {
+        $this->pdo->prepare('UPDATE contracts SET start_date=?,next_invoice_date=? WHERE id=?')->execute([$date,$date,$this->contractId]);
+        $this->pdo->prepare('UPDATE contract_recurring_services SET effective_from=?,next_invoice_date=?,billing_anchor_date=? WHERE id=?')->execute([$date,$date,$date,$this->serviceId]);
+    }
+
+    public function testRateOnlyAmendmentPreservesJanuary31AnchorAcrossFebruaryRenewal(): void
+    {
+        $this->setupService('month');
+        $this->moveInitialAnchor('2026-01-31');
+        self::assertNotNull($this->generate('2026-01-31'));
+        self::assertSame('2026-02-28',$this->row('contract_recurring_services',$this->serviceId)['next_invoice_date']);
+        $changeId = $this->queue('month',true,'2026-02-15','125.03');
+        $change = $this->row('contract_recurring_service_changes',$changeId);
+        $proposal = json_decode($change['new_values'],true);
+        self::assertSame('2026-02-28',$change['effective_date']);
+        self::assertSame('2026-02-28',$proposal['effective_from'],'Amendment metadata still records its actual effective date.');
+        self::assertSame('2026-01-31',$proposal['billing_anchor_date']);
+        $invoice = $this->generate('2026-02-28');
+        self::assertNotNull($invoice);
+        self::assertSame('125.03',$this->row('invoices',$invoice)['total']);
+        self::assertSame('2026-01-31',$this->row('contract_recurring_services',$this->serviceId)['billing_anchor_date']);
+        self::assertSame('2026-02-28',$this->row('contract_recurring_services',$this->serviceId)['effective_from']);
+        self::assertSame('2026-03-31',$this->row('contract_recurring_services',$this->serviceId)['next_invoice_date']);
+        self::assertNull($this->generate('2026-03-28'));
+        self::assertNotNull($this->generate('2026-03-31'));
+        self::assertSame('2026-04-30',$this->row('contract_recurring_services',$this->serviceId)['next_invoice_date']);
+    }
+
+    public function testAnnualRateOnlyAmendmentPreservesLeapDayAnniversary(): void
+    {
+        $this->setupService('year');
+        $this->moveInitialAnchor('2024-02-29');
+        self::assertNotNull($this->generate('2024-02-29'));
+        $this->queue('year',true,'2025-02-01','125.03');
+        $invoice = $this->generate('2025-02-28');
+        self::assertNotNull($invoice);
+        self::assertSame('1500.36',$this->row('invoices',$invoice)['total']);
+        self::assertSame('2024-02-29',$this->row('contract_recurring_services',$this->serviceId)['billing_anchor_date']);
+        self::assertNotNull($this->generate('2026-02-28'));
+        self::assertNotNull($this->generate('2027-02-28'));
+        self::assertSame('2028-02-29',$this->row('contract_recurring_services',$this->serviceId)['next_invoice_date']);
+        self::assertNull($this->generate('2028-02-28'));
+        self::assertNotNull($this->generate('2028-02-29'));
+    }
+
+    public function testCadenceChangeStartsNewAnniversaryAtFebruaryRenewal(): void
+    {
+        $this->setupService('month');
+        $this->moveInitialAnchor('2026-01-31');
+        self::assertNotNull($this->generate('2026-01-31'));
+        $changeId = $this->queue('year',true,'2026-02-15');
+        $change = $this->row('contract_recurring_service_changes',$changeId);
+        self::assertSame('2026-02-28',json_decode($change['new_values'],true)['billing_anchor_date']);
+        self::assertNotNull($this->generate('2026-02-28'));
+        $service = $this->row('contract_recurring_services',$this->serviceId);
+        self::assertSame('2026-02-28',$service['effective_from']);
+        self::assertSame('2027-02-28',$service['next_invoice_date']);
+    }
+
+    public function testLegacyToMonthlyRateStartsFullAnnualPeriodAtConversionBoundary(): void
+    {
+        $this->setupService('year','per_period');
+        $this->pdo->prepare("UPDATE contracts SET next_invoice_date='2026-02-01' WHERE id=?")->execute([$this->contractId]);
+        $this->pdo->prepare("UPDATE contract_recurring_services SET next_invoice_date='2026-02-01' WHERE id=?")->execute([$this->serviceId]);
+        $changeId=$this->queue('year',true,'2026-01-15');
+        $proposal=json_decode($this->row('contract_recurring_service_changes',$changeId)['new_values'],true);
+        self::assertSame('2026-02-01',$proposal['billing_anchor_date']);
+        self::assertNotNull($this->generate('2026-02-01'));
+        self::assertSame('2027-02-01',$this->row('contract_recurring_services',$this->serviceId)['next_invoice_date']);
+    }
+
+    public function testMonthlyRateAnnualGenerationRejectsPartialFinalYearWithoutMutatingSchedule(): void
+    {
+        $this->setupService('year');
+        $this->pdo->prepare("UPDATE contract_recurring_services SET effective_until='2026-06-30' WHERE id=?")->execute([$this->serviceId]);
+        $before = $this->row('contract_recurring_services',$this->serviceId);
+        self::assertNull($this->generate('2026-01-01'));
+        self::assertSame($before,$this->row('contract_recurring_services',$this->serviceId));
+        $count = $this->pdo->prepare('SELECT COUNT(*) FROM invoices WHERE contract_id=?');$count->execute([$this->contractId]);
+        self::assertSame(0,(int)$count->fetchColumn());
+    }
+
+    public function testAnnualChangeCannotExceedInclusiveServiceEnd(): void
+    {
+        $this->setupService('month');
+        $this->pdo->prepare("UPDATE contract_recurring_services SET effective_until='2026-06-30' WHERE id=?")->execute([$this->serviceId]);
+        self::assertNotNull($this->generate('2026-01-01'));
+        $before = $this->row('contract_recurring_services',$this->serviceId);
+        try {
+            $this->queue('year',true,'2026-01-15');
+            self::fail('Annual change extending past the service end must be rejected.');
+        } catch (DomainException $error) {
+            self::assertStringContainsString('extends beyond',$error->getMessage());
+            $this->pdo->rollBack();
+        }
+        self::assertSame($before,$this->row('contract_recurring_services',$this->serviceId));
+        self::assertNotNull($this->generate('2026-02-01'));
+    }
+
+    public function testFullYearEndingOnInclusiveLastCoveredDayIsAccepted(): void
+    {
+        $this->setupService('year');
+        $this->pdo->prepare("UPDATE contract_recurring_services SET effective_until='2026-12-31' WHERE id=?")->execute([$this->serviceId]);
+        self::assertNotNull($this->generate('2026-01-01'));
+        $service = $this->row('contract_recurring_services',$this->serviceId);
+        self::assertSame('ended',$service['status']);self::assertNull($service['next_invoice_date']);
     }
 
     public function testShiftedRenewalCannotOverlapAnAlreadyInvoicedAnnualPeriod(): void

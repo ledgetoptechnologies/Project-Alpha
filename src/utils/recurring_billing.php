@@ -220,7 +220,7 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig,
                         $description .= ' — ' . $serviceDescription;
                     }
                     $coverageStart = (string)$service['next_invoice_date'];
-                    $coverageEnd = pa_recurring_service_next_date($coverageStart, (int)$service['billing_interval_count'], (string)$service['billing_interval_unit'], (string)$service['effective_from']);
+                    $coverageEnd = pa_recurring_service_period_end($service, $coverageStart);
                     $overlap = $pdo->prepare('SELECT id FROM recurring_invoice_coverage WHERE recurring_service_id=? AND coverage_start<? AND coverage_end>? LIMIT 1');
                     $overlap->execute([(int)$service['id'], $coverageEnd, $coverageStart]);
                     if ($overlap->fetchColumn()) throw new DomainException('The requested service period overlaps an existing invoice. Review its billing schedule before generating another charge.');
@@ -276,7 +276,7 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig,
                     (string)$service['next_invoice_date'],
                     (int)$service['billing_interval_count'],
                     (string)$service['billing_interval_unit'],
-                    (string)$service['effective_from']
+                    (string)($service['billing_anchor_date'] ?? $service['effective_from'])
                 );
                 $serviceStatus = 'active';
                 if (!empty($service['effective_until']) && $serviceNextDate > (string)$service['effective_until']) {

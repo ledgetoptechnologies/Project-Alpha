@@ -135,15 +135,17 @@ try {
         pa_recurring_service_queue_change($pdo, $oldService, pa_recurring_service_snapshot($newService), $approved, $addendumUrl, $userId);
     } else {
         if ($nextInvoiceDate < $effectiveFrom) throw new DomainException('The first invoice date cannot precede the service start date.');
+        $billingAnchorDate = $rateBasis === 'monthly' ? $nextInvoiceDate : null;
+        pa_recurring_service_period_end(['rate_basis'=>$rateBasis,'billing_interval_count'=>$intervalCount,'billing_interval_unit'=>$intervalUnit,'effective_from'=>$effectiveFrom,'effective_until'=>$effectiveUntil,'billing_anchor_date'=>$billingAnchorDate], $nextInvoiceDate);
         $pdo->prepare('
             INSERT INTO contract_recurring_services
                 (contract_id,name,description,amount,billing_interval_count,billing_interval_unit,
-                 effective_from,effective_until,next_invoice_date,status,approval_status,is_base,created_by,rate_basis,monthly_rate)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)
+                 effective_from,effective_until,next_invoice_date,status,approval_status,is_base,created_by,rate_basis,monthly_rate,billing_anchor_date)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)
         ')->execute([
             $contractId, substr($name, 0, 190), $description ?: null, $amount, $intervalCount,
             $intervalUnit, $effectiveFrom, $effectiveUntil, $nextInvoiceDate, $serviceStatus,
-            $approvalStatus, $userId, $rateBasis, $monthlyRate,
+            $approvalStatus, $userId, $rateBasis, $monthlyRate, $billingAnchorDate,
         ]);
         $serviceId = (int)$pdo->lastInsertId();
     }

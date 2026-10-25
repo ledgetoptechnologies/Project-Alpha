@@ -13,9 +13,9 @@ final class RecurringScheduleChangesTest extends TestCase
     {
         $this->pdo = new PDO('sqlite::memory:');
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->pdo->exec('CREATE TABLE contract_recurring_services (id INTEGER PRIMARY KEY,contract_id INTEGER,name TEXT,description TEXT,amount TEXT,billing_interval_count INTEGER,billing_interval_unit TEXT,effective_from TEXT,effective_until TEXT,next_invoice_date TEXT,status TEXT,approval_status TEXT,rate_basis TEXT,monthly_rate TEXT)');
+        $this->pdo->exec('CREATE TABLE contract_recurring_services (id INTEGER PRIMARY KEY,contract_id INTEGER,name TEXT,description TEXT,amount TEXT,billing_interval_count INTEGER,billing_interval_unit TEXT,effective_from TEXT,effective_until TEXT,next_invoice_date TEXT,status TEXT,approval_status TEXT,rate_basis TEXT,monthly_rate TEXT,billing_anchor_date TEXT)');
         $this->pdo->exec('CREATE TABLE contract_recurring_service_changes (id INTEGER PRIMARY KEY,contract_id INTEGER,recurring_service_id INTEGER,effective_date TEXT,state TEXT,old_values TEXT,new_values TEXT,signed_document_path TEXT,created_by INTEGER,approved_at TEXT,applied_at TEXT)');
-        $this->pdo->exec("INSERT INTO contract_recurring_services VALUES (1,10,'Hosting',NULL,'1200.00',1,'year','2026-01-01',NULL,'2027-01-01','active','approved','monthly','100.00')");
+        $this->pdo->exec("INSERT INTO contract_recurring_services VALUES (1,10,'Hosting',NULL,'1200.00',1,'year','2026-01-01',NULL,'2027-01-01','active','approved','monthly','100.00',NULL)");
     }
 
     private function service(): array

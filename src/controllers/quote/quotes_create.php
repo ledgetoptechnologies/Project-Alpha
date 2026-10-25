@@ -78,6 +78,7 @@ $recurringRate = ['rate_basis' => 'per_period', 'monthly_rate' => null];
 if ($is_long_term) {
     try {
         $recurringRate = pa_document_recurring_rate($_POST, [], $billing_interval_count, $billing_interval_unit, $pricing_type, $price_per_invoice === null ? null : (string)$price_per_invoice);
+        pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
         $price_per_invoice = $recurringRate['amount'];
     } catch (DomainException|InvalidArgumentException $e) {
         header('Location: /?page=quote/quotes-create&error=' . rawurlencode($e->getMessage())); exit;

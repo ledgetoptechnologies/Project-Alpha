@@ -11,6 +11,8 @@ SET @schedule_version_sql=IF((SELECT COUNT(*) FROM information_schema.columns WH
 PREPARE schedule_version_stmt FROM @schedule_version_sql; EXECUTE schedule_version_stmt; DEALLOCATE PREPARE schedule_version_stmt;
 SET @schedule_version_sql=IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='contract_recurring_services' AND column_name='monthly_rate')=0,'ALTER TABLE contract_recurring_services ADD COLUMN monthly_rate DECIMAL(12,2) NULL','SELECT 1');
 PREPARE schedule_version_stmt FROM @schedule_version_sql; EXECUTE schedule_version_stmt; DEALLOCATE PREPARE schedule_version_stmt;
+SET @schedule_version_sql=IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='contract_recurring_services' AND column_name='billing_anchor_date')=0,'ALTER TABLE contract_recurring_services ADD COLUMN billing_anchor_date DATE NULL','SELECT 1');
+PREPARE schedule_version_stmt FROM @schedule_version_sql; EXECUTE schedule_version_stmt; DEALLOCATE PREPARE schedule_version_stmt;
 
 CREATE TABLE IF NOT EXISTS contract_recurring_service_changes (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

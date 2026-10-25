@@ -13,5 +13,6 @@ $rateChoiceBasis = (string)($rateChoiceRow['rate_basis'] ?? 'per_period');
     <input class="input" name="monthly_rate" data-monthly-rate-input type="number" min="0.01" step="0.01" value="<?php echo htmlspecialchars((string)($rateChoiceRow['monthly_rate'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
   </label>
   <small data-monthly-rate-preview aria-live="polite">For a monthly service rate, select billing every 1 month or 1 year. Annual invoices cover 12 months at the monthly rate, before tax and discounts.</small>
+  <small>Each full billing period must fit within the service end date. Shorter periods need a separately agreed charge; changing frequency does not automatically prorate or refund payments.</small>
 </div>
 <?php unset($rateChoiceRow, $rateChoiceBasis, $rateChoiceAmountId, $rateChoiceCountId, $rateChoiceUnitId); ?>

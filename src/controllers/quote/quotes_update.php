@@ -52,6 +52,7 @@ if ($recurringQuote) {
   try {
     if ($intervalCount < 1 || !in_array($intervalUnit, ['day','week','month','year'], true)) throw new DomainException('Choose a valid billing frequency.');
     $recurringRate = pa_document_recurring_rate($_POST, $existingQuote, $intervalCount, $intervalUnit, 'per_invoice', (string)($_POST['price_per_invoice'] ?? $existingQuote['price_per_invoice'] ?? '0'));
+    pa_document_recurring_rate_validate_period($recurringRate, $intervalCount, $intervalUnit, $existingQuote['start_date'] ?? null, $existingQuote['end_date'] ?? null);
     if ((float)$recurringRate['amount'] <= 0) throw new DomainException('Amount per invoice must be greater than zero.');
     $subtotal = (float)$recurringRate['amount'];
     $items = [];
