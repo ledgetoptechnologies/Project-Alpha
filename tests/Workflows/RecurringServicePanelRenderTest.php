@@ -62,4 +62,36 @@ final class RecurringServicePanelRenderTest extends TestCase
         self::assertStringContainsString('so it will not be charged', $html);
         self::assertStringContainsString('end this service and add the remaining period separately', $html);
     }
+
+    public function testApprovedMonthlyChangeResolvesWarningForNextAnnualPeriod(): void
+    {
+        $change = ['id'=>3, 'recurring_service_id'=>9, 'state'=>'approved', 'effective_date'=>'2027-01-01', 'new_values'=>json_encode([
+            'amount'=>'100.00', 'billing_interval_count'=>1, 'billing_interval_unit'=>'month',
+            'rate_basis'=>'monthly', 'effective_until'=>'2027-06-30', 'billing_anchor_date'=>'2027-01-01',
+        ])];
+        $html = $this->render([$change], 'per_invoice', ['effective_until'=>'2027-06-30']);
+        self::assertStringContainsString('Scheduled change', $html);
+        self::assertStringNotContainsString('so it will not be charged', $html);
+    }
+
+    public function testPendingMonthlyProposalDoesNotHideWarningForNextAnnualPeriod(): void
+    {
+        $change = ['id'=>3, 'recurring_service_id'=>9, 'state'=>'pending', 'effective_date'=>'2027-01-01', 'new_values'=>json_encode([
+            'amount'=>'100.00', 'billing_interval_count'=>1, 'billing_interval_unit'=>'month',
+            'rate_basis'=>'monthly', 'effective_until'=>'2027-06-30', 'billing_anchor_date'=>'2027-01-01',
+        ])];
+        $html = $this->render([$change], 'per_invoice', ['effective_until'=>'2027-06-30']);
+        self::assertStringContainsString('Awaiting client approval', $html);
+        self::assertStringContainsString('so it will not be charged', $html);
+    }
+
+    public function testLaterApprovedProposalDoesNotHideWarningForNextAnnualPeriod(): void
+    {
+        $change = ['id'=>3, 'recurring_service_id'=>9, 'state'=>'approved', 'effective_date'=>'2028-01-01', 'new_values'=>json_encode([
+            'amount'=>'100.00', 'billing_interval_count'=>1, 'billing_interval_unit'=>'month',
+            'rate_basis'=>'monthly', 'effective_until'=>null,
+        ])];
+        $html = $this->render([$change], 'per_invoice', ['effective_until'=>'2027-06-30']);
+        self::assertStringContainsString('so it will not be charged', $html);
+    }
 }

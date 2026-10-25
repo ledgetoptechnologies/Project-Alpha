@@ -38,8 +38,22 @@ $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((s
         </div>
         <?php
           $periodDoesNotFit = false;
-          if (($service['rate_basis'] ?? '') === 'monthly' && !empty($service['next_invoice_date']) && $service['status'] !== 'ended') {
-              try { pa_recurring_service_period_end($service, (string)$service['next_invoice_date']); }
+          $renewalService = $service;
+          // Preview the same approved terms the generator will apply at this renewal.
+          // Pending or later proposals must not hide a warning about the next charge.
+          foreach ($serviceChanges as $renewalChange) {
+              if ($renewalChange['state'] !== 'approved' || $renewalChange['effective_date'] !== $service['next_invoice_date']) continue;
+              $renewalValues = json_decode((string)$renewalChange['new_values'], true) ?: [];
+              $renewalService = array_replace($service, array_intersect_key($renewalValues, array_flip(['billing_interval_count','billing_interval_unit','rate_basis','effective_until','billing_anchor_date'])));
+              $sameRenewalCadence = (int)$renewalService['billing_interval_count'] === (int)$service['billing_interval_count']
+                  && $renewalService['billing_interval_unit'] === $service['billing_interval_unit']
+                  && ($renewalService['rate_basis'] ?? 'per_period') === ($service['rate_basis'] ?? 'per_period');
+              $renewalService['billing_anchor_date'] = $renewalValues['billing_anchor_date'] ?? ($sameRenewalCadence ? ($service['billing_anchor_date'] ?? $service['effective_from']) : $renewalChange['effective_date']);
+              $renewalService['effective_from'] = $renewalChange['effective_date'];
+              break;
+          }
+          if (($renewalService['rate_basis'] ?? '') === 'monthly' && !empty($service['next_invoice_date']) && $service['status'] !== 'ended') {
+              try { pa_recurring_service_period_end($renewalService, (string)$service['next_invoice_date']); }
               catch (DomainException $periodError) { $periodDoesNotFit = true; }
           }
         ?>
