@@ -55,10 +55,12 @@ final class PortalClientRequestAccessService
                 if ((int)$root['id']===$clientId) $target = [$type,(string)$root['root_public_id'],$root];
             }
         }
+        // Principal -> current client lineage -> entitlement rows is also the
+        // retirement path's order. Every authority-bearing read is current.
+        $owners=$this->clientPublicIds($pdo,$principalId);
         $rows = $pdo->prepare("SELECT * FROM portal_v2_entitlements WHERE portal_principal_id=? AND capability='request.create' ORDER BY id LIMIT 201".$lock);
         $rows->execute([$principalId]); $rows = $rows->fetchAll(PDO::FETCH_ASSOC);
         if(count($rows)>200)throw new DomainException('Request access entitlement capacity exceeded.');
-        $owners=$this->clientPublicIds($pdo,$principalId);
         $changed = []; $ownedTarget = null; $manualTarget = false;
         foreach ($rows as $row) {
             $type=(string)$row['scope_type']; $id=(string)$row['scope_public_id'];
@@ -105,13 +107,14 @@ final class PortalClientRequestAccessService
     public function retirePrincipal(PDO $pdo,int $profileId,int $principalId,int $actorId): array
     {
         if (!$pdo->inTransaction()) throw new DomainException('Request access reconciliation requires a transaction.');
-        $principal=$pdo->prepare('SELECT public_id FROM portal_principals WHERE id=?');
+        $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $principal=$pdo->prepare('SELECT public_id FROM portal_principals WHERE id=?'.$lock);
         $principal->execute([$principalId]); $publicId=$principal->fetchColumn();
         if ($publicId===false) return [];
-        $rows=$pdo->prepare("SELECT * FROM portal_v2_entitlements WHERE portal_principal_id=? AND capability='request.create' AND active=1 ORDER BY id LIMIT 201");
+        $owners=$this->clientPublicIds($pdo,$principalId);
+        $rows=$pdo->prepare("SELECT * FROM portal_v2_entitlements WHERE portal_principal_id=? AND capability='request.create' AND active=1 ORDER BY id LIMIT 201".$lock);
         $rows->execute([$principalId]); $rows=$rows->fetchAll(PDO::FETCH_ASSOC); $changed=[];
         if(count($rows)>200)throw new DomainException('Request access entitlement capacity exceeded.');
-        $owners=$this->clientPublicIds($pdo,$principalId);
         foreach ($rows as $row) {
             $owner=$this->owner($row,$profileId,(string)$publicId,$owners);
             if ($owner===null) continue;
@@ -126,11 +129,15 @@ final class PortalClientRequestAccessService
      * root intent before its ordinary client-scoped version writes run. */
     public function beforeArchive(PDO $pdo,int $clientId,int $actorId): array
     {
-        $profiles=$pdo->prepare("SELECT DISTINCT p.id FROM clients c LEFT JOIN organizations o ON o.id=c.organization_id
+        if(!$pdo->inTransaction())throw new DomainException('Request access reconciliation requires a transaction.');
+        $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        // The fixed root and profile/workspace key make this join unique; avoid
+        // DISTINCT/temporary-table discovery and read current rows under RR.
+        $profiles=$pdo->prepare("SELECT p.id FROM clients c LEFT JOIN organizations o ON o.id=c.organization_id
             JOIN portal_v2_workspaces w ON w.root_type=CASE WHEN c.organization_id IS NULL THEN 'standalone_client' ELSE 'organization' END
                 AND w.root_public_id=CASE WHEN c.organization_id IS NULL THEN c.public_id ELSE o.public_id END
             JOIN portal_integration_profile_workspaces pw ON pw.workspace_id=w.id AND pw.active=1
-            JOIN portal_integration_profiles p ON p.id=pw.profile_id AND p.enabled=1 AND p.portal_projection_enabled=1 WHERE c.id=? LIMIT 2");
+            JOIN portal_integration_profiles p ON p.id=pw.profile_id AND p.enabled=1 AND p.portal_projection_enabled=1 WHERE c.id=? ORDER BY p.id LIMIT 2".$lock);
         $profiles->execute([$clientId]);$profiles=$profiles->fetchAll(PDO::FETCH_COLUMN);
         if(count($profiles)>1)throw new DomainException('Request access requires one exact portal producer.');
         return $profiles?$this->reconcileClient($pdo,(int)$profiles[0],$clientId,$actorId,false,true):[];
@@ -168,7 +175,8 @@ final class PortalClientRequestAccessService
 
     private function workspaceIds(PDO $pdo,string $type,string $id): array
     {
-        $statement=$pdo->prepare('SELECT public_id FROM portal_v2_workspaces WHERE root_type=? AND root_public_id=?');
+        $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $statement=$pdo->prepare('SELECT public_id FROM portal_v2_workspaces WHERE root_type=? AND root_public_id=? ORDER BY id LIMIT 2'.$lock);
         $statement->execute([$type==='client'?'standalone_client':$type,$id]);
         return $statement->fetchAll(PDO::FETCH_COLUMN);
     }

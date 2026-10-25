@@ -69,3 +69,25 @@ The policy controls grant issuance. Existing explicit manual authority and the
 ordinary profile pause/revocation projection lifecycle remain authoritative.
 Receiver flags, real catalog readiness and actual permission grants are separate
 release prerequisites; this change does not enable them or create services.
+
+## Target database regression fixture
+
+`tests/fixtures/portal-client-request-current-read-mysql.php` is an explicit
+qualification fixture, separate from normal PHPUnit execution. It requires the
+declared Docker target PHP **8.5.12** and MySQL **8.4**, a fixed isolated Unix
+socket, four exact hash-pinned public service sources, and a newly created
+synthetic database name. It refuses an existing database and exposes no network
+DSN, PA bootstrap, Composer loading or production configuration. Its minimal
+schema reproduces the relevant entitlement enums/foreign keys; it is not a full
+application migration proof.
+
+The 13 cases cover approval lineage and manual intent plus two-PDO REPEATABLE
+READ snapshots: revocation of association, principal, eligibility, root,
+profile, route or acknowledgement; a newly committed grant before principal
+retirement; and a newly active producer/grant before archive discovery. Every
+authority-bearing read on those retirement paths is current/locking; profile
+and policy-config reads use the same profile-before-config order as the writer.
+
+Running this fixture creates synthetic database state. Use only a separately
+reviewed, bounded disposable-container plan with no existing database/storage
+mounts. A local SQLite pass or PHP lint does not qualify these MySQL races.
