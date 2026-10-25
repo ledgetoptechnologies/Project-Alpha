@@ -12,8 +12,8 @@ use Throwable;
  * Reconciles Project Alpha's client directory into portal invitation intent.
  *
  * This service never binds an external identity and never grants a delivery
- * folder.  It only publishes an eligible principal and three least-privilege
- * portal capabilities.  The receiver must still verify the identity and an
+ * folder. It publishes an eligible principal, three client-scoped capabilities
+ * and managed root request intent for newly approved clients. The receiver must still verify the identity and an
  * operator must still grant content.
  */
 final class PortalClientProvisioningService
@@ -188,6 +188,55 @@ final class PortalClientProvisioningService
                 ->execute([gmdate('Y-m-d H:i:s'),$profileId]);
         }
         return $profileId;
+    }
+
+    /** Operator/API acknowledgement; evidence fields are not a client-facing form. */
+    public function acknowledgeRequestPolicy(PDO $pdo,string $applicationKey,string $receiverPolicy,string $routeSha256,string $qualificationSha256,int $actorId): void
+    {
+        $profile=$this->requireReadyProfile($pdo,$applicationKey);
+        if(!hash_equals((string)$profile['application_key'],$applicationKey))throw new DomainException('Request policy source mismatch.');
+        $owns=!$pdo->inTransaction();
+        try {
+            if($owns)$pdo->beginTransaction();
+            PortalClientRequestPolicy::saveAcknowledgement($pdo,$profile,$receiverPolicy,$routeSha256,$qualificationSha256,$actorId);
+            $this->audit($pdo,(int)$profile['id'],'portal.client_request_access.policy_acknowledged','profile',(string)$profile['id'],
+                ['receiver_policy'=>$receiverPolicy,'receiver_route_sha256'=>$routeSha256,'qualification_sha256'=>$qualificationSha256,'actor_id'=>$actorId]);
+            if($owns)$pdo->commit();
+        } catch(Throwable $error) {
+            if($owns&&$pdo->inTransaction())$pdo->rollBack();
+            throw $error;
+        }
+    }
+
+    /** Explicit bounded migration; never changes login eligibility or identity.
+     * Existing protected contacts are changed only through this reviewed cohort,
+     * never as a side effect of their neutral profile edits. */
+    public function reconcileRequestAccess(PDO $pdo,string $applicationKey,array $clientIds,int $actorId): array
+    {
+        if ($actorId<1 || $clientIds===[] || count($clientIds)>100
+            || array_filter($clientIds,static fn($id)=>!is_int($id)||$id<1)!==[])
+            throw new DomainException('Select between 1 and 100 exact client IDs for request access review.');
+        $profile=$this->requireReadyProfile($pdo,$applicationKey);
+        if(!hash_equals((string)$profile['application_key'],$applicationKey))
+            throw new DomainException('Request access profile does not match the exact source application.');
+        if(!PortalClientRequestPolicy::enabled($pdo,(int)$profile['id']))
+            throw new DomainException('A qualified receiver request policy must be acknowledged before migrating request access.');
+        $owns=!$pdo->inTransaction();
+        try {
+            if($owns)$pdo->beginTransaction();
+            $changed=[];
+            foreach(array_values(array_unique($clientIds))as$clientId)
+                $changed=array_merge($changed,(new PortalClientRequestAccessService())->reconcileClient($pdo,(int)$profile['id'],$clientId,$actorId,true));
+            $changed=array_values(array_unique($changed));
+            (new PortalProjectionMutationService())->queueWorkspaceIds($pdo,$changed);
+            $this->audit($pdo,(int)$profile['id'],'portal.client_request_access.cohort_reconciled','profile',(string)$profile['id'],
+                ['client_ids'=>array_values(array_unique($clientIds)),'changed_workspace_count'=>count($changed),'actor_id'=>$actorId]);
+            if($owns)$pdo->commit();
+            return ['reviewed'=>count(array_unique($clientIds)),'changed_workspaces'=>count($changed)];
+        } catch(Throwable $error) {
+            if($owns&&$pdo->inTransaction())$pdo->rollBack();
+            throw $error;
+        }
     }
 
     /** @return array<string,mixed> */
@@ -770,7 +819,7 @@ final class PortalClientProvisioningService
                 $client->execute([(int)$current['id']]); $client = $client->fetch(PDO::FETCH_ASSOC);
                 if (!$client) { $pdo->commit(); continue; }
                 $scope = ['root_type'=>'organization','root_public_id'=>$current['root_public_id']];
-                $status = $this->reconcileClient($pdo, $client, $scope, true, 0, true);
+                $status = $this->reconcileClient($pdo, $client, $scope, true, 0, true, $profileId);
                 (new PortalProjectionMutationService())->afterGovernedClientProvisioning($pdo, [$scope]);
                 $this->audit($pdo, $profileId, 'portal.client_provisioning.missing_client_completed', 'client', $current['public_id'],
                     ['automatic'=>true,'contract_fingerprint'=>$fingerprint,'eligibility_status'=>$status]);
@@ -851,7 +900,7 @@ final class PortalClientProvisioningService
                 $summary['workspaces']++;
             }
             foreach ($this->rootClients($pdo, $scope, false) as $client) {
-                $status = $this->reconcileClient($pdo, $client, $scope, $rootActive, $actorId);
+                $status = $this->reconcileClient($pdo, $client, $scope, $rootActive, $actorId, false, (int)$profile['id']);
                 $summary[$status]++;
             }
             $this->touchRoot($pdo, $scope['root_type'], $scope['root_public_id']);
@@ -1027,11 +1076,11 @@ final class PortalClientProvisioningService
     }
 
     /** @param array<string,mixed> $client @param array{root_type:string,root_public_id:string} $scope */
-    private function reconcileClient(PDO $pdo, array $client, array $scope, bool $rootActive, int $actorId, bool $currentReads = false): string
+    private function reconcileClient(PDO $pdo, array $client, array $scope, bool $rootActive, int $actorId, bool $currentReads = false, int $profileId = 0): string
     {
         $clientId=(int)$client['id'];$existing=$this->eligibility($pdo,$clientId);$manual=(string)($existing['manual_state']??'automatic');
         $protected=PortalContactIdentityPolicy::forClient($pdo,$clientId);
-        if($protected)return $this->reconcileProtectedContactIdentity($pdo,$client,$existing,$protected,$rootActive,$actorId);
+        if($protected)return $this->reconcileProtectedContactIdentity($pdo,$client,$existing,$protected,$rootActive,$actorId,$profileId);
         $active=empty($client['archived'])&&empty($client['deleted_at']);
         $email=strtolower(trim((string)($client['email']??'')));$reason='none';$status='eligible';
         if(!$active){$status='review_required';$reason='client_inactive';}
@@ -1044,13 +1093,17 @@ final class PortalClientProvisioningService
 
         $principalId=isset($existing['portal_principal_id'])?(int)$existing['portal_principal_id']:null;
         $previousEmail=(string)($existing['canonical_email']??'');
-        if($principalId&&$previousEmail!==''&&$email!==''&&!hash_equals($previousEmail,$email)){$this->revokePrincipal($pdo,$principalId,$actorId);$principalId=null;}
+        if($principalId&&$previousEmail!==''&&$email!==''&&!hash_equals($previousEmail,$email)){
+            if($profileId>0)(new PortalClientRequestAccessService())->retirePrincipal($pdo,$profileId,$principalId,$actorId);
+            $this->revokePrincipal($pdo,$principalId,$actorId);$principalId=null;
+        }
+        $createdPrincipal=false;
         if($status==='eligible'){
             if(!$principalId){
                 $locking=$currentReads&&$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql';
                 $conflict=$pdo->prepare('SELECT '.($locking?'p.id':'COUNT(*)').' FROM portal_principals p LEFT JOIN portal_client_login_eligibility e ON e.portal_principal_id=p.id WHERE LOWER(TRIM(p.email_hint))=? AND p.enabled=1 AND p.revoked_at IS NULL AND e.client_id IS NULL'.($locking?' LIMIT 1 FOR UPDATE':''));$conflict->execute([$email]);
                 if($locking?$conflict->fetchColumn()!==false:(int)$conflict->fetchColumn()>0){$status='review_required';$reason='principal_conflict';}
-                else{$principalId=$this->createManagedPrincipal($pdo,$email,(string)$client['name'],$actorId);}
+                else{$principalId=$this->createManagedPrincipal($pdo,$email,(string)$client['name'],$actorId);$createdPrincipal=true;}
             }
             if($status==='eligible'&&$principalId){
                 $this->activatePrincipal($pdo,$principalId,$email,(string)$client['name'],$actorId);
@@ -1066,15 +1119,20 @@ final class PortalClientProvisioningService
                 foreach(self::DEFAULT_CAPABILITIES as$capability)$this->upsertEntitlement($pdo,$principalId,$capability,$scopeType,$scopeId,$actorId);
             }
         }
-        if($status!=='eligible'&&$principalId)$this->revokeClientAssociation($pdo,$principalId,$clientId,(string)$client['public_id'],$actorId);
+        if($status!=='eligible'&&$principalId)$this->revokeClientAssociation($pdo,$principalId,$clientId,(string)$client['public_id'],$actorId,$profileId);
         $version=PortalSourceVersion::from(['clientPublicId'=>(string)$client['public_id'],'canonicalEmail'=>$status==='eligible'?$email:null,'status'=>$status,'reason'=>$reason,'manualState'=>$manual]);
         $this->saveEligibility($pdo,$clientId,$principalId,$manual,$status,$reason,$email!==''?$email:null,$version,$actorId);
+        // New onboarding may add only request intent. Existing identities need
+        // the explicit reviewed migration; ordinary reconciliation only maintains
+        // policy-owned rows. Protected contact writes return before this hook.
+        if($profileId>0 && $status==='eligible' && $principalId)
+            (new PortalClientRequestAccessService())->reconcileClient($pdo,$profileId,$clientId,$actorId,$createdPrincipal);
         return$status;
     }
 
     /** Neutral contact writes must not migrate login authority during later
      * cron/browser reconciliation. Explicit revocations still take effect. */
-    private function reconcileProtectedContactIdentity(PDO $pdo,array $client,array|false $existing,array $protected,bool $rootActive,int $actorId):string
+    private function reconcileProtectedContactIdentity(PDO $pdo,array $client,array|false $existing,array $protected,bool $rootActive,int $actorId,int $profileId=0):string
     {
         if(!$existing)return 'review_required'; // locked NONE; no enrollment
         $manual=(string)$existing['manual_state'];
@@ -1084,7 +1142,7 @@ final class PortalClientProvisioningService
         elseif($manual==='revoked')$reason='none';
         if($reason!==null){
             $principalId=$existing['portal_principal_id']!==null?(int)$existing['portal_principal_id']:null;
-            if($principalId)$this->revokeClientAssociation($pdo,$principalId,(int)$client['id'],(string)$client['public_id'],$actorId);
+            if($principalId)$this->revokeClientAssociation($pdo,$principalId,(int)$client['id'],(string)$client['public_id'],$actorId,$profileId);
             $status=$reason==='client_inactive'?'review_required':'revoked';
             $version=PortalSourceVersion::from(['clientPublicId'=>(string)$client['public_id'],'contactIdentityPolicy'=>'preserve_existing','status'=>$status,'reason'=>$reason,'manualState'=>$manual]);
             $this->saveEligibility($pdo,(int)$client['id'],$principalId,$manual,$status,$reason,$existing['canonical_email'],$version,$actorId);
@@ -1203,8 +1261,11 @@ final class PortalClientProvisioningService
             ->execute([$email,$name,$version,$actorId?:null,$id]);
     }
     private function revokePrincipal(PDO$pdo,int$id,int$actorId):void{$version=PortalSourceVersion::from(['principalId'=>$id,'active'=>false]);$pdo->prepare('UPDATE portal_principals SET source_version=?,enabled=0,revoked_at=CURRENT_TIMESTAMP,authorization_version=authorization_version+1,updated_by=? WHERE id=? AND (enabled<>0 OR revoked_at IS NULL)')->execute([$version,$actorId?:null,$id]);$pdo->prepare('UPDATE portal_v2_entitlements SET active=0,source_version=?,updated_by=? WHERE portal_principal_id=? AND active<>0')->execute([$version,$actorId?:null,$id]);$pdo->prepare('UPDATE portal_identity_bindings SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_by=? WHERE portal_principal_id=? AND enabled<>0')->execute([$actorId?:null,$id]);}
-    private function revokeClientAssociation(PDO$pdo,int$principalId,int$clientId,string$clientPublicId,int$actorId):void
+    private function revokeClientAssociation(PDO$pdo,int$principalId,int$clientId,string$clientPublicId,int$actorId,int$profileId=0):void
     {
+        // Preserve owned standalone request tombstones before the generic
+        // client-scoped revocation rewrites source versions on active rows.
+        if($profileId>0)(new PortalClientRequestAccessService())->reconcileClient($pdo,$profileId,$clientId,$actorId,false,true);
         $version=PortalSourceVersion::from(['principalId'=>$principalId,'clientPublicId'=>$clientPublicId,'active'=>false]);
         $pdo->prepare("UPDATE portal_v2_entitlements SET active=0,source_version=?,updated_by=? WHERE portal_principal_id=? AND scope_type='client' AND scope_public_id=? AND active<>0")
             ->execute([$version,$actorId?:null,$principalId,$clientPublicId]);

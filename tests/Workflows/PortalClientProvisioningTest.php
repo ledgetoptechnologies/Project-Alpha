@@ -1271,6 +1271,7 @@ SQL);
     {
         $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
             $this->prepareCompletedOrganizationWithMissingPerson();
+            $this->enableRequestPolicy();
             $before=$this->existingPersonAuthority();
             self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
             $summary=$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations');
@@ -1284,12 +1285,72 @@ SQL);
             $published=$this->pdo->prepare('SELECT COUNT(*) FROM portal_projection_outbox WHERE instr(payload_json,?)>0');$published->execute([$proof['principalPublicId']]);self::assertGreaterThan(0,(int)$published->fetchColumn(),'The actual new own principal must be published, not merely stored.');
             $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn();
             self::assertSame([['client_id'=>21]],$this->pdo->query('SELECT client_id FROM portal_principal_clients WHERE portal_principal_id='.$principal)->fetchAll(PDO::FETCH_ASSOC));
-            self::assertSame(['client'],$this->pdo->query('SELECT DISTINCT scope_type FROM portal_v2_entitlements WHERE portal_principal_id='.$principal)->fetchAll(PDO::FETCH_COLUMN));
+            self::assertSame(['client'],$this->pdo->query("SELECT DISTINCT scope_type FROM portal_v2_entitlements WHERE capability<>'request.create' AND portal_principal_id=".$principal)->fetchAll(PDO::FETCH_COLUMN));
+            self::assertSame([['request.create','organization','completed-company']],$this->pdo->query("SELECT capability,scope_type,scope_public_id FROM portal_v2_entitlements WHERE capability='request.create' AND portal_principal_id=".$principal)->fetchAll(PDO::FETCH_NUM));
             self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_identity_bindings')->fetchColumn());
             $snapshot=$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
             self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
             self::assertSame($snapshot,$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
         });
+    }
+
+    public function testExplicitRequestCohortPreservesProtectedIdentityAndDoesNotProvisionOtherPeople(): void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareCompletedOrganizationWithMissingPerson();
+            $this->enableRequestPolicy();
+            $this->pdo->exec("INSERT INTO portal_client_contact_identity_policy(client_id,portal_principal_id,login_email) SELECT client_id,portal_principal_id,canonical_email FROM portal_client_login_eligibility WHERE client_id=20");
+            // Model an already-published pre-policy client, not new onboarding.
+            $this->pdo->exec("DELETE FROM portal_v2_entitlements WHERE capability='request.create'");
+            $workspace=(string)$this->pdo->query('SELECT public_id FROM portal_v2_workspaces')->fetchColumn();
+            $this->pdo->beginTransaction();
+            (new \App\Services\PortalProjectionMutationService())->queueWorkspaceIds($this->pdo,[$workspace]);
+            $this->pdo->commit();
+            $beforeOutbox=(int)$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
+            $identity=$this->pdo->query('SELECT * FROM portal_principals')->fetchAll(PDO::FETCH_ASSOC);
+            $eligibility=$this->pdo->query('SELECT * FROM portal_client_login_eligibility')->fetchAll(PDO::FETCH_ASSOC);
+            $associations=$this->pdo->query('SELECT * FROM portal_principal_clients')->fetchAll(PDO::FETCH_ASSOC);
+            self::assertSame(['reviewed'=>1,'changed_workspaces'=>1],$this->service->reconcileRequestAccess($this->pdo,'generic_operations',[20],7));
+            self::assertSame($identity,$this->pdo->query('SELECT * FROM portal_principals')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame($eligibility,$this->pdo->query('SELECT * FROM portal_client_login_eligibility')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame($associations,$this->pdo->query('SELECT * FROM portal_principal_clients')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_login_eligibility WHERE client_id=21')->fetchColumn());
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE capability='request.create' AND active=1")->fetchColumn());
+            $outbox=$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn();
+            self::assertGreaterThan($beforeOutbox,(int)$outbox);
+            self::assertSame(['reviewed'=>1,'changed_workspaces'=>0],$this->service->reconcileRequestAccess($this->pdo,'generic_operations',[20],7));
+            self::assertSame($outbox,$this->pdo->query('SELECT COUNT(*) FROM portal_projection_outbox')->fetchColumn());
+        });
+    }
+
+    public function testStandaloneRevocationPreservesManagedTombstoneUntilExplicitRequestApproval(): void
+    {
+        $this->pdo->exec("UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1,portal_route='https://receiver.test/events' WHERE id=1;
+            INSERT INTO clients VALUES(22,'client-c','Synthetic Person','person@example.test',NULL,'consumer',0,NULL,'client-v1')");
+        $profile=$this->pdo->query('SELECT * FROM portal_integration_profiles WHERE id=1')->fetch(PDO::FETCH_ASSOC);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>'client-c']];
+        $this->pdo->beginTransaction();
+        \App\Services\PortalClientRequestPolicy::saveAcknowledgement($this->pdo,$profile,'native-readable-project-v1',hash('sha256','https://receiver.test/events'),str_repeat('a',64),7);
+        $this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        $original=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        $this->pdo->exec("UPDATE portal_client_login_eligibility SET manual_state='revoked'");
+        $this->pdo->beginTransaction();$this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        $revoked=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(0,(int)$revoked['active']);
+        $this->pdo->exec("UPDATE portal_client_login_eligibility SET manual_state='automatic'");
+        $this->pdo->beginTransaction();$this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        self::assertSame($revoked,$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC));
+        $this->pdo->beginTransaction();(new \App\Services\PortalClientRequestAccessService())->reconcileClient($this->pdo,1,22,7,true);$this->pdo->commit();
+        $restored=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame($original['public_id'],$restored['public_id']);self::assertSame(1,(int)$restored['active']);
+        self::assertSame($original['source_version'],$restored['source_version']);
+    }
+
+    private function enableRequestPolicy(): void
+    {
+        $profile=$this->pdo->query('SELECT * FROM portal_integration_profiles')->fetch(PDO::FETCH_ASSOC);
+        $this->service->acknowledgeRequestPolicy($this->pdo,(string)$profile['application_key'],'native-readable-project-v1',
+            hash('sha256',trim((string)$profile['portal_route'])),str_repeat('a',64),7);
     }
 
     public function testMissingPersonReconciliationNeverRestoresProtectedRevokedOrInactiveAuthority(): void
