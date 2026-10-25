@@ -101,33 +101,7 @@ if ($selectedProjectId > 0) {
     ?>
     </div>
 
-    <!-- Billing type -->
-    <div style="margin:12px 0">
-      <div style="font-weight:600;margin-bottom:8px">Document Type</div>
-      <div style="display:flex;gap:24px;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="radio" name="doc_type" value="regular" checked onchange="toggleDocTypeFields()">
-          <div>
-            <div style="font-weight:600">Regular</div>
-            <div style="font-size:12px;color:#6b7280">One-time quote</div>
-          </div>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="radio" name="doc_type" value="long_term" onchange="toggleDocTypeFields()">
-          <div>
-            <div style="font-weight:600">Long Term</div>
-            <div style="font-size:12px;color:#6b7280">Recurring billing</div>
-          </div>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="radio" name="doc_type" value="on_demand" onchange="toggleDocTypeFields()">
-          <div>
-            <div style="font-weight:600">On-Demand</div>
-            <div style="font-size:12px;color:#6b7280">Manual invoicing</div>
-          </div>
-        </label>
-      </div>
-    </div>
+    <?php require __DIR__ . '/../../components/document_agreement_choice.php'; ?>
 
     <div style="margin:12px 0;padding:12px;border:1px solid #dbeafe;border-radius:8px;background:#eff6ff">
       <div style="font-weight:600;margin-bottom:8px">Billing Mode</div>
@@ -206,6 +180,7 @@ if ($selectedProjectId > 0) {
       </div>
 
       <div id="perInvoiceField" style="display:grid;gap:12px;margin-top:12px">
+        <?php $rateChoiceRow = []; $rateChoiceAmountId = 'pricePerInvoiceInput'; $rateChoiceCountId = 'billingIntervalCount'; $rateChoiceUnitId = 'billingIntervalUnit'; require __DIR__ . '/../../components/document_monthly_rate.php'; ?>
         <label>
           <div>Amount Per Invoice * <span style="font-size:13px;color:#6b7280;font-weight:normal">(before tax & discount)</span></div>
           <input id="pricePerInvoiceInput" type="number" step="0.01" name="lt_price_per_invoice" placeholder="20.00" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" oninput="recalc()">
@@ -350,3 +325,5 @@ if ($selectedProjectId > 0) {
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/client-selection-dropdown-logic.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
+
+<script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-billing-choice.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>

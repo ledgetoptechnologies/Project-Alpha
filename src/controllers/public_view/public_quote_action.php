@@ -4,6 +4,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 
 // Verify CSRF (we skipped global preflight intentionally)
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/rate_limiter.php';
 if (!rate_limit_check($pdo, 'public_quote_action', 30, 60)) {
   http_response_code(429);
@@ -143,6 +144,10 @@ try {
         $pdo->prepare('UPDATE contracts SET job_id=?,service_location_id=? WHERE id=?')
           ->execute([!empty($quote['job_id'])?(int)$quote['job_id']:null,!empty($quote['service_location_id'])?(int)$quote['service_location_id']:null,$contract_id]);
         if ($quoteType === 'long_term' && ($quote['pricing_type'] ?? '') === 'per_invoice') {
+          pa_document_recurring_rate_save($pdo, 'contract', $contract_id, [
+            'rate_basis' => $quote['rate_basis'] ?? 'per_period',
+            'monthly_rate' => $quote['monthly_rate'] ?? null,
+          ]);
           pa_recurring_service_ensure_base($pdo, $contract_id);
         }
 

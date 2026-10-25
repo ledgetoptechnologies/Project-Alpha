@@ -115,6 +115,8 @@ function recalc() {
     for (var i = 0; i < qtys.length; i++) {
         subtotal += qtys[i] * prices[i];
     }
+    const recurringAmount = document.getElementById('pricePerInvoiceEditQ');
+    if (recurringAmount) subtotal = Number(recurringAmount.value) || 0;
     var dtype = document.getElementById('discountType').value;
     var dval = parseFloat(document.getElementById('discountValue').value) || 0;
     var taxp = parseFloat(document.getElementById('taxPercent').value) || 0;
@@ -136,3 +138,9 @@ function recalc() {
 ['discountType', 'discountValue', 'taxPercent'].forEach(id => document.getElementById(id).addEventListener('input', recalc));
 
 document.getElementById("addItemBtn")?.addEventListener("click", (e) => addItem('','',1,0));
+
+document.getElementById('pricePerInvoiceEditQ')?.addEventListener('input', recalc);
+
+if (document.getElementById('pricePerInvoiceEditQ')) {
+  document.querySelectorAll('#items input, #items select, #items textarea').forEach(input => { input.disabled = true; });
+}

@@ -1114,3 +1114,6 @@ body.nav-open{overflow:hidden}
   .print-footer{display:block;position:fixed;bottom:6px;left:12px;color:#374151;font-size:12px}
 }
 .al-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px}.al-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:18px}.al-card h2,.al-card h3{margin-top:0}.al-form{display:grid;gap:12px}.al-form label{display:grid;gap:6px;font-weight:600}.al-form input,.al-form select,.al-form textarea{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px}.al-actions{display:flex;gap:8px;flex-wrap:wrap}.al-table{width:100%;border-collapse:collapse}.al-table th,.al-table td{text-align:left;padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top}.al-alert{padding:12px 14px;border-radius:10px;margin-bottom:16px;background:#ecfdf5;color:#166534}.al-alert.error{background:#fef2f2;color:#991b1b}.al-muted{color:#64748b;font-size:13px}
+
+/* Progressive disclosure for agreement and rate controls. */
+[data-agreement-choice] [hidden], [data-monthly-rate] [hidden] { display: none !important; }

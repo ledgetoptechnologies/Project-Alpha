@@ -1,6 +1,7 @@
 <?php
 // src/controllers/quotes_update.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/document_fields.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/acl_middleware.php';
@@ -43,6 +44,21 @@ for($i=0;$i<count($item);$i++){
   $itm=trim((string)($item[$i]??'')); $d=trim((string)($desc[$i]??'')); $q=(float)($qty[$i]??0); $p=(float)($price[$i]??0);
   if($itm===''||$q<=0||$p<0) continue; $line=$q*$p; $subtotal+=$line; $unit=$billing_mode==='hourly'?'hour':catalog_document_unit((string)($billingUnits[$i]??'each')); $items[]=['i'=>$itm,'d'=>$d,'q'=>$q,'p'=>$p,'t'=>$line,'u'=>$unit,'catalog_id'=>max(0,(int)($catalogIds[$i]??0))];
 }
+$recurringRate = null;
+$recurringQuote = ($existingQuote['quote_type'] ?? '') === 'long_term' && ($existingQuote['pricing_type'] ?? '') === 'per_invoice';
+if ($recurringQuote) {
+  $intervalCount = (int)($_POST['billing_interval_count'] ?? $existingQuote['billing_interval_count'] ?? 1);
+  $intervalUnit = (string)($_POST['billing_interval_unit'] ?? $existingQuote['billing_interval_unit'] ?? 'month');
+  try {
+    if ($intervalCount < 1 || !in_array($intervalUnit, ['day','week','month','year'], true)) throw new DomainException('Choose a valid billing frequency.');
+    $recurringRate = pa_document_recurring_rate($_POST, $existingQuote, $intervalCount, $intervalUnit, 'per_invoice', (string)($_POST['price_per_invoice'] ?? $existingQuote['price_per_invoice'] ?? '0'));
+    if ((float)$recurringRate['amount'] <= 0) throw new DomainException('Amount per invoice must be greater than zero.');
+    $subtotal = (float)$recurringRate['amount'];
+    $items = [];
+  } catch (DomainException|InvalidArgumentException $e) {
+    header('Location: /?page=quote/quotes-edit&id=' . $id . '&error=' . rawurlencode($e->getMessage())); exit;
+  }
+}
 $travelItem=mileage_document_travel_item($travelRule);if($travelItem&&$travelItem['pricing_status']!=='variable')$subtotal+=(float)$travelItem['line_total'];
 $discount_amount=0.0; if($discount_type==='percent'){$discount_amount=max(0,min(100,$discount_value))*$subtotal/100;} elseif($discount_type==='fixed'){$discount_amount=max(0,$discount_value);} $tax=max(0,$tax_percent)*max(0,$subtotal-$discount_amount)/100; $total=max(0,$subtotal-$discount_amount+$tax);
 // Extract custom field values from POST
@@ -58,6 +74,10 @@ try{
   if(!empty($existingQuote['job_id'])&&$client_id!==(int)$existingQuote['client_id'])throw new DomainException($jobClientLockMessage);
   $serviceLocationId = document_resolve_service_location($pdo,$client_id,!empty($existingQuote['project_id'])?(int)$existingQuote['project_id']:null,!empty($existingQuote['job_id'])?(int)$existingQuote['job_id']:null,$requestedServiceLocationId);
   $pdo->prepare('UPDATE quotes SET client_id=?, organization_id=?, show_contact_on_document=?, billing_mode=?, discount_type=?, discount_value=?, tax_percent=?, subtotal=?, total=?, deposit_type=?, deposit_amount=?, fulfillment_date=?, scope=?, custom_fields=?, service_location_id=? WHERE id=?')->execute([$client_id,$organizationId,$showContactOnDocument,$billing_mode,$discount_type,$discount_value,$tax_percent,$subtotal,$total,$deposit_type,$deposit_value,$fulfillment_date,$scope,$customFieldsJson,$serviceLocationId,$id]);
+  if ($recurringQuote && $recurringRate) {
+    $pdo->prepare('UPDATE quotes SET billing_interval_count=?,billing_interval_unit=?,price_per_invoice=? WHERE id=?')->execute([$intervalCount,$intervalUnit,$recurringRate['amount'],$id]);
+    pa_document_recurring_rate_save($pdo, 'quote', $id, $recurringRate);
+  }
   // Upsert project notes if provided and project_code is known
   $row = $pdo->prepare('SELECT project_code FROM quotes WHERE id=?');
   $row->execute([$id]);

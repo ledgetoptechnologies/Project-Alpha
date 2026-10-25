@@ -77,11 +77,25 @@
       </label>
     </div>
 
+    <?php if (($quote['quote_type'] ?? '') === 'long_term' && ($quote['pricing_type'] ?? '') === 'per_invoice'): ?>
+    <fieldset style="display:grid;gap:12px;border:1px solid #ddd;border-radius:8px;padding:16px">
+      <legend>Service rate and invoicing</legend>
+      <div style="display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+        <label class="field"><span class="label">Bill every</span><input class="input" id="billingIntervalCountEditQ" name="billing_interval_count" type="number" min="1" value="<?php echo (int)($quote['billing_interval_count'] ?? 1); ?>"></label>
+        <label class="field"><span class="label">Period</span><select class="input" id="billingIntervalUnitEditQ" name="billing_interval_unit">
+          <?php foreach (['day'=>'Day(s)','week'=>'Week(s)','month'=>'Month(s)','year'=>'Year(s)'] as $unit => $label): ?>
+          <option value="<?php echo $unit; ?>" <?php echo ($quote['billing_interval_unit'] ?? 'month') === $unit ? 'selected' : ''; ?>><?php echo $label; ?></option>
+          <?php endforeach; ?>
+        </select></label>
+      </div>
+      <?php $rateChoiceRow = $quote; $rateChoiceAmountId = 'pricePerInvoiceEditQ'; $rateChoiceCountId = 'billingIntervalCountEditQ'; $rateChoiceUnitId = 'billingIntervalUnitEditQ'; require __DIR__ . '/../../components/document_monthly_rate.php'; ?>
+      <label class="field"><span class="label">Amount per invoice, before tax and discounts</span><input class="input" id="pricePerInvoiceEditQ" name="price_per_invoice" type="number" min="0.01" step="0.01" required value="<?php echo htmlspecialchars((string)$quote['price_per_invoice'], ENT_QUOTES, 'UTF-8'); ?>"></label>
+    </fieldset>
+    <?php endif; ?>
+
     <?php
     // Determine document type and render custom fields
-    $documentType = 'regular';
-    if (!empty($quote['is_long_term'])) $documentType = 'long_term';
-    elseif (!empty($quote['is_on_demand'])) $documentType = 'on_demand';
+    $documentType = (string)($quote['quote_type'] ?? 'regular');
 
     // Get existing custom field values
     $existingCustomFields = !empty($quote['custom_fields']) ? json_decode($quote['custom_fields'], true) : [];
@@ -143,7 +157,7 @@
 
     <?php $documentServiceLocationId = (int)($quote['service_location_id'] ?? 0); require __DIR__ . '/../../components/document_service_location_fields.php'; ?>
     <?php $travelRuleScope='quote'; $travelDocumentId=(int)$quote['id']; require __DIR__.'/../../components/travel_billing_fields.php'; ?>
-    <div>
+    <div <?php echo ($quote['quote_type'] ?? '') === 'long_term' && ($quote['pricing_type'] ?? '') === 'per_invoice' ? 'hidden' : ''; ?>>
       <div style="font-weight:600;margin-bottom:8px">Items / Rates</div>
       <div id="items" style="display:grid;gap:8px"></div>
       <button id="addItemBtn" type="button" style="margin-top:6px;padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#fff">+ Add Item</button>
@@ -226,3 +240,5 @@
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/pricing-adjustments.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
+
+<script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-billing-choice.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>

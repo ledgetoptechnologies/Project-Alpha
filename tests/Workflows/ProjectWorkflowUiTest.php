@@ -505,7 +505,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('created_at,generation_key',$recurring);
         $onDemandView=(string)file_get_contents($this->root.'/src/views/pages/contract/on-demand-contracts-list.php');
         self::assertMatchesRegularExpression('/<form[^>]+class="od-generate-form"[\\s\\S]*?<input[^>]+name="generation_key"[^>]+value="<\\?php echo bin2hex\\(random_bytes\\(16\\)\\); \\?>"[\\s\\S]*?<\\/form>/', $onDemandView);
-        self::assertStringContainsString('name="generation_key"',(string)file_get_contents($this->root.'/src/views/pages/contract/long-term-contract-details.php'));
+        self::assertStringContainsString('name="generation_key"',(string)file_get_contents($this->root.'/src/views/components/recurring_service_form.php'));
         self::assertStringContainsString("pricing_money_to_minor((string)(\$contract['total_invoiced']??'0'))",$onDemand);
         self::assertStringContainsString("pricing_money_to_minor((string)(\$contract['total_invoiced']??'0'))",$recurring);
         foreach(['long_term_contracts_create.php','on_demand_contracts_create.php'] as $create){$source=(string)file_get_contents($this->root.'/src/controllers/contract/'.$create);self::assertStringContainsString('pricing_finalize_document_revision(',$source);self::assertStringContainsString('pricing_recompute_contract_percentage_deposit',$source);}
@@ -580,7 +580,8 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('pa_recurring_services_due', (string)$recurringServices);
         self::assertStringContainsString('generate_recurring_proration_invoice', (string)$recurringServiceSave);
         self::assertStringContainsString('signed_addendum', (string)$recurringServiceSave);
-        self::assertStringContainsString('Recurring Services &amp; Amendments', (string)$ltDetails);
+        self::assertStringContainsString('recurring_service_panel.php', (string)$ltDetails);
+        self::assertStringContainsString('Services &amp; billing schedule', (string)file_get_contents($this->root.'/src/views/components/recurring_service_panel.php'));
         self::assertStringContainsString('long-term-recurring-service-save', (string)$router);
         self::assertStringContainsString('invoice_notification_process($pdo, $appConfig)', (string)$recurringCron);
         self::assertStringContainsString('invoice_notification_enqueue_generated($pdo, $invoiceId, $appConfig)', (string)$recurringBilling);
