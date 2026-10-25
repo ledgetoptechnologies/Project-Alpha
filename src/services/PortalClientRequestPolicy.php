@@ -14,20 +14,31 @@ final class PortalClientRequestPolicy
 
     public static function enabled(PDO $pdo,int $profileId): bool
     {
-        $statement=$pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=?');
+        // Use current locking reads under MySQL REPEATABLE READ. Profile then
+        // config is also the acknowledgement writer's lock order.
+        $lock=$pdo->inTransaction()&&$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $profile=$pdo->prepare('SELECT application_key,portal_route FROM portal_integration_profiles WHERE id=?'.$lock);
+        $profile->execute([$profileId]);$profile=$profile->fetch(PDO::FETCH_ASSOC);
+        if(!$profile)return false;
+        $statement=$pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key=?'.$lock);
         $statement->execute([self::KEY]);
         $policy=json_decode((string)($statement->fetchColumn()?:''),true);
         if(!is_array($policy)||($policy['enabled']??false)!==true||($policy['profileId']??null)!==$profileId
             ||($policy['receiverPolicy']??null)!==self::RECEIVER_POLICY
             ||!preg_match('/^[a-f0-9]{64}$/',(string)($policy['qualificationSha256']??'')))return false;
-        $profile=$pdo->prepare('SELECT application_key,portal_route FROM portal_integration_profiles WHERE id=?');
-        $profile->execute([$profileId]);$profile=$profile->fetch(PDO::FETCH_ASSOC);
         return $profile && hash_equals((string)$profile['application_key'],(string)($policy['applicationKey']??''))
             && hash_equals(hash('sha256',trim((string)$profile['portal_route'])),(string)($policy['receiverRouteSha256']??''));
     }
 
     public static function saveAcknowledgement(PDO $pdo,array $profile,string $receiverPolicy,string $routeSha256,string $qualificationSha256,int $actorId): void
     {
+        if(!$pdo->inTransaction())throw new DomainException('Request policy acknowledgement requires a transaction.');
+        $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $current=$pdo->prepare('SELECT * FROM portal_integration_profiles WHERE id=?'.$lock);
+        $current->execute([(int)($profile['id']??0)]);$current=$current->fetch(PDO::FETCH_ASSOC);
+        if(!$current||!hash_equals((string)$current['application_key'],(string)($profile['application_key']??'')))
+            throw new DomainException('Request policy source changed.');
+        $profile=$current;
         if(!$pdo->inTransaction()||$actorId<1||empty($profile['enabled'])||empty($profile['portal_projection_enabled'])
             ||$receiverPolicy!==self::RECEIVER_POLICY||!preg_match('/^[a-f0-9]{64}$/',$qualificationSha256)
             ||trim((string)($profile['portal_route']??''))===''

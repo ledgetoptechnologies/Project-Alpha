@@ -169,7 +169,11 @@ SQL);
             self::assertSame(0,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
             $this->restoreClient((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),$scope);
             self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
-            self::assertSame(1,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
+            self::assertSame(0,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn(),'Neutral restore cannot reactivate request authority.');
+            $this->pdo->beginTransaction();
+            (new \App\Services\PortalClientRequestAccessService())->reconcileClient($this->pdo,1,(int)$this->pdo->query('SELECT id FROM clients')->fetchColumn(),7,true);
+            $this->pdo->commit();
+            self::assertSame(1,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn(),'An explicit reviewed cohort may restore the same owned row.');
             self::assertSame($grant,$this->pdo->query("SELECT public_id FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
         }
     }

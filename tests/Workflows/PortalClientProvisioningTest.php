@@ -1323,6 +1323,29 @@ SQL);
         });
     }
 
+    public function testStandaloneRevocationPreservesManagedTombstoneUntilExplicitRequestApproval(): void
+    {
+        $this->pdo->exec("UPDATE portal_integration_profiles SET enabled=1,portal_projection_enabled=1,portal_route='https://receiver.test/events' WHERE id=1;
+            INSERT INTO clients VALUES(22,'client-c','Synthetic Person','person@example.test',NULL,'consumer',0,NULL,'client-v1')");
+        $profile=$this->pdo->query('SELECT * FROM portal_integration_profiles WHERE id=1')->fetch(PDO::FETCH_ASSOC);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>'client-c']];
+        $this->pdo->beginTransaction();
+        \App\Services\PortalClientRequestPolicy::saveAcknowledgement($this->pdo,$profile,'native-readable-project-v1',hash('sha256','https://receiver.test/events'),str_repeat('a',64),7);
+        $this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        $original=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        $this->pdo->exec("UPDATE portal_client_login_eligibility SET manual_state='revoked'");
+        $this->pdo->beginTransaction();$this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        $revoked=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(0,(int)$revoked['active']);
+        $this->pdo->exec("UPDATE portal_client_login_eligibility SET manual_state='automatic'");
+        $this->pdo->beginTransaction();$this->service->ensureScopes($this->pdo,$scope,7,$profile);$this->pdo->commit();
+        self::assertSame($revoked,$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC));
+        $this->pdo->beginTransaction();(new \App\Services\PortalClientRequestAccessService())->reconcileClient($this->pdo,1,22,7,true);$this->pdo->commit();
+        $restored=$this->pdo->query("SELECT * FROM portal_v2_entitlements WHERE capability='request.create'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame($original['public_id'],$restored['public_id']);self::assertSame(1,(int)$restored['active']);
+        self::assertSame($original['source_version'],$restored['source_version']);
+    }
+
     private function enableRequestPolicy(): void
     {
         $profile=$this->pdo->query('SELECT * FROM portal_integration_profiles')->fetch(PDO::FETCH_ASSOC);

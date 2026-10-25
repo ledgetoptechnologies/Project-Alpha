@@ -1263,12 +1263,14 @@ final class PortalClientProvisioningService
     private function revokePrincipal(PDO$pdo,int$id,int$actorId):void{$version=PortalSourceVersion::from(['principalId'=>$id,'active'=>false]);$pdo->prepare('UPDATE portal_principals SET source_version=?,enabled=0,revoked_at=CURRENT_TIMESTAMP,authorization_version=authorization_version+1,updated_by=? WHERE id=? AND (enabled<>0 OR revoked_at IS NULL)')->execute([$version,$actorId?:null,$id]);$pdo->prepare('UPDATE portal_v2_entitlements SET active=0,source_version=?,updated_by=? WHERE portal_principal_id=? AND active<>0')->execute([$version,$actorId?:null,$id]);$pdo->prepare('UPDATE portal_identity_bindings SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_by=? WHERE portal_principal_id=? AND enabled<>0')->execute([$actorId?:null,$id]);}
     private function revokeClientAssociation(PDO$pdo,int$principalId,int$clientId,string$clientPublicId,int$actorId,int$profileId=0):void
     {
+        // Preserve owned standalone request tombstones before the generic
+        // client-scoped revocation rewrites source versions on active rows.
+        if($profileId>0)(new PortalClientRequestAccessService())->reconcileClient($pdo,$profileId,$clientId,$actorId,false,true);
         $version=PortalSourceVersion::from(['principalId'=>$principalId,'clientPublicId'=>$clientPublicId,'active'=>false]);
         $pdo->prepare("UPDATE portal_v2_entitlements SET active=0,source_version=?,updated_by=? WHERE portal_principal_id=? AND scope_type='client' AND scope_public_id=? AND active<>0")
             ->execute([$version,$actorId?:null,$principalId,$clientPublicId]);
         $pdo->prepare('DELETE FROM portal_principal_clients WHERE portal_principal_id=? AND client_id=?')
             ->execute([$principalId,$clientId]);
-        if($profileId>0)(new PortalClientRequestAccessService())->reconcileClient($pdo,$profileId,$clientId,$actorId,false,true);
         $remaining=$pdo->prepare('SELECT COUNT(*) FROM portal_principal_clients pc JOIN clients c ON c.id=pc.client_id WHERE pc.portal_principal_id=? AND c.archived=0 AND c.deleted_at IS NULL');
         $remaining->execute([$principalId]);
         if((int)$remaining->fetchColumn()===0)$this->revokePrincipal($pdo,$principalId,$actorId);

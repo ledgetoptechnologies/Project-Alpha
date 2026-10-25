@@ -46,7 +46,10 @@ existing identity freeze and do not add request grants.
 ## Reconciliation and revocation
 
 Only rows stamped with both this policy's deterministic opaque public ID and
-matching content-derived policy source version are managed. A supported manual
+matching content-derived policy source version are managed. The identity and
+version bind the exact producer profile, principal, client stable public ID and
+root. Separate reviewed clients sharing one principal/root have separate rows;
+an unreviewed sibling cannot inherit another client's approval lineage. A supported manual
 entitlement edit gives the row a new version and relinquishes automatic
 ownership. Existing manual allows (including inactive ones), denies, expiry
 intent and unrelated capabilities are not overwritten or duplicated.
@@ -54,9 +57,12 @@ intent and unrelated capabilities are not overwritten or duplicated.
 Reconciliation retires owned old-root grants when the client moves, is revoked,
 deactivated or loses its association. Archive retires owned root intent before
 the existing archive version/restore fence runs. Tombstones and IDs remain in
-history; an approved restore reuses the owned row. Another eligible contact
-under the same principal/root keeps its authority, and another valid root is
-preserved. Projection changes and audit events share the caller's transaction;
+history. Ordinary maintenance never creates or reactivates a grant, including
+after a root move or archive/restore. Explicit reviewed cohort approval can
+reuse that exact client's inactive owned row or approve its new root. Only a
+separately reviewed, still eligible contact under the same principal/root keeps
+its own authority; an unreviewed contact does not retain the retired row.
+Projection changes and audit events share the caller's transaction;
 explicit cohort publication does not invoke general client provisioning.
 
 The policy controls grant issuance. Existing explicit manual authority and the

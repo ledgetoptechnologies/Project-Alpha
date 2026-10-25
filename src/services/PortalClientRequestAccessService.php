@@ -12,15 +12,17 @@ use PDO;
  * permission does not grant project visibility, management or content access. */
 final class PortalClientRequestAccessService
 {
-    private const POLICY = 'approved-client-root-request-v1';
+    private const POLICY = 'approved-client-root-request-v2';
 
     /** Caller owns the transaction and projection publication. Returns changed workspace IDs. */
     public function reconcileClient(PDO $pdo, int $profileId, int $clientId, int $actorId, bool $allowCreate = false, bool $excludeCurrent = false): array
     {
         if (!$pdo->inTransaction()) throw new DomainException('Request access reconciliation requires a transaction.');
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
-        $client=$pdo->prepare('SELECT id FROM clients WHERE id=?'.$lock);$client->execute([$clientId]);
-        if($client->fetchColumn()===false)return [];
+        $client=$pdo->prepare('SELECT id,public_id FROM clients WHERE id=?'.$lock);$client->execute([$clientId]);
+        $client=$client->fetch(PDO::FETCH_ASSOC);
+        if(!$client)return [];
+        $clientPublicId=(string)$client['public_id'];
         $protected=PortalContactIdentityPolicy::forClient($pdo,$clientId);
         $principal = $pdo->prepare('SELECT p.*,e.canonical_email eligibility_email FROM portal_client_login_eligibility e JOIN portal_principals p ON p.id=e.portal_principal_id WHERE e.client_id=?'.$lock);
         $principal->execute([$clientId]);
@@ -48,7 +50,7 @@ final class PortalClientRequestAccessService
         if (!empty($principal['enabled']) && empty($principal['revoked_at'])) {
             foreach ($rootRows as $root) {
                 $type = $root['root_type']==='standalone_client' ? 'client' : 'organization';
-                $key = $type.':'.$root['root_public_id'];
+                $key = $root['public_id'].'|'.$type.':'.$root['root_public_id'];
                 $desired[$key] = $root;
                 if ((int)$root['id']===$clientId) $target = [$type,(string)$root['root_public_id'],$root];
             }
@@ -56,17 +58,17 @@ final class PortalClientRequestAccessService
         $rows = $pdo->prepare("SELECT * FROM portal_v2_entitlements WHERE portal_principal_id=? AND capability='request.create' ORDER BY id LIMIT 201".$lock);
         $rows->execute([$principalId]); $rows = $rows->fetchAll(PDO::FETCH_ASSOC);
         if(count($rows)>200)throw new DomainException('Request access entitlement capacity exceeded.');
-        $changed = []; $ownedTarget = null; $manualTarget = false; $hasOwned = false;
+        $owners=$this->clientPublicIds($pdo,$principalId);
+        $changed = []; $ownedTarget = null; $manualTarget = false;
         foreach ($rows as $row) {
             $type=(string)$row['scope_type']; $id=(string)$row['scope_public_id'];
-            $owned=$this->owned($row,(string)$principal['public_id']);
-            $hasOwned=$hasOwned || $owned;
+            $owner=$this->owner($row,$profileId,(string)$principal['public_id'],$owners);
             if ($target && $type===$target[0] && $id===$target[1]) {
-                if ($owned) $ownedTarget=$row;
-                else $manualTarget=true; // Includes inactive/manual deny rows: never override intent.
+                if ($owner===$clientPublicId) $ownedTarget=$row;
+                elseif($owner===null)$manualTarget=true; // Includes inactive/manual deny rows: never override intent.
             }
-            if (!$owned || isset($desired[$type.':'.$id]) || !(int)$row['active']) continue;
-            $this->setActive($pdo,$row,(string)$principal['public_id'],false,$actorId);
+            if ($owner===null || isset($desired[$owner.'|'.$type.':'.$id]) || !(int)$row['active']) continue;
+            $this->setActive($pdo,$row,$profileId,(string)$principal['public_id'],$owner,false,$actorId);
             $changed=array_merge($changed,$this->workspaceIds($pdo,$type,$id));
             $this->audit($pdo,$profileId,$principalId,$type,$id,false,$actorId);
         }
@@ -81,18 +83,19 @@ final class PortalClientRequestAccessService
         }
         if ($manualTarget) {
             if ($ownedTarget && (int)$ownedTarget['active']===1) {
-                $this->setActive($pdo,$ownedTarget,(string)$principal['public_id'],false,$actorId);
+                $this->setActive($pdo,$ownedTarget,$profileId,(string)$principal['public_id'],$clientPublicId,false,$actorId);
                 $this->audit($pdo,$profileId,$principalId,$type,$id,false,$actorId);
                 $changed[]=(string)$root['workspace_public_id'];
             }
             return array_values(array_unique($changed));
         }
-        if (!PortalClientRequestPolicy::enabled($pdo,$profileId)
-            || (!$allowCreate && !$ownedTarget && !$hasOwned)) return array_values(array_unique($changed));
+        // Ordinary synchronization is never activation authority, including a
+        // formerly approved row, moved root, restore, or another linked client.
+        if (!$allowCreate || !PortalClientRequestPolicy::enabled($pdo,$profileId)) return array_values(array_unique($changed));
         if ($ownedTarget && (int)$ownedTarget['active']===1) return array_values(array_unique($changed));
-        if ($ownedTarget) $this->setActive($pdo,$ownedTarget,(string)$principal['public_id'],true,$actorId);
+        if ($ownedTarget) $this->setActive($pdo,$ownedTarget,$profileId,(string)$principal['public_id'],$clientPublicId,true,$actorId);
         else $pdo->prepare("INSERT INTO portal_v2_entitlements(public_id,portal_principal_id,capability,effect,scope_type,scope_public_id,source_version,active,valid_from,created_by,updated_by) VALUES (?,?,'request.create','allow',?,?,?,1,CURRENT_TIMESTAMP,?,?)")
-            ->execute([$this->publicId((string)$principal['public_id'],$type,$id),$principalId,$type,$id,$this->version((string)$principal['public_id'],$type,$id,true),$actorId?:null,$actorId?:null]);
+            ->execute([$this->publicId($profileId,(string)$principal['public_id'],$clientPublicId,$type,$id),$principalId,$type,$id,$this->version($profileId,(string)$principal['public_id'],$clientPublicId,$type,$id,true),$actorId?:null,$actorId?:null]);
         $this->audit($pdo,$profileId,$principalId,$type,$id,true,$actorId);
         $changed[]=(string)$root['workspace_public_id'];
         return array_values(array_unique($changed));
@@ -108,9 +111,11 @@ final class PortalClientRequestAccessService
         $rows=$pdo->prepare("SELECT * FROM portal_v2_entitlements WHERE portal_principal_id=? AND capability='request.create' AND active=1 ORDER BY id LIMIT 201");
         $rows->execute([$principalId]); $rows=$rows->fetchAll(PDO::FETCH_ASSOC); $changed=[];
         if(count($rows)>200)throw new DomainException('Request access entitlement capacity exceeded.');
+        $owners=$this->clientPublicIds($pdo,$principalId);
         foreach ($rows as $row) {
-            if (!$this->owned($row,(string)$publicId)) continue;
-            $this->setActive($pdo,$row,(string)$publicId,false,$actorId);
+            $owner=$this->owner($row,$profileId,(string)$publicId,$owners);
+            if ($owner===null) continue;
+            $this->setActive($pdo,$row,$profileId,(string)$publicId,$owner,false,$actorId);
             $this->audit($pdo,$profileId,$principalId,(string)$row['scope_type'],(string)$row['scope_public_id'],false,$actorId);
             $changed=array_merge($changed,$this->workspaceIds($pdo,(string)$row['scope_type'],(string)$row['scope_public_id']));
         }
@@ -131,23 +136,34 @@ final class PortalClientRequestAccessService
         return $profiles?$this->reconcileClient($pdo,(int)$profiles[0],$clientId,$actorId,false,true):[];
     }
 
-    private function publicId(string $principal,string $type,string $id): string
-    { return substr(hash('sha256',self::POLICY.'|'.$principal.'|'.$type.'|'.$id),0,32); }
+    private function publicId(int $profileId,string $principal,string $client,string $type,string $id): string
+    { return substr(hash('sha256',self::POLICY.'|'.$profileId.'|'.$principal.'|'.$client.'|'.$type.'|'.$id),0,32); }
 
-    private function version(string $principal,string $type,string $id,bool $active): string
-    { return PortalSourceVersion::from(['policy'=>self::POLICY,'principalPublicId'=>$principal,'scopeType'=>$type,'scopePublicId'=>$id,'active'=>$active]); }
+    private function version(int $profileId,string $principal,string $client,string $type,string $id,bool $active): string
+    { return PortalSourceVersion::from(['policy'=>self::POLICY,'profileId'=>$profileId,'principalPublicId'=>$principal,'clientPublicId'=>$client,'scopeType'=>$type,'scopePublicId'=>$id,'active'=>$active]); }
 
-    private function owned(array $row,string $principal): bool
+    private function owner(array $row,int $profileId,string $principal,array $clients): ?string
     {
-        return $row['effect']==='allow' && hash_equals($this->publicId($principal,(string)$row['scope_type'],(string)$row['scope_public_id']),(string)$row['public_id'])
-            && hash_equals($this->version($principal,(string)$row['scope_type'],(string)$row['scope_public_id'],(int)$row['active']===1),(string)$row['source_version']);
+        if($row['effect']!=='allow')return null;
+        foreach($clients as$client)if(hash_equals($this->publicId($profileId,$principal,$client,(string)$row['scope_type'],(string)$row['scope_public_id']),(string)$row['public_id'])
+            && hash_equals($this->version($profileId,$principal,$client,(string)$row['scope_type'],(string)$row['scope_public_id'],(int)$row['active']===1),(string)$row['source_version']))return $client;
+        return null;
     }
 
-    private function setActive(PDO $pdo,array $row,string $principal,bool $active,int $actorId): void
+    private function setActive(PDO $pdo,array $row,int $profileId,string $principal,string $client,bool $active,int $actorId): void
     {
         $statement=$pdo->prepare('UPDATE portal_v2_entitlements SET active=?,source_version=?,updated_by=? WHERE id=? AND source_version=?');
-        $statement->execute([$active?1:0,$this->version($principal,(string)$row['scope_type'],(string)$row['scope_public_id'],$active),$actorId?:null,$row['id'],$row['source_version']]);
+        $statement->execute([$active?1:0,$this->version($profileId,$principal,$client,(string)$row['scope_type'],(string)$row['scope_public_id'],$active),$actorId?:null,$row['id'],$row['source_version']]);
         if ($statement->rowCount()!==1) throw new DomainException('Request access changed during reconciliation.');
+    }
+
+    private function clientPublicIds(PDO $pdo,int $principalId): array
+    {
+        $lock=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $statement=$pdo->prepare('SELECT c.public_id FROM portal_client_login_eligibility e JOIN clients c ON c.id=e.client_id WHERE e.portal_principal_id=? ORDER BY c.id LIMIT 201'.$lock);
+        $statement->execute([$principalId]);$ids=$statement->fetchAll(PDO::FETCH_COLUMN);
+        if(count($ids)>200)throw new DomainException('Request access client lineage capacity exceeded.');
+        return array_values(array_unique($ids));
     }
 
     private function workspaceIds(PDO $pdo,string $type,string $id): array

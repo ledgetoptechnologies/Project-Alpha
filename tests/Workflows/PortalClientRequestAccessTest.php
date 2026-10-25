@@ -59,7 +59,9 @@ SQL);
     {
         $this->service->reconcileClient($this->pdo,1,20,7,true);
         $this->pdo->exec('UPDATE clients SET organization_id=11 WHERE id=20');
-        self::assertSame(['workspace-a','workspace-b'],$this->service->reconcileClient($this->pdo,1,20,7));
+        self::assertSame(['workspace-a'],$this->service->reconcileClient($this->pdo,1,20,7));
+        self::assertSame([['org-a',0]],$this->pdo->query('SELECT scope_public_id,active FROM portal_v2_entitlements ORDER BY id')->fetchAll(PDO::FETCH_NUM));
+        self::assertSame(['workspace-b'],$this->service->reconcileClient($this->pdo,1,20,7,true));
         self::assertSame([['org-a',0],['org-b',1]],$this->pdo->query('SELECT scope_public_id,active FROM portal_v2_entitlements ORDER BY id')->fetchAll(PDO::FETCH_NUM));
     }
 
@@ -98,12 +100,12 @@ SQL);
         }
     }
 
-    public function testRemovingOneContactDoesNotRevokeAnotherEligibleContactInSameRoot(): void
+    public function testUnreviewedSiblingCannotRetainReviewedContactsRootGrant(): void
     {
         $this->service->reconcileClient($this->pdo,1,20,7,true);
         $this->pdo->exec("INSERT INTO clients VALUES(23,'client-d',10,0,NULL); INSERT INTO portal_client_login_eligibility VALUES(23,1,'eligible','automatic','a@example.test'); INSERT INTO portal_principal_clients VALUES(1,23); DELETE FROM portal_principal_clients WHERE client_id=20");
-        self::assertSame([],$this->service->reconcileClient($this->pdo,1,20,7));
-        self::assertSame(1,(int)$this->pdo->query('SELECT active FROM portal_v2_entitlements WHERE id=1')->fetchColumn());
+        self::assertSame(['workspace-a'],$this->service->reconcileClient($this->pdo,1,20,7));
+        self::assertSame(0,(int)$this->pdo->query('SELECT active FROM portal_v2_entitlements WHERE id=1')->fetchColumn());
     }
 
     public function testDifferentProfileCannotCreateGrantAndTransactionsAreRequired(): void
@@ -120,7 +122,9 @@ SQL);
         $this->service->reconcileClient($this->pdo,1,20,7,true);
         self::assertSame(['workspace-a'],$this->service->retirePrincipal($this->pdo,1,1,7));
         $this->pdo->exec("UPDATE portal_v2_entitlements SET source_version='principal-revoked',active=0 WHERE active=1");
-        self::assertSame(['workspace-a'],$this->service->reconcileClient($this->pdo,1,20,7));
+        self::assertSame([],$this->service->reconcileClient($this->pdo,1,20,7));
+        self::assertSame(0,(int)$this->pdo->query('SELECT active FROM portal_v2_entitlements')->fetchColumn());
+        self::assertSame(['workspace-a'],$this->service->reconcileClient($this->pdo,1,20,7,true));
         self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_entitlements')->fetchColumn());
         self::assertSame(1,(int)$this->pdo->query('SELECT active FROM portal_v2_entitlements')->fetchColumn());
     }
@@ -160,5 +164,32 @@ SQL);
             self::assertSame([],$this->service->reconcileClient($this->pdo,1,20,7,true));
             self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_entitlements')->fetchColumn());
         }
+    }
+
+    public function testReviewedClientCannotActivateUnreviewedRootOfSamePrincipalDuringMaintenance(): void
+    {
+        $this->pdo->exec('UPDATE portal_client_login_eligibility SET portal_principal_id=1 WHERE client_id=21; UPDATE portal_principal_clients SET portal_principal_id=1 WHERE client_id=21');
+        $this->service->reconcileClient($this->pdo,1,20,7,true);
+        self::assertSame([],$this->service->reconcileClient($this->pdo,1,21,7,false));
+        self::assertSame([['org-a',1]],$this->pdo->query('SELECT scope_public_id,active FROM portal_v2_entitlements')->fetchAll(PDO::FETCH_NUM));
+    }
+
+    public function testSeparatelyReviewedSiblingRetainsOnlyItsOwnApprovalLineage(): void
+    {
+        $this->pdo->exec('UPDATE clients SET organization_id=10 WHERE id=21; UPDATE portal_client_login_eligibility SET portal_principal_id=1 WHERE client_id=21; UPDATE portal_principal_clients SET portal_principal_id=1 WHERE client_id=21');
+        $this->service->reconcileClient($this->pdo,1,20,7,true);
+        $this->service->reconcileClient($this->pdo,1,21,7,true);
+        self::assertSame(2,(int)$this->pdo->query("SELECT COUNT(DISTINCT public_id) FROM portal_v2_entitlements WHERE scope_public_id='org-a' AND active=1")->fetchColumn());
+        $this->pdo->exec('DELETE FROM portal_principal_clients WHERE client_id=20');
+        self::assertSame(['workspace-a'],$this->service->reconcileClient($this->pdo,1,20,7,false,true));
+        self::assertSame([0,1],$this->pdo->query('SELECT active FROM portal_v2_entitlements ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testAnotherProfileCannotAdoptOrRetireOwnedClientLineage(): void
+    {
+        $this->service->reconcileClient($this->pdo,1,20,7,true);
+        $before=$this->pdo->query('SELECT * FROM portal_v2_entitlements')->fetchAll(PDO::FETCH_ASSOC);
+        self::assertSame([],$this->service->reconcileClient($this->pdo,2,20,7,false));
+        self::assertSame($before,$this->pdo->query('SELECT * FROM portal_v2_entitlements')->fetchAll(PDO::FETCH_ASSOC));
     }
 }
