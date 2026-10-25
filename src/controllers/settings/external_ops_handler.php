@@ -128,6 +128,17 @@ try {
     } elseif ($action === 'revoke-portal-principal') {
         if(!user_can($pdo,$actorUserId,'users.manage',0))throw new DomainException('User-management permission is required to manage portal authority.');
         (new PortalAuthorityService())->revokePrincipalAccess($pdo,(int)($_POST['profile_id']??0),(string)($_POST['workspace_public_id']??''),(int)($_POST['principal_id']??0),$actorUserId);$message='Client portal principal, identity bindings, and scoped authority were revoked.';
+    } elseif ($action === 'acknowledge-portal-request-policy') {
+        if(!user_can($pdo,$actorUserId,'users.manage',0))throw new DomainException('User-management permission is required to manage portal authority.');
+        (new PortalClientProvisioningService())->acknowledgeRequestPolicy($pdo,(string)$config['application_key'],
+            (string)($_POST['receiver_policy']??''),(string)($_POST['receiver_route_sha256']??''),(string)($_POST['qualification_sha256']??''),$actorUserId);
+        $message='Reviewed receiver request policy acknowledged for this connection.';
+    } elseif ($action === 'reconcile-portal-request-access') {
+        if(!user_can($pdo,$actorUserId,'users.manage',0))throw new DomainException('User-management permission is required to manage portal authority.');
+        $ids=(array)($_POST['client_ids']??[]);
+        if(array_filter($ids,static fn($id)=>!is_scalar($id)||!ctype_digit((string)$id))!==[])throw new DomainException('Exact client IDs are required.');
+        $summary=(new PortalClientProvisioningService())->reconcileRequestAccess($pdo,(string)$config['application_key'],array_map('intval',$ids),$actorUserId);
+        $message=sprintf('Reviewed request access for %d client(s); published changes for %d workspace(s).',$summary['reviewed'],$summary['changed_workspaces']);
     } elseif ($action === 'save-portal-entitlement') {
         if(!user_can($pdo,$actorUserId,'users.manage',0))throw new DomainException('User-management permission is required to manage portal authority.');
         (new PortalAuthorityService())->saveScopedEntitlement($pdo,(int)($_POST['profile_id']??0),(string)($_POST['workspace_public_id']??''),(int)($_POST['principal_id']??0),(string)($_POST['capability']??''),(string)($_POST['scope_type']??''),(string)($_POST['scope_public_id']??''),(string)($_POST['effect']??''),(string)($_POST['entitlement_state']??'')==='active',$actorUserId);$message='Scoped client portal authority saved and projected.';

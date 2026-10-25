@@ -70,6 +70,7 @@ final class ClientArchivePortalStateService
                     'reason' => 'client_archived',
                 ]);
 
+                $affectedWorkspaceIds=(new PortalClientRequestAccessService())->beforeArchive($pdo,$clientId,$actorId);
                 $entitlements = $pdo->prepare(
                     "SELECT id FROM portal_v2_entitlements
                      WHERE portal_principal_id=? AND scope_type='client'
@@ -95,10 +96,10 @@ final class ClientArchivePortalStateService
                         $principalDisabledForArchive = 0;
                     }
                 } else {
-                    $affectedWorkspaceIds = $this->projectedWorkspaceIds(
+                    $affectedWorkspaceIds = array_values(array_unique(array_merge($affectedWorkspaceIds,$this->projectedWorkspaceIds(
                         $pdo,
                         (string)$principal['public_id']
-                    );
+                    ))));
                     if ($recoverable) {
                         $bindings = $pdo->prepare(
                             'SELECT id FROM portal_identity_bindings

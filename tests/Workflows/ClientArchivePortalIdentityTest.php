@@ -25,6 +25,10 @@ final class ClientArchivePortalIdentityTest extends TestCase
         $this->pdo->exec('PRAGMA foreign_keys=ON');
         $this->pdo->exec(<<<'SQL'
 CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT UNIQUE,name TEXT);
+CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,enabled INTEGER,portal_projection_enabled INTEGER,application_key TEXT,portal_route TEXT);
+INSERT INTO portal_integration_profiles VALUES(1,1,1,'archive-test','https://receiver.test/events');
+CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT,PRIMARY KEY(organization_id,config_key));
+CREATE TABLE portal_integration_audit(id INTEGER PRIMARY KEY,integration_profile_id INTEGER,api_key_id INTEGER,action TEXT,target_type TEXT,target_public_id TEXT,metadata_json TEXT);
 CREATE TABLE clients(
   id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE DEFAULT(lower(hex(randomblob(16)))),name TEXT,email TEXT,phone TEXT,
   organization_id INTEGER,client_type TEXT DEFAULT 'unknown',notes TEXT,address_line1 TEXT,address_line2 TEXT,
@@ -142,6 +146,32 @@ SQL);
         self::assertSame(1, (int)$this->pdo->query("SELECT COUNT(*) FROM portal_principal_clients WHERE portal_principal_id={$principalId} AND client_id={$restoredId}")->fetchColumn());
         self::assertSame($workspaceId, (string)$this->pdo->query('SELECT public_id FROM portal_v2_workspaces')->fetchColumn());
         self::assertSame(1, (int)$this->pdo->query('SELECT active FROM portal_v2_workspaces')->fetchColumn());
+    }
+
+    public function testManagedRequestRootIsRetiredBeforeArchiveAndRestoredWithoutDuplicatingHistory(): void
+    {
+        foreach([null,10]as$organizationId){
+            $this->setUp();
+            if($organizationId!==null)$this->pdo->exec("INSERT INTO organizations VALUES(10,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','Example Org')");
+            $this->pdo->beginTransaction();
+            \App\Services\PortalClientRequestPolicy::saveAcknowledgement($this->pdo,
+                $this->pdo->query('SELECT * FROM portal_integration_profiles')->fetch(PDO::FETCH_ASSOC),
+                'native-readable-project-v1',hash('sha256','https://receiver.test/events'),str_repeat('a',64),7);
+            $this->pdo->commit();
+            $publicId=str_repeat('a',32);
+            $this->insertClient(20,$publicId,'Approved Person','approved@example.test',$organizationId,'consumer');
+            $scope=[['root_type'=>$organizationId===null?'standalone_client':'organization','root_public_id'=>$organizationId===null?$publicId:str_repeat('b',32)]];
+            $this->reconcile($scope);
+            $grant=$this->pdo->query("SELECT public_id FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn();
+            self::assertNotFalse($grant);
+            $affected=$this->archiveClient(20);
+            self::assertNotEmpty($affected);
+            self::assertSame(0,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
+            $this->restoreClient((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),$scope);
+            self::assertSame(1,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
+            self::assertSame(1,(int)$this->pdo->query("SELECT active FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
+            self::assertSame($grant,$this->pdo->query("SELECT public_id FROM portal_v2_entitlements WHERE capability='request.create'")->fetchColumn());
+        }
     }
 
     public function testOrganizationContactRestoreKeepsExplicitLoginRevocation(): void
