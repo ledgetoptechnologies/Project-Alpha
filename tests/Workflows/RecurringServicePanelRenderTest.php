@@ -7,7 +7,7 @@ require_once dirname(__DIR__, 2) . '/src/utils/csrf.php';
 
 final class RecurringServicePanelRenderTest extends TestCase
 {
-    private function render(array $changes = [], string $pricing = 'per_invoice'): string
+    private function render(array $changes = [], string $pricing = 'per_invoice', array $serviceOverrides = []): string
     {
         $id = 22;
         $contract = ['pricing_type' => $pricing];
@@ -19,6 +19,7 @@ final class RecurringServicePanelRenderTest extends TestCase
             'effective_from'=>'2026-01-01', 'effective_until'=>null,
             'next_invoice_date'=>'2027-01-01', 'status'=>'active', 'approval_status'=>'approved',
         ]];
+        $recurringServices[0] = array_replace($recurringServices[0], $serviceOverrides);
         $scheduledServiceChanges = $changes;
         $contractAmendments = [];
         ob_start();
@@ -52,5 +53,13 @@ final class RecurringServicePanelRenderTest extends TestCase
         self::assertStringContainsString('existing installment schedule is preserved', $html);
         self::assertStringNotContainsString('name="monthly_rate"', $html);
         self::assertStringNotContainsString('Add service', $html);
+    }
+
+    public function testFinalPartialPeriodExplainsWhyBillingWillStop(): void
+    {
+        $html = $this->render([], 'per_invoice', ['effective_until'=>'2027-06-30']);
+        self::assertStringContainsString('Service ends:', $html);
+        self::assertStringContainsString('so it will not be charged', $html);
+        self::assertStringContainsString('end this service and add the remaining period separately', $html);
     }
 }

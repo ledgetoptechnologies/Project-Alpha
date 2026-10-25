@@ -1,5 +1,6 @@
 <?php
 // Authenticated agreement workspace only; never included in public or PDF output.
+require_once __DIR__ . '/../../utils/recurring_services.php';
 $serviceEscape = static fn($value): string => htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((string)$value)) : 'Not scheduled';
 ?>
@@ -32,8 +33,19 @@ $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((s
             <?php if (($service['rate_basis'] ?? '') === 'monthly'): ?><div class="service-help">Based on $<?= number_format((float)$service['monthly_rate'], 2) ?> per month</div><?php endif; ?>
           </div>
           <div>Next renewal: <strong><?= $serviceEscape($serviceDate($service['next_invoice_date'])) ?></strong></div>
+          <?php if (!empty($service['effective_until'])): ?><div>Service ends: <strong><?= $serviceEscape($serviceDate($service['effective_until'])) ?></strong></div><?php endif; ?>
           <div><?= $serviceEscape(ucfirst($service['status'])) ?> · <?= $serviceEscape(ucfirst($service['approval_status'])) ?></div>
         </div>
+        <?php
+          $periodDoesNotFit = false;
+          if (($service['rate_basis'] ?? '') === 'monthly' && !empty($service['next_invoice_date']) && $service['status'] !== 'ended') {
+              try { pa_recurring_service_period_end($service, (string)$service['next_invoice_date']); }
+              catch (DomainException $periodError) { $periodDoesNotFit = true; }
+          }
+        ?>
+        <?php if ($periodDoesNotFit): ?>
+          <p role="status" class="service-help" style="padding:10px;background:#fff7ed;color:#9a3412;border-radius:6px">The next full billing period exceeds the service end date, so it will not be charged. Before renewal, choose a shorter frequency or an approved later end date. If renewal is overdue, end this service and add the remaining period separately.</p>
+        <?php endif; ?>
         <?php foreach ($serviceChanges as $change): ?>
           <?php $proposed = json_decode((string)$change['new_values'], true) ?: []; ?>
           <div class="service-card" style="background:#eff6ff">

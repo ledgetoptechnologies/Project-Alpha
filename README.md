@@ -66,6 +66,9 @@ Rate-only changes preserve calendar anniversaries, including month-end and leap-
 renewals. A new monthly-rate service starts its full billing period on its first
 invoice date. A full monthly or annual charge must fit within the service end date;
 choose a shorter frequency or revise the agreed end date when it does not.
+If a later final period is too short, billing stops before charging it. Resolve
+that period before renewal; once overdue, end the service and add the remaining
+period separately rather than rewriting its previously billed coverage.
 
 Signed agreement terms and previous invoices remain unchanged. New recurring
 invoices show their service coverage and monthly-rate calculation. Pending and
