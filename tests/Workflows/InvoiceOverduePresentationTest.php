@@ -40,9 +40,10 @@ final class InvoiceOverduePresentationTest extends TestCase
         self::assertStringContainsString('invoice_is_past_due($r)', $contractOnDemand);
 
         $dashboard = (string) file_get_contents($root . '/src/views/pages/home.php');
-        $autoCharge = (string) file_get_contents($root . '/src/cron/auto_charge_recurring.php');
         self::assertStringContainsString("COALESCE(collection_mode, 'direct') = 'direct'", $dashboard);
         self::assertStringContainsString("i.collection_mode='direct'", $regular);
-        self::assertStringContainsString("COALESCE(i.collection_mode, 'direct') = 'direct'", $autoCharge);
+        // The collection worker consumes explicit reservations, never overdue-list rows.
+        $autoCharge = (string) file_get_contents($root . '/src/utils/autopay_collection.php');
+        self::assertStringContainsString("(\$invoice['collection_mode']??'direct')!=='direct'", $autoCharge);
     }
 }

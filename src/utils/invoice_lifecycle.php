@@ -366,6 +366,8 @@ function invoice_record_locked_payment(
         }
 
         $invoiceStatus = strtolower((string)$invoice['status']);
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_assert_payment_available($pdo, $invoiceId);
         if (in_array($invoiceStatus, ['void', 'cancelled'], true)) {
             throw new RuntimeException('Payments cannot be recorded against a void or cancelled invoice.');
         }
@@ -445,6 +447,10 @@ function invoice_finalize(PDO $pdo, int $invoiceId, array $appConfig, string $so
         }
 
         if ($status === 'draft') {
+            require_once __DIR__ . '/autopay_staff.php';
+            $autoPayChoice = in_array($source, ['manual_create','manual_finalize','on_demand_send','contract_complete'], true)
+                ? pa_autopay_staff_finalization($pdo, $invoice, $appConfig)
+                : 'none';
             $netDays = max(0, (int)($appConfig['net_terms_days'] ?? 30));
             $dueDate = !empty($invoice['due_date'])
                 ? $invoice['due_date']
@@ -457,6 +463,14 @@ function invoice_finalize(PDO $pdo, int $invoiceId, array $appConfig, string $so
                  WHERE id=? AND status="draft"'
             );
             $update->execute([$dueDate, $userId, substr($source, 0, 50), $invoiceId]);
+            if ($autoPayChoice === 'collect') {
+                if (pa_autopay_enqueue_invoice($pdo, $invoiceId, $appConfig, $userId, $source) === null) {
+                    throw new DomainException('AutoPay eligibility changed. Review the invoice again or finalize with AutoPay held.');
+                }
+            } elseif ($autoPayChoice === 'hold') {
+                require_once __DIR__ . '/audit.php';
+                audit_log($pdo, 'invoice.autopay_held', 'invoice', $invoiceId, ['source'=>$source], $userId);
+            }
         }
 
         $stmt->execute([$invoiceId]);
@@ -580,6 +594,8 @@ function invoice_reopen_draft(PDO $pdo, int $invoiceId): void
         $stmt->execute([$invoiceId]);
         $invoice = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $status = strtolower((string)($invoice['status'] ?? ''));
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_assert_payment_available($pdo, $invoiceId);
         if (!in_array($status, ['sent', 'unpaid', 'overdue'], true)) {
             throw new RuntimeException('Only an unpaid finalized invoice can be reopened.');
         }
@@ -644,6 +660,8 @@ function invoice_void(PDO $pdo, int $invoiceId, array $appConfig, string $reason
         }
 
         $previousStatus = strtolower((string)$invoice['status']);
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_assert_payment_available($pdo, $invoiceId);
         if (!in_array($previousStatus, ['draft', 'sent', 'unpaid', 'overdue'], true)) {
             if (in_array($previousStatus, ['paid', 'partial'], true)) {
                 throw new RuntimeException('Paid or partially paid invoices cannot be voided. Refund or credit the payment instead.');

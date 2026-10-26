@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/project_billing.php';
 require_once __DIR__ . '/../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+require_once __DIR__ . '/../../utils/autopay_staff.php';
 require_once __DIR__ . '/../../utils/invoice_notifications.php';
 require_once __DIR__ . '/../../utils/document_pricing_adjustments.php';
 require_once __DIR__ . '/../../utils/document_organization.php';
@@ -38,7 +39,7 @@ try {
     if (!$contract) {
         throw new Exception('Contract not found');
     }
-    $existingGeneration=$pdo->prepare('SELECT id,collection_mode FROM invoices WHERE contract_id=? AND generation_key=? LIMIT 1 FOR UPDATE');
+    $existingGeneration=$pdo->prepare('SELECT * FROM invoices WHERE contract_id=? AND generation_key=? LIMIT 1 FOR UPDATE');
     $existingGeneration->execute([$contract_id,$generationKey]);
     $existingInvoice=$existingGeneration->fetch(PDO::FETCH_ASSOC)?:[];
     $existingInvoiceId=(int)($existingInvoice['id']??0);
@@ -48,6 +49,9 @@ try {
         // A prior request may have committed the invoice and then crashed before
         // finalization/delivery. Replays must finish those idempotent side effects.
         if ($sendEmail) {
+            if (pa_autopay_staff_state($pdo, $existingInvoice, $appConfig)['eligible']) {
+                header('Location: /?page=invoice/invoice-details&id=' . $existingInvoiceId . '&autopay_review=1'); exit;
+            }
             $contractCreator = (int)($contract['created_by'] ?? 0) ?: 1;
             invoice_finalize($pdo, $existingInvoiceId, $appConfig, 'on_demand_send', $contractCreator);
             // Replay the collection policy stored on the committed invoice.
@@ -208,6 +212,11 @@ try {
     // Generate-only remains private. The send choice finalizes first; monthly
     // project children are collected later through the project statement.
     if ($sendEmail) {
+        $review = $pdo->prepare('SELECT * FROM invoices WHERE id=?');
+        $review->execute([$invoiceId]);
+        if (pa_autopay_staff_state($pdo, $review->fetch(PDO::FETCH_ASSOC), $appConfig)['eligible']) {
+            header('Location: /?page=invoice/invoice-details&id=' . $invoiceId . '&autopay_review=1'); exit;
+        }
         invoice_finalize($pdo, $invoiceId, $appConfig, 'on_demand_send', $contractCreator);
     }
     if ($sendEmail && !$projectMonthlyBilling) {

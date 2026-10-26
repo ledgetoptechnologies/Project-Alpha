@@ -39,12 +39,14 @@ try {
         throw new Exception('Stripe is not configured. Please add your Stripe keys in Settings → Billing.');
     }
     
+    require_once __DIR__ . '/../../utils/autopay_collection.php';
+    $pdo->beginTransaction();
     // Get invoice details
     $invSt = $pdo->prepare('
         SELECT i.*, c.name as client_name, c.email as client_email 
         FROM invoices i 
         JOIN clients c ON c.id = i.client_id 
-        WHERE i.id = ?
+        WHERE i.id = ? FOR UPDATE
     ');
     $invSt->execute([$invoiceId]);
     $invoice = $invSt->fetch(PDO::FETCH_ASSOC);
@@ -52,6 +54,9 @@ try {
     if (!$invoice) {
         throw new Exception('Invoice not found');
     }
+    pa_autopay_assert_payment_available($pdo, $invoiceId);
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig);
+    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -138,6 +143,9 @@ try {
     if (empty($session['url'])) {
         throw new Exception('Failed to create payment session');
     }
+    $pdo->prepare('UPDATE invoices SET stripe_session_id=?,stripe_checkout_expires_at=? WHERE id=?')->execute([
+        (string)$session['id'],date('Y-m-d H:i:s',(int)($session['expires_at']??(time()+86400))),$invoiceId
+    ]);
     
     @error_log('[StripeCharge] Admin checkout session created for invoice ' . $invoiceId);
     
@@ -147,6 +155,7 @@ try {
     exit;
     
 } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[StripeCharge] Error: ' . $e->getMessage());
     $errorUrl = $returnUrl ?: '/?page=invoice/invoice-details&id=' . $invoiceId;
     header('Location: ' . $errorUrl . '&stripe_error=' . urlencode($e->getMessage()));

@@ -6,6 +6,7 @@ require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../utils/cron_state.php';
 require_once __DIR__ . '/../utils/invoice_notifications.php';
 require_once __DIR__ . '/../utils/project_invoice_notifications.php';
+require_once __DIR__ . '/../utils/autopay_notifications.php';
 
 $jobName = 'process_invoice_notifications';
 $logPrefix = '[' . $jobName . ']';
@@ -29,6 +30,15 @@ foreach (['invoice_notification_process', 'project_invoice_notification_process'
         // A broken queue must not prevent the other invoice type from draining.
         $errors[] = $processor . ': ' . $error->getMessage();
     }
+}
+
+try {
+    $autoPayDelivery = pa_autopay_deliver_notifications($pdo, $appConfig);
+    $stats['sent'] += $autoPayDelivery['sent'];
+    $stats['retry'] += $autoPayDelivery['retried'];
+    $stats['suppressed'] += $autoPayDelivery['suppressed'];
+} catch (Throwable $error) {
+    $errors[] = 'AutoPay notification queue failed.';
 }
 
 $result = sprintf(

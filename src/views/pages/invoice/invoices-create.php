@@ -138,6 +138,9 @@ if ($selectedProjectId > 0) {
       <div style="display:flex;gap:16px;justify-content:flex-end;font-weight:700"><div style="min-width:140px;text-align:right">Total</div><div id="totalValInv" style="min-width:120px;text-align:right">$0.00</div></div>
     </div>
 
+    <?php require_once __DIR__.'/../../../utils/autopay_beta.php'; if(pa_autopay_enabled($appConfig)): ?>
+    <aside data-invoice-autopay-preview data-invoice-id="0" aria-live="polite" style="padding:12px;border:1px solid #cbd5e1;border-radius:8px"><strong>AutoPay — test mode</strong><p data-autopay-preview-text>Choose a client to check authorization. Saving a draft never charges.</p></aside>
+    <?php endif; ?>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button type="submit" name="invoice_action" value="save" class="btn">Save Invoice</button>
       <button type="submit" name="invoice_action" id="finalizeAndSendInvoice" style="" value="finalize_send" class="btn btn-primary">Save &amp; Send</button>
@@ -205,5 +208,6 @@ if ($selectedProjectId > 0) {
 
 <?php endif; ?>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/invoices-create-logic.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
+<?php if(pa_autopay_enabled($appConfig)): ?><script src="<?php echo htmlspecialchars(asset_url('/assets/js/invoice-autopay-preview.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script><?php endif; ?>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>

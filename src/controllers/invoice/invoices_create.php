@@ -418,6 +418,13 @@ try {
 }
 
 if ($finalizeAndSend || $finalizeOnly) {
+    require_once __DIR__ . '/../../utils/autopay_staff.php';
+    $autopayReview = $pdo->prepare('SELECT * FROM invoices WHERE id=?');
+    $autopayReview->execute([$invoice_id]);
+    if (pa_autopay_staff_state($pdo, $autopayReview->fetch(PDO::FETCH_ASSOC), $appConfig)['eligible']) {
+        header('Location: /?page=invoice/invoice-details&id=' . $invoice_id . '&autopay_review=1');
+        exit;
+    }
     try {
         if ($recipientPresentationMode === PA_GENERAL_RECIPIENT_MODE && $finalizeOnly) {
             $link = invoice_finalize_and_create_general_recipient_link($pdo, $invoice_id, $appConfig, $__creator);

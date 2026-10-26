@@ -424,6 +424,26 @@ function project_invoice_refresh_status(PDO $pdo, int $projectInvoiceId): void
 /**
  * @return array{status:string,project_invoice_id:?int,included_count:int,balance:float,message:string}
  */
+/** Finalize once, atomically reserving collection only at this issuance boundary. */
+function project_invoice_finalize_locked(PDO $pdo, int $id, array $config, bool $automatic = false): void
+{
+    if (!$pdo->inTransaction()) throw new LogicException('Project finalization requires its transaction.');
+    $suffix = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? '' : ' FOR UPDATE';
+    $query = $pdo->prepare('SELECT * FROM project_invoices WHERE id=?' . $suffix);
+    $query->execute([$id]);
+    $document = $query->fetch(PDO::FETCH_ASSOC);
+    if (!$document || $document['status'] === 'void' || (float)$document['balance_due'] <= 0.005) throw new DomainException('This project invoice cannot be finalized.');
+    if (!empty($document['finalized_at'])) return;
+    require_once __DIR__ . '/autopay_staff.php';
+    $choice = $automatic ? 'collect' : pa_autopay_staff_finalization($pdo, $document, $config, 'project_invoice');
+    $pdo->prepare('UPDATE project_invoices SET status="unpaid",finalized_at=NOW(),finalization_source=COALESCE(finalization_source,?) WHERE id=? AND finalized_at IS NULL')
+        ->execute([$automatic ? 'project_billing' : ($choice === 'hold' ? 'manual_email_autopay_held' : 'manual_email'), $id]);
+    if ($choice === 'collect') {
+        $collection = pa_autopay_enqueue_project_invoice($pdo, $id, $config, (int)($_SESSION['user']['id'] ?? 0) ?: null, 'project_finalize');
+        if (!$automatic && $collection === null) throw new DomainException('AutoPay eligibility changed. Reload the statement and review the payment choice again.');
+    }
+}
+
 function project_invoice_create_for_period_result(PDO $pdo, int $projectId, string $periodStart, string $periodEnd, array $appConfig, bool $sendEmail = false, bool $finalize = false): array
 {
     $emptyResult = [
@@ -473,8 +493,7 @@ function project_invoice_create_for_period_result(PDO $pdo, int $projectId, stri
             $includedCount = (int)$countStmt->fetchColumn();
             $existingBalance = max(0.0, (float)($existingRow['balance_due'] ?? 0));
             if ($shouldFinalize && ($existingRow['status'] ?? '') !== 'void' && $existingBalance > 0.005) {
-                $pdo->prepare('UPDATE project_invoices SET status=IF(status="draft","unpaid",status), finalized_at=COALESCE(finalized_at,NOW()), finalization_source=COALESCE(finalization_source,"project_billing") WHERE id=? AND status<>"void"')
-                    ->execute([$existingId]);
+                project_invoice_finalize_locked($pdo, $existingId, $appConfig);
             }
             $pdo->commit();
             if ($sendEmail && ($existingRow['status'] ?? '') !== 'void' && $existingBalance > 0.005) {
@@ -574,10 +593,6 @@ function project_invoice_create_for_period_result(PDO $pdo, int $projectId, stri
         $projectInvoiceId = (int)$pdo->lastInsertId();
         require_once __DIR__ . '/document_sender.php';
         document_issuer_capture($pdo, document_issuer_company_configuration($pdo, $appConfig), 'project_invoice', $projectInvoiceId);
-        if ($shouldFinalize) {
-            $pdo->prepare('UPDATE project_invoices SET finalized_at=NOW(), finalization_source="project_billing" WHERE id=?')
-                ->execute([$projectInvoiceId]);
-        }
 
         $item = $pdo->prepare('
             INSERT INTO project_invoice_items
@@ -604,6 +619,7 @@ function project_invoice_create_for_period_result(PDO $pdo, int $projectId, stri
                 ->execute([(int)$child['id']]);
         }
 
+        if ($shouldFinalize) project_invoice_finalize_locked($pdo, $projectInvoiceId, $appConfig);
         $pdo->commit();
 
         if ($sendEmail) {
@@ -649,7 +665,7 @@ function project_invoice_send_email_result(PDO $pdo, int $projectInvoiceId, arra
             $pdo->beginTransaction();
         }
         $lockSuffix = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? '' : ' FOR UPDATE';
-        $stmt = $pdo->prepare('SELECT status,finalized_at,balance_due FROM project_invoices WHERE id=?' . $lockSuffix);
+        $stmt = $pdo->prepare('SELECT * FROM project_invoices WHERE id=?' . $lockSuffix);
         $stmt->execute([$projectInvoiceId]);
         $projectInvoice = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$projectInvoice || ($projectInvoice['status'] ?? '') === 'void') {
@@ -692,12 +708,7 @@ function project_invoice_send_email_result(PDO $pdo, int $projectInvoiceId, arra
             return $result;
         }
         if (empty($projectInvoice['finalized_at'])) {
-            $pdo->prepare(
-                'UPDATE project_invoices
-                 SET status="unpaid",finalized_at=NOW(),
-                     finalization_source=COALESCE(finalization_source,"manual_email")
-                 WHERE id=? AND status<>"void" AND finalized_at IS NULL AND balance_due>0.005'
-            )->execute([$projectInvoiceId]);
+            project_invoice_finalize_locked($pdo, $projectInvoiceId, $appConfig, !empty($appConfig['_autopay_project_automatic']));
         }
         $notificationType = ($allowResend || $manualIntent) ? 'manual' : 'on_generate';
         foreach ($recipients as $recipient) {
@@ -729,7 +740,7 @@ function project_invoice_send_email_result(PDO $pdo, int $projectInvoiceId, arra
             $pdo->rollBack();
         }
         @error_log('[project_invoice_billing] Email preparation failed: ' . $error->getMessage());
-        $result['message'] = 'The project invoice could not be prepared for email delivery.';
+        $result['message'] = $error instanceof DomainException ? $error->getMessage() : 'The project invoice could not be prepared for email delivery.';
         return $result;
     }
 
@@ -1138,7 +1149,7 @@ function project_invoice_generate_due_monthly_result(
         $deliveryResult = project_invoice_send_email_result(
             $pdo,
             $id,
-            $appConfig,
+            array_replace($appConfig, ['_autopay_project_automatic' => true]),
             null,
             false,
             null,
@@ -1181,6 +1192,10 @@ function project_invoice_record_manual_payment(PDO $pdo, int $projectInvoiceId, 
         if ($ownsTransaction) {
             $pdo->beginTransaction();
         }
+        $lock = $pdo->prepare('SELECT id FROM project_invoices WHERE id=? FOR UPDATE');
+        $lock->execute([$projectInvoiceId]);
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_assert_payment_available($pdo, $projectInvoiceId, 'project_invoice');
         $insert = $pdo->prepare(
             'INSERT INTO project_invoice_payments
              (project_invoice_id,amount,payment_method,status,payment_date)

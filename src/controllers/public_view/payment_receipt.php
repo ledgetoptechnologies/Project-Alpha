@@ -47,6 +47,8 @@ if (pa_invoice_is_general_recipient($receipt)) {
 }
 
 $brand = (string)($appConfig['brand_name'] ?? 'Project Alpha');
+require_once __DIR__.'/../../utils/payment_receipts.php';
+$receiptAutoPayConfig=payment_receipt_autopay_management($pdo,(int)$receipt['payment_id'],$appConfig,'invoice',false);
 ?>
 <!doctype html>
 <html lang="en">
@@ -60,6 +62,7 @@ $brand = (string)($appConfig['brand_name'] ?? 'Project Alpha');
 </head>
 <body>
   <div class="actions"><button type="button" onclick="window.print()">Print or Save PDF</button></div>
+  <?php if(!empty($receiptAutoPayConfig['_autopay_manage_url'])): ?><p class="actions"><a href="<?php echo htmlspecialchars($receiptAutoPayConfig['_autopay_manage_url'],ENT_QUOTES,'UTF-8'); ?>">Manage or revoke AutoPay</a> (email verification required)</p><?php endif; ?>
   <main class="receipt">
     <?php if (strtolower((string)$receipt['payment_status']) === 'reversed'): ?>
       <div style="margin:0 0 20px;padding:12px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#881337">

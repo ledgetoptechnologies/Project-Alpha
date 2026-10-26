@@ -145,6 +145,8 @@ function project_invoice_notification_process(
                 $currentRecipient = ['id' => null, 'name' => 'there', 'email' => $queuedEmail];
             }
         }
+        require_once __DIR__ . '/autopay_status.php';
+        $autoPayNotice = pa_autopay_pending_notice($pdo, (int)$row['project_invoice_id'], 'project_invoice');
         $reason = null;
         if (!in_array((string)$row['invoice_status'], ['sent', 'unpaid', 'partial'], true)
             || empty($row['finalized_at']) || (float)$row['balance_due'] <= 0.005) {
@@ -177,6 +179,9 @@ function project_invoice_notification_process(
             if ((string)$row['delivery_key'] !== $expected) {
                 $reason = 'Project invoice due date or overdue stage changed before reminder delivery.';
             }
+        }
+        if ($reason === null && $autoPayNotice !== '' && in_array((string)$row['notification_type'], ['due_7', 'overdue_weekly'], true)) {
+            $reason = 'Automatic payment is reserved; do not request another payment.';
         }
         if ($reason !== null) {
             $pdo->prepare(
@@ -217,6 +222,7 @@ function project_invoice_notification_process(
                 . '<p>Outstanding balance: <strong>$' . number_format((float)$row['balance_due'], 2) . '</strong></p>'
                 . '<p>Payment terms: Net ' . $termDays . ' (due ' . date('F j, Y', strtotime($due)) . ')</p>'
                 . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View project invoice</a></p>' : '');
+            if ($autoPayNotice !== '') $body .= '<p><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
             $contentLinkClientIds = !empty($currentRecipient['id']) ? [(int)$currentRecipient['id']] : [];
             $body .= invoice_content_links_html(invoice_content_links_for_project_invoice($pdo, (int)$row['project_invoice_id'], $appConfig, $contentLinkClientIds));
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array

@@ -40,11 +40,14 @@ $invoiceData = null;
 $showPayButton = false;
 $calculatedAmountDue = 0;
 $surchargeInfo = null;
+$autoPayNotice = '';
 if (in_array($type, ['invoice', 'project_invoice'], true)) {
     require_once __DIR__ . '/../../services/StripeService.php';
     require_once __DIR__ . '/../../utils/StripeFeeCalculator.php';
     require_once __DIR__ . '/../../utils/document_sender.php';
     require_once __DIR__ . '/../../utils/payment_methods.php';
+    require_once __DIR__ . '/../../utils/autopay_status.php';
+    $autoPayNotice = pa_autopay_pending_notice($pdo, $rid, $type);
     $stripeConfigured = StripeService::isConfigured($appConfig);
     try {
         $invSt = $type === 'project_invoice'
@@ -70,6 +73,7 @@ if (in_array($type, ['invoice', 'project_invoice'], true)) {
                 $collectionMode = 'direct';
             }
             $showPayButton = $stripeConfigured
+                && $autoPayNotice === ''
                 && !empty($invoiceData['finalized_at'])
                 && $collectionMode === 'direct'
                 && in_array($invStatus, ['sent', 'unpaid', 'partial', 'overdue'], true)
@@ -361,7 +365,8 @@ if (in_array($type, ['invoice', 'project_invoice'], true)) {
         }
         $offlinePaymentMethods[] = $method;
       }
-      if ($amountDue > 0 && ($stripePaymentMethod !== null || !empty($offlinePaymentMethods))):
+      if ($autoPayNotice !== '') echo '<p role="status"><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
+      if ($autoPayNotice === '' && $amountDue > 0 && ($stripePaymentMethod !== null || !empty($offlinePaymentMethods))):
   ?>
   <div class="payment-section">
     <div class="payment-header">

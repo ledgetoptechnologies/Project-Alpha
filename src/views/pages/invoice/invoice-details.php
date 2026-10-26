@@ -111,12 +111,20 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
     Status: <?php echo htmlspecialchars($inv['status']); ?>
   </div>
   <div class="no-print document-actions">
+    <?php
+      $autopayDocument = $inv;
+      $autopayType = 'invoice';
+      $autopayForm = 'invoice-finalize-form';
+      require __DIR__ . '/../../components/autopay_invoice_status.php';
+      require_once __DIR__ . '/../../../utils/autopay_status.php';
+      $autoPayReserved = pa_autopay_pending_notice($pdo, (int)$id) !== '';
+    ?>
     <a href="javascript:history.back()" class="btn btn-sm">Back</a>
     <a href="/?page=invoice/invoice-pdf&id=<?php echo (int)$id; ?>" target="_blank" rel="noopener" class="btn btn-sm">View PDF</a>
     <a href="/?page=invoice/invoice-pdf&id=<?php echo (int)$id; ?>" download="invoice-<?php echo htmlspecialchars(pa_invoice_label_from_row($inv)); ?>.pdf" class="btn btn-sm">Download</a>
     <?php
       $actionStatus = strtolower((string)$inv['status']);
-      $canEditInvoice = !in_array($actionStatus, ['void','cancelled'], true);
+      $canEditInvoice = !$autoPayReserved && !in_array($actionStatus, ['void','cancelled'], true);
     ?>
     <?php if ($canEditInvoice): ?>
       <a href="/?page=invoice/invoices-edit&id=<?php echo (int)$id; ?>" class="btn btn-sm">Edit</a>
@@ -133,10 +141,15 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
         $finalizeLabel = $isGeneralRecipientInvoice
           ? 'Finalize & Create Link'
           : ($invoiceCollectionMode === 'project_aggregate' ? 'Finalize for Project Billing' : 'Finalize & Send');
+        if ($autopayState['eligible']) {
+          $finalizeLabel = 'Finalize with selected collection';
+          $finalizeConfirmation = 'Finalize this invoice using the AutoPay choice shown above? Initiating AutoPay can debit the saved payment method; holding it will not collect payment.';
+        }
       ?>
-      <form method="post" action="/?page=invoice/invoice-finalize" style="display:inline" onsubmit="return confirm(<?php echo htmlspecialchars(json_encode($finalizeConfirmation), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>);">
+      <form id="invoice-finalize-form" method="post" action="/?page=invoice/invoice-finalize" style="display:inline" onsubmit="return confirm(<?php echo htmlspecialchars(json_encode($finalizeConfirmation), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>);">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
         <input type="hidden" name="id" value="<?php echo (int)$id; ?>">
+        <?php if (!empty($_GET['content_link_warning']) && $autopayState['eligible']): ?><input type="hidden" name="confirm_missing_content_links" value="1"><?php endif; ?>
         <button type="submit" class="btn btn-sm btn-success"><?php echo htmlspecialchars($finalizeLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></button>
       </form>
       <?php if ($invoiceCollectionMode === 'project_aggregate'): ?><span style="color:var(--muted);font-size:12px">Included in the project statement; not emailed separately.</span><?php endif; ?>
@@ -150,11 +163,11 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
       <button type="submit" class="btn btn-sm">Email</button>
     </form>
     <?php endif; ?>
-    <?php if (in_array(strtolower((string)$inv['status']), ['sent','unpaid','partial','overdue'], true) && $invoiceCollectionMode === 'direct'): ?>
+    <?php if (!$autoPayReserved && in_array(strtolower((string)$inv['status']), ['sent','unpaid','partial','overdue'], true) && $invoiceCollectionMode === 'direct'): ?>
       <a href="/?page=payments/payments-create&invoice_id=<?php echo (int)$id; ?>&amount=<?php echo urlencode(number_format($outstanding, 2, '.', '')); ?>" 
          class="btn btn-sm btn-success">Mark as Paid</a>
     <?php endif; ?>
-    <?php if ($outstanding > 0 && pa_payment_methods_has($appConfig, 'stripe') && StripeService::isConfigured($appConfig) && !empty($inv['finalized_at']) && $invoiceCollectionMode === 'direct' && in_array(strtolower((string)$inv['status']), ['sent','unpaid','partial','overdue'], true)): ?>
+    <?php if (!$autoPayReserved && $outstanding > 0 && pa_payment_methods_has($appConfig, 'stripe') && StripeService::isConfigured($appConfig) && !empty($inv['finalized_at']) && $invoiceCollectionMode === 'direct' && in_array(strtolower((string)$inv['status']), ['sent','unpaid','partial','overdue'], true)): ?>
       <form method="post" action="/?page=stripe-charge" style="display:inline" onsubmit="return confirm('Open Stripe Checkout so you can enter this client payment on Stripe? PA will not store card details.');">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
         <input type="hidden" name="invoice_id" value="<?php echo (int)$id; ?>">
@@ -169,7 +182,7 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
       <button type="submit" class="btn btn-sm btn-warning">Re-enable</button>
     </form>
     <?php endif; ?>
-    <?php if (in_array($actionStatus, ['draft','sent','unpaid','overdue'], true)): ?>
+    <?php if (!$autoPayReserved && in_array($actionStatus, ['draft','sent','unpaid','overdue'], true)): ?>
       <details style="display:inline-block;position:relative;vertical-align:top">
         <summary class="btn btn-sm" style="list-style:none;background:#fff1f2;color:#9f1239;border-color:#fda4af;cursor:pointer">Void Invoice</summary>
         <form method="post" action="/?page=invoice/invoice-void" style="position:absolute;z-index:20;right:0;top:calc(100% + 6px);width:min(360px,80vw);padding:12px;background:#fff;border:1px solid #fecdd3;border-radius:8px;box-shadow:0 10px 25px rgba(15,23,42,.16)" onsubmit="return confirm('Void this invoice? This keeps the record for audit history and revokes all payment links.');">
@@ -261,6 +274,9 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
     <div class="no-print" style="display:block;padding:12px 14px;background:#fffbeb;color:#92400e;border:1px solid #facc15;border-radius:8px;margin-bottom:8px;font-size:14px">
       <strong>No invoice content links found.</strong>
       <div style="margin-top:4px">This invoice has no eligible links marked "Include on invoices." Add a content link first, or send it anyway.</div>
+      <?php if ($invoiceWarningIsDraft && $autopayState['eligible']): ?>
+        <p>Review the AutoPay choice above, then use the finalization button. This also confirms sending without content links.</p>
+      <?php else: ?>
       <form method="post" action="<?php echo $invoiceWarningIsDraft ? '/?page=invoice/invoice-finalize' : '/?page=invoice/email-send'; ?>" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
         <?php if (!$invoiceWarningIsDraft): ?><input type="hidden" name="type" value="invoice"><?php endif; ?>
@@ -270,6 +286,7 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
         <button type="submit" class="btn btn-sm btn-warning"><?php echo $invoiceWarningIsDraft ? 'Finalize & Send Anyway' : 'Send Anyway'; ?></button>
         <a class="btn btn-sm" href="<?php echo htmlspecialchars($invoiceWarningReturn); ?>">Cancel</a>
       </form>
+      <?php endif; ?>
     </div>
   <?php endif; ?>
   <div class="no-print" style="padding:8px 12px;background:#f3f4f6;border-radius:6px;margin-bottom:8px;font-size:13px;color:#374151">

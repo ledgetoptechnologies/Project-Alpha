@@ -79,14 +79,23 @@ final class OneTimePaymentPolicyTest extends TestCase
         self::assertStringContainsString("if (scope === 'manual') return;", (string)file_get_contents($this->root . '/public/assets/js/payments-create-logic.js'));
     }
 
-    public function testNoAutoPayControlIsRendered(): void
+    public function testProductionDoesNotRenderNewAutoPayControls(): void
     {
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->root . '/src/views'));
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            self::assertDoesNotMatchRegularExpression('/auto[ -]?pay|auto[ -]?charge/i', (string)file_get_contents($file->getPathname()), $file->getPathname());
+        $before = [];
+        foreach (['APP_ENV'=>'production','AUTOPAY_BETA_ENABLED'=>'true','AUTOPAY_INSTALLATION_ID'=>'synthetic-production-test','AUTOPAY_STRIPE_ACCOUNT_ID'=>'acct_TEST'] as $name=>$value) {
+            $before[$name]=getenv($name);putenv($name.'='.$value);
+        }
+        try {
+            $pdo = new PDO('sqlite::memory:');
+            $appConfig = ['_stripe_secret_key'=>'sk_test_SYNTHETIC'];
+            $autopayDocument = ['id'=>1,'client_id'=>1,'status'=>'draft','total'=>'100.00','balance_due'=>'100.00'];
+            ob_start();
+            require $this->root . '/src/views/components/autopay_invoice_status.php';
+            $rendered = (string)ob_get_clean();
+            self::assertSame('', trim($rendered));
+            self::assertFalse(pa_autopay_enabled($appConfig));
+        } finally {
+            foreach($before as $name=>$value)putenv($value===false?$name:$name.'='.$value);
         }
     }
 

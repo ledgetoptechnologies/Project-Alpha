@@ -322,6 +322,8 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig,
         }
 
         // The outbox row is committed atomically with the invoice and contract schedule.
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_enqueue_invoice($pdo, $invoiceId, array_merge($appConfig, ['_autopay_period_start' => $currentDate]), $createdBy, 'recurring_auto');
         invoice_notification_enqueue_generated($pdo, $invoiceId, $appConfig);
 
         $pdo->commit();

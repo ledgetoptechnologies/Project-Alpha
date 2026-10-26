@@ -32,12 +32,27 @@ before selecting it.
 
 ## Installed Schedule
 
+AutoPay collection is disabled in production. Staging acceptance requires migrations
+112–114, `APP_ENV=staging`, `AUTOPAY_BETA_ENABLED=true`, a unique persistent
+`AUTOPAY_INSTALLATION_ID`, the matching `AUTOPAY_STRIPE_ACCOUNT_ID`, Stripe test
+credentials, and verified webhook forwarding. Use synthetic clients and a mail
+catcher. Never copy production payment authorizations into staging.
+
+The worker only processes reservations created when an authorized invoice is first
+finalized; it never scans old unpaid invoices or imports legacy AutoPay flags.
+Drafts, historical paid periods, and refunds do not authorize another debit.
+Pending bank debits remain unpaid until Stripe confirms success. Unknown outcomes
+remain reserved for reconciliation; do not clear them to retry payment manually.
+The legacy `auto_charge_recurring.php` entry point delegates to this worker and
+cannot run its previous unpaid-invoice scanning logic.
+
 | Local schedule | Script | Purpose |
 |---|---|---|
 | Every minute | `process_notification_relay.php` | Process the disabled-by-default internal notification relay queue |
 | Every minute | `send_portal_projection_outbox.php` | Deliver enabled, signed portal projection outbox records with bounded retries |
 | Every minute | `reconcile_client_portal.php` | Resume the bounded historical client-portal provisioning backfill after producer preflight is ready |
 | Daily 02:00 | `generate_recurring_invoices.php` | Generate due long-term invoices and catch up missed periods |
+| Every minute | `process_autopay_collections.php` | Process explicit AutoPay reservations, only in configured staging/test mode |
 | Daily 02:15 | `generate_recurring_expenses.php` | Generate due recurring expenses once per scheduled occurrence |
 | Daily 02:30 | `purge_mileage_tracking_points.php` | Delete finalized GPS route points after 90 days and discarded points immediately |
 | Hourly at :30 | `backup_database.php --scheduled` | Creates rotating backups when the configured local backup hour matches |
