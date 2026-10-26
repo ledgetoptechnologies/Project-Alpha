@@ -419,6 +419,28 @@ PHP;
             self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);}
         self::assertSame([],$provider->reads);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
     }
+    public function testActualBankFailureShapeWithClearedMethodSettlesFailureAndReconciles():void
+    {
+        $invoice=$this->invoice();$collection=$this->enqueue($invoice);$pi=$this->knownIntent($collection,'requires_payment_method');
+        $pi['payment_method']=null;$pi['last_payment_error']=['type'=>'card_error','code'=>'insufficient_funds','payment_method'=>['object'=>'payment_method','id'=>'pm_SYNTHETIC','type'=>'us_bank_account','livemode'=>false,'customer'=>'cus_SYNTHETIC']];
+        self::assertTrue(pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.payment_failed',101),$this->config,true));
+        self::assertSame('failed',$this->row($collection)['state']);self::assertSame('unpaid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+        // The same provider shape must repair a missed callback without charging.
+        $this->pdo->prepare('UPDATE autopay_collections SET state="processing" WHERE id=?')->execute([$collection]);$provider=$this->recoveryProvider($pi);
+        putenv('AUTOPAY_BETA_ENABLED=false');self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+    }
+    public function testErrorMethodFallbackCannotAuthorizeSuccessOrUnboundFailure():void
+    {
+        $collection=$this->enqueue($this->invoice());$row=$this->row($collection);$base=$this->intent($row,'requires_payment_method');
+        $base['payment_method']=null;$base['last_payment_error']=['type'=>'card_error','code'=>'insufficient_funds','payment_method'=>['object'=>'payment_method','id'=>'pm_SYNTHETIC','type'=>'us_bank_account','livemode'=>false,'customer'=>'cus_SYNTHETIC']];
+        $cases=[];
+        foreach(['id'=>'pm_OTHER','customer'=>'cus_OTHER','type'=>'card','livemode'=>true,'object'=>'other'] as $key=>$value){$pi=$base;$pi['last_payment_error']['payment_method'][$key]=$value;$cases[]=$pi;}
+        foreach(['succeeded','processing','requires_action','canceled'] as $status){$pi=$base;$pi['status']=$status;$cases[]=$pi;}
+        $pi=$base;unset($pi['payment_method']);$cases[]=$pi;$pi=$base;unset($pi['last_payment_error']);$cases[]=$pi;
+        foreach($cases as $pi){try{pa_autopay_validate_intent($row,$pi);self::fail('Unbound error method accepted');}catch(DomainException){self::assertTrue(true);}}
+        self::assertSame('pending',$this->row($collection)['state']);
+    }
 
     public function testProjectSettlementAllocatesOnceToChildrenThroughCanonicalAccounting():void
     {

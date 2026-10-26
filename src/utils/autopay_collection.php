@@ -172,10 +172,20 @@ function pa_autopay_run_one(PDO $pdo,array $config,?callable $transport=null): a
 function pa_autopay_validate_intent(array $row,array $intent): void
 {
     $meta=$intent['metadata']??[];$doc=$row['document_type']==='invoice'?'pa_invoice_id':'pa_project_invoice_id';
+    $method=$intent['payment_method']??null;
+    // Stripe clears this field after an asynchronous bank failure. Bind only
+    // that failed state to the exact expanded method retained in its error;
+    // settlement and all other states still require the top-level method.
+    if(($intent['status']??'')==='requires_payment_method' && array_key_exists('payment_method',$intent) && $intent['payment_method']===null){
+        $failedMethod=$intent['last_payment_error']['payment_method']??null;
+        if(is_array($failedMethod) && ($failedMethod['object']??'')==='payment_method'
+            && ($failedMethod['type']??'')===$row['method_type'] && ($failedMethod['livemode']??null)===false
+            && ($failedMethod['customer']??'')===$row['stripe_customer_id'])$method=$failedMethod['id']??null;
+    }
     if(($intent['object']??'')!=='payment_intent' || !preg_match('/^pi_[A-Za-z0-9_]+$/',(string)($intent['id']??'')) || ($intent['livemode']??null)!==false
         || (!empty($row['stripe_payment_intent_id']) && $row['stripe_payment_intent_id']!==$intent['id'])
         || ($intent['amount']??null)!==(int)$row['amount_cents'] || ($intent['currency']??'')!==$row['currency']
-        || ($intent['customer']??'')!==$row['stripe_customer_id'] || ($intent['payment_method']??'')!==$row['payment_method_id']
+        || ($intent['customer']??'')!==$row['stripe_customer_id'] || $method!==$row['payment_method_id']
         || (string)($meta['pa_autopay_collection_id']??'')!==(string)$row['id'] || (string)($meta[$doc]??'')!==(string)$row['document_id']
         || (string)($meta['pa_client_id']??'')!==(string)$row['client_id']
         || !empty($meta[$row['document_type']==='invoice'?'pa_project_invoice_id':'pa_invoice_id'])
