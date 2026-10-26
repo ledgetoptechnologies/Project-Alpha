@@ -310,6 +310,116 @@ PHP;
         $this->expectException(RuntimeException::class);invoice_reopen_draft($this->pdo,$invoice,$this->config);
     }
 
+    private function recoveryProvider(array $pi,array $listed=[]):StripeService
+    {
+        require_once dirname(__DIR__,2).'/src/utils/stripe_reconciliation_import.php';
+        return new class($pi,$listed) extends StripeService {
+            public array $reads=[];public string $account='acct_SYNTHETIC';
+            public function __construct(public array $intent,public array $listed){}
+            public function getReconciliationContext():array{return ['account_id'=>$this->account,'livemode'=>false];}
+            public function getPaymentIntentWithBalanceTransaction(string $id):array{$this->reads[]=$id;return $this->intent;}
+            public function listPaymentIntentsBetween(int $since,?int $until=null,?int $maxItems=1000):array{return $this->listed;}
+            public function listChargesBetween(int $since,?int $until=null,?int $maxItems=null):array{return [];}
+            public function collectAutoPay(array $collection):array{throw new LogicException('Reconciliation must never collect.');}
+        };
+    }
+    private function knownIntent(int $collection,string $status='succeeded'):array
+    {
+        $pi=$this->intent($this->row($collection),$status);
+        $this->pdo->prepare('UPDATE autopay_collections SET state="processing",stripe_payment_intent_id=?,next_attempt_at=NULL,created_at=DATE_SUB(NOW(),INTERVAL 10 DAY) WHERE id=?')->execute([$pi['id'],$collection]);
+        return $pi;
+    }
+    public function testReconciliationRecoversOldAchOutsideListingWindowWithFlagOffAndRetriesReceipt():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi);
+        putenv('AUTOPAY_BETA_ENABLED=false');
+        $result=stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time()-60);
+        self::assertSame(1,$result['reconciled']);self::assertSame(0,$result['errors']);self::assertSame([$pi['id']],$provider->reads);
+        self::assertSame('succeeded',$this->row($collection)['state']);self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$id)->fetchColumn());
+        self::assertSame(0,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['checked']);
+        require_once dirname(__DIR__,2).'/src/utils/autopay_notifications.php';
+        $attempt=0;$keys=[];$sender=static function($to,$subject,$body,$options)use(&$attempt,&$keys){$keys[]=$options['message_key'];return [++$attempt>1,'Synthetic failure'];};
+        $mailConfig=['app_host'=>'https://example.invalid','payment_receipts_enabled'=>false];
+        self::assertSame(1,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['retried']);
+        $this->pdo->prepare('UPDATE autopay_notifications SET next_attempt_at=NOW() WHERE collection_id=?')->execute([$collection]);
+        self::assertSame(1,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['sent']);
+        self::assertSame(0,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['sent']);self::assertSame($keys[0],$keys[1]);
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationRepairsAlreadyImportedPaymentAndRejectsWrongProviderBinding():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        $provider->account='acct_OTHER';$result=stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time());
+        self::assertSame(2,$result['errors']);self::assertSame('processing',$this->row($collection)['state']);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+        $provider->account='acct_SYNTHETIC';require_once dirname(__DIR__,2).'/src/controllers/webhook/stripe_payment_succeeded.php';handlePaymentIntentSucceeded($this->pdo,$pi);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame('succeeded',$this->row($collection)['state']);self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationPreservesFinancialHoldsAndNeverRegressesTerminalSuccess():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        $this->pdo->prepare('UPDATE autopay_collections SET financial_hold=1 WHERE id=?')->execute([$collection]);
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+        self::assertSame('processing',$this->row($collection)['state']);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+        $this->pdo->prepare('UPDATE autopay_collections SET financial_hold=0 WHERE id=?')->execute([$collection]);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        $provider->intent['status']='processing';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame('succeeded',$this->row($collection)['state']);
+    }
+    public function testProjectReconciliationUsesDurableIntentAndCanonicalChildAllocation():void
+    {
+        $draft=$this->projectDraft();$id=(int)$draft['id'];$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,$id,$this->projectChoice($draft,'collect'));$this->pdo->commit();
+        $collection=(int)$this->pdo->query('SELECT id FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$id)->fetchColumn();
+        $pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi);putenv('AUTOPAY_BETA_ENABLED=false');
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['reconciled']);
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM project_invoices WHERE id='.$id)->fetchColumn());
+        self::assertSame('succeeded',$this->row($collection)['state']);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM project_invoice_payments WHERE project_invoice_id='.$id)->fetchColumn());
+        $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$id)->fetchColumn();self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$child)->fetchColumn());
+    }
+    public function testReconciliationRejectsMutatedEvidenceAndProductionAndHoldsObservedRefund():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        foreach(['amount'=>9999,'customer'=>'cus_OTHER','payment_method'=>'pm_OTHER','livemode'=>true,'amount_received'=>9999] as $key=>$value){
+            $provider->intent=$pi;$provider->intent[$key]=$value;
+            self::assertSame(2,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+            self::assertSame('processing',$this->row($collection)['state']);
+        }
+        $provider->intent=$pi;putenv('APP_ENV=production');$provider->reads=[];
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);self::assertSame([],$provider->reads);
+        putenv('APP_ENV=test');$provider->intent['latest_charge']=['amount_refunded'=>100,'disputed'=>false];
+        self::assertSame(2,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+        self::assertSame(1,(int)$this->row($collection)['financial_hold']);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationRotatesBoundedProcessingRowsAndSkipsUnknownIntent():void
+    {
+        $first=$this->enqueue($this->invoice());$second=$this->enqueue($this->invoice());$unknown=$this->enqueue($this->invoice());
+        $firstPi=$this->knownIntent($first,'processing');$secondPi=$this->knownIntent($second);$provider=$this->recoveryProvider($firstPi);
+        $this->pdo->prepare('UPDATE autopay_collections SET updated_at=DATE_SUB(NOW(),INTERVAL 2 DAY) WHERE id=?')->execute([$first]);
+        $this->pdo->prepare('UPDATE autopay_collections SET updated_at=DATE_SUB(NOW(),INTERVAL 1 DAY) WHERE id=?')->execute([$second]);
+        self::assertSame(0,pa_autopay_reconcile_known_collections($this->pdo,$provider,$this->config,1)['reconciled']);
+        $provider->intent=$secondPi;self::assertSame(1,pa_autopay_reconcile_known_collections($this->pdo,$provider,$this->config,1)['reconciled']);
+        self::assertSame([$firstPi['id'],$secondPi['id']],$provider->reads);self::assertNull($this->row($unknown)['stripe_payment_intent_id']);
+    }
+    public function testReconciliationRecoversActionAndFailureWithoutRegressingNewerWebhook():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection,'requires_action');$provider=$this->recoveryProvider($pi);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('requires_action',$this->row($collection)['state']);
+        $stale=$this->row($collection);$this->pdo->prepare('UPDATE autopay_collections SET last_event_created=99 WHERE id=?')->execute([$collection]);
+        $provider->intent['status']='requires_payment_method';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$stale));self::assertSame('requires_action',$this->row($collection)['state']);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+        $provider->intent['status']='requires_action';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+    }
+    public function testGenericReconciliationRejectsMalformedAutoPayMarkersBeforeImport():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->intent($this->row($collection),'succeeded');$provider=$this->recoveryProvider($pi);
+        foreach(['0','', 'invalid',null,'01'] as $marker){$listed=$pi;$listed['metadata']['pa_autopay_collection_id']=$marker;$provider->listed=[$listed];
+            self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);}
+        self::assertSame([],$provider->reads);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+
     public function testProjectSettlementAllocatesOnceToChildrenThroughCanonicalAccounting():void
     {
         $child=$this->invoice();$this->pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$child]);

@@ -11,6 +11,7 @@ require_once __DIR__ . '/public_links.php';
 require_once __DIR__ . '/invoice_lifecycle.php';
 require_once __DIR__ . '/notifications.php';
 require_once __DIR__ . '/payment_receipts.php';
+require_once __DIR__ . '/autopay_reconciliation.php';
 
 function stripe_reconcile_payment_intents(
     PDO $pdo,
@@ -21,14 +22,15 @@ function stripe_reconcile_payment_intents(
     ?int $maxIntents = 1000,
     bool $forceStandaloneImport = false
 ): array {
+    $recovery = pa_autopay_reconcile_known_collections($pdo, $stripe, $appConfig);
     $paymentIntents = $stripe->listPaymentIntentsBetween($since, $until, $maxIntents);
     $result = [
-        'checked' => count($paymentIntents),
-        'reconciled' => 0,
+        'checked' => count($paymentIntents) + $recovery['checked'],
+        'reconciled' => $recovery['reconciled'],
         'imported' => 0,
         'duplicates' => 0,
         'skipped' => 0,
-        'errors' => 0,
+        'errors' => $recovery['errors'],
     ];
 
     $importConfig = $appConfig;
@@ -38,6 +40,12 @@ function stripe_reconcile_payment_intents(
 
     foreach ($paymentIntents as $pi) {
         try {
+            $collection = pa_autopay_reconciliation_collection($pdo, $pi);
+            if ($collection) {
+                if (pa_autopay_reconcile_collection($pdo, $stripe, $appConfig, $collection, (string)($pi['id'] ?? ''))) $result['reconciled']++;
+                else $result['skipped']++;
+                continue;
+            }
             if (($pi['status'] ?? '') !== 'succeeded') {
                 $result['skipped']++;
                 continue;
