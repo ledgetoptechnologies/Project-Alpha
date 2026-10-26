@@ -505,7 +505,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('created_at,generation_key',$recurring);
         $onDemandView=(string)file_get_contents($this->root.'/src/views/pages/contract/on-demand-contracts-list.php');
         self::assertMatchesRegularExpression('/<form[^>]+class="od-generate-form"[\\s\\S]*?<input[^>]+name="generation_key"[^>]+value="<\\?php echo bin2hex\\(random_bytes\\(16\\)\\); \\?>"[\\s\\S]*?<\\/form>/', $onDemandView);
-        self::assertStringContainsString('name="generation_key"',(string)file_get_contents($this->root.'/src/views/pages/contract/long-term-contract-details.php'));
+        self::assertStringContainsString('name="generation_key"',(string)file_get_contents($this->root.'/src/views/components/recurring_service_form.php'));
         self::assertStringContainsString("pricing_money_to_minor((string)(\$contract['total_invoiced']??'0'))",$onDemand);
         self::assertStringContainsString("pricing_money_to_minor((string)(\$contract['total_invoiced']??'0'))",$recurring);
         foreach(['long_term_contracts_create.php','on_demand_contracts_create.php'] as $create){$source=(string)file_get_contents($this->root.'/src/controllers/contract/'.$create);self::assertStringContainsString('pricing_finalize_document_revision(',$source);self::assertStringContainsString('pricing_recompute_contract_percentage_deposit',$source);}
@@ -545,7 +545,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('$next_invoice_date = null;', (string)$ltCreate);
         self::assertStringContainsString('pa_long_term_starts_billing_on_upload($contract)', (string)$sign);
         self::assertStringContainsString('generate_recurring_invoice($pdo, $contract, $appConfig)', (string)$start);
-        self::assertStringContainsString('$hasGeneratedInvoices', (string)$activate);
+        self::assertStringContainsString('pa_long_term_billing_start_date($pdo, $contract)', (string)$activate);
         self::assertStringContainsString('recurring_invoice_send_on_generate_if_enabled($pdo, $invoiceId, $appConfig)', (string)$start);
         self::assertStringContainsString('UPDATE invoices SET sent_at=COALESCE(sent_at,NOW())', (string)file_get_contents($this->root . '/src/controllers/email_send.php'));
         self::assertStringContainsString('$billingText = \'Manual invoices\';', (string)$odcList);
@@ -559,7 +559,8 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('Long-term recurring invoices are historical billing records and must not be rewritten.', (string)$update);
         self::assertStringContainsString('if (!$isLongTermContract)', (string)$update);
         self::assertStringContainsString("['pending', 'active', 'paused']", (string)$ltDetails);
-        self::assertStringContainsString('Generate Invoice Now', (string)$ltDetails);
+        self::assertStringContainsString('Start Billing', (string)$ltDetails);
+        self::assertStringNotContainsString('Generate Invoice Now', (string)$ltDetails);
         self::assertStringContainsString('Email Latest Invoice', (string)$ltDetails);
         self::assertStringContainsString('Edit Billing', (string)$ltList);
         self::assertStringContainsString('invoices_generated', (string)$ltList);
@@ -580,7 +581,8 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('pa_recurring_services_due', (string)$recurringServices);
         self::assertStringContainsString('generate_recurring_proration_invoice', (string)$recurringServiceSave);
         self::assertStringContainsString('signed_addendum', (string)$recurringServiceSave);
-        self::assertStringContainsString('Recurring Services &amp; Amendments', (string)$ltDetails);
+        self::assertStringContainsString('recurring_service_panel.php', (string)$ltDetails);
+        self::assertStringContainsString('Services &amp; billing schedule', (string)file_get_contents($this->root.'/src/views/components/recurring_service_panel.php'));
         self::assertStringContainsString('long-term-recurring-service-save', (string)$router);
         self::assertStringContainsString('invoice_notification_process($pdo, $appConfig)', (string)$recurringCron);
         self::assertStringContainsString('invoice_notification_enqueue_generated($pdo, $invoiceId, $appConfig)', (string)$recurringBilling);

@@ -388,6 +388,9 @@ $isPdf = defined('PDF_MODE');
     <?php if ($qtType === 'long_term'): ?>
       <div style="margin-bottom:8px"><strong>Billing Cycle:</strong> Every <?php echo htmlspecialchars($qBiText); ?></div>
     <?php endif; ?>
+    <?php if ($qtType === 'long_term' && ($quote['rate_basis'] ?? 'per_period') === 'monthly'): ?>
+      <div>Monthly service rate: $<?php echo number_format((float)$quote['monthly_rate'], 2); ?> × <?php echo $qBiUnit === 'year' ? '12 months' : '1 month'; ?> per invoice, before tax and discounts.</div>
+    <?php endif; ?>
     <?php if ($qPricingType === 'per_invoice' || $qtType === 'on_demand'): ?>
       <div style="font-size:16px;font-weight:700;color:#065f46">
         Amount Per Invoice: $<?php echo number_format($qAmtPerInv, 2); ?>

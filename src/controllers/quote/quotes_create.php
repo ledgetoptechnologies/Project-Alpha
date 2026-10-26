@@ -1,6 +1,7 @@
 <?php
 // src/controllers/quotes_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/document_fields.php';
@@ -73,6 +74,16 @@ if ($is_long_term) {
     $scope = '';
 }
 
+$recurringRate = ['rate_basis' => 'per_period', 'monthly_rate' => null];
+if ($is_long_term) {
+    try {
+        $recurringRate = pa_document_recurring_rate($_POST, [], $billing_interval_count, $billing_interval_unit, $pricing_type, $price_per_invoice === null ? null : (string)$price_per_invoice);
+        pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
+        $price_per_invoice = $recurringRate['amount'];
+    } catch (DomainException|InvalidArgumentException $e) {
+        header('Location: /?page=quote/quotes-create&error=' . rawurlencode($e->getMessage())); exit;
+    }
+}
 $item = $_POST['item'] ?? [];
 $desc = $_POST['item_desc'] ?? [];
 $qty = $_POST['item_qty'] ?? [];
@@ -180,6 +191,7 @@ try {
     $stmt = $pdo->prepare('INSERT INTO quotes (client_id, project_id, doc_number, project_code, status, quote_type, billing_mode, discount_type, discount_value, tax_percent, subtotal, total, deposit_type, deposit_amount, fulfillment_date, start_date, end_date, billing_interval_count, billing_interval_unit, pricing_type, price_per_invoice, scope, custom_fields, organization_id, show_contact_on_document, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
     $stmt->execute([$client_id, $project_id, null, null, 'draft', $quote_type, $billing_mode, $discount_type, $discount_value, $tax_percent, $subtotal, $total, $deposit_type, $deposit_value, $fulfillment_date, $start_date, $end_date, $billing_interval_count, $billing_interval_unit, $pricing_type, $price_per_invoice, $scope, $customFieldsJson, $__orgId, $showContactOnDocument, $__creator, date("Y-m-d H:i:s")]);
     $quote_id = (int)$pdo->lastInsertId();
+    pa_document_recurring_rate_save($pdo, 'quote', $quote_id, $recurringRate);
 
     // Assign a new Project ID for this quote
     $projectCode = project_next_code($pdo, $client_id);

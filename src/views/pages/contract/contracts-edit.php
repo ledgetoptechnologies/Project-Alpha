@@ -323,6 +323,7 @@ try {
         </div>
 
         <div id="perInvoiceEditFieldCo" style="<?php echo $pricingType === 'per_invoice' ? '' : 'display:none'; ?>;margin-top:12px">
+          <?php $rateChoiceRow = $contract; $rateChoiceAmountId = 'pricePerInvoiceEditCo'; $rateChoiceCountId = 'billingIntervalCountEditCo'; $rateChoiceUnitId = 'billingIntervalUnitEditCo'; require __DIR__ . '/../../components/document_monthly_rate.php'; ?>
           <label>
             <div>Amount Per Invoice</div>
             <input id="pricePerInvoiceEditCo" type="number" step="0.01" min="0" name="price_per_invoice" value="<?php echo htmlspecialchars((string)($baseRecurringService['amount'] ?? $contract['price_per_invoice'] ?? $contract['subtotal'] ?? 0)); ?>" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd">
@@ -428,3 +429,5 @@ try {
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/pricing-adjustments.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
+
+<script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-billing-choice.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>

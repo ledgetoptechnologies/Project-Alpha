@@ -117,6 +117,16 @@ jobs:
       - name: PHPUnit
         run: docker compose exec -T web vendor/bin/phpunit --colors=always
 
+      - name: MySQL recurring activation and historical payment regressions
+        shell: bash
+        run: |
+          root_password="$(docker compose exec -T db printenv MYSQL_ROOT_PASSWORD)"
+          test -n "$root_password"
+          MYSQL_PASSWORD="$root_password" docker compose run --rm --no-deps --entrypoint php \
+            --env MYSQL_USER=root --env MYSQL_PASSWORD \
+            web vendor/bin/phpunit --do-not-cache-result --fail-on-skipped \
+            --filter 'ContractBillingActivationDatabaseTest|RecurringHistoryDatabaseTest' tests/Database
+
       - name: MySQL Stripe invoice payment lifecycle regressions
         shell: bash
         run: |

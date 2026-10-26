@@ -1,6 +1,7 @@
 <?php
 // src/controllers/contracts_update.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/document_fields.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/acl_middleware.php';
@@ -85,6 +86,13 @@ if ($isLongTermContract) {
     $billingStartMode = 'on_upload';
   }
   $pricePerInvoice = $pricingType === 'per_invoice' ? (float)($_POST['price_per_invoice'] ?? 0) : null;
+  try {
+    $recurringRate = pa_document_recurring_rate($_POST, $existingContract, $billingIntervalCount, $billingIntervalUnit, $pricingType, $pricePerInvoice === null ? null : (string)$pricePerInvoice);
+    pa_document_recurring_rate_validate_period($recurringRate, $billingIntervalCount, $billingIntervalUnit, $nextInvoiceDate ?: $startDate, $endDate);
+    $pricePerInvoice = $recurringRate['amount'];
+  } catch (DomainException|InvalidArgumentException $e) {
+    header('Location: /?page=' . $detailPage . '&id=' . $id . '&error=' . rawurlencode($e->getMessage())); exit;
+  }
   if ($pricingType === 'per_invoice') {
     if ($pricePerInvoice <= 0) {
       header('Location: /?page=' . $detailPage . '&id=' . $id . '&error=' . urlencode('Amount per invoice must be greater than 0'));
@@ -175,11 +183,14 @@ try{
       $longTerm['price_per_invoice'],$longTerm['billing_start_mode'],$longTerm['invoice_count'],$longTerm['next_invoice_date'],$serviceLocationId,
       $id
     ]);
+    pa_document_recurring_rate_save($pdo, 'contract', $id, $recurringRate);
     if ($longTerm['pricing_type'] === 'per_invoice') {
       $baseServiceId = pa_recurring_service_ensure_base($pdo, $id);
       pa_recurring_service_sync_base($pdo, $id);
       pa_recurring_service_sync_contract_next_date($pdo, $id);
       $oldBilling = [
+        'rate_basis' => $existingContract['rate_basis'] ?? 'per_period',
+        'monthly_rate' => $existingContract['monthly_rate'] ?? null,
         'amount' => (float)($existingBaseService['amount'] ?? $existingContract['price_per_invoice'] ?? 0),
         'billing_interval_count' => (int)($existingBaseService['billing_interval_count'] ?? $existingContract['billing_interval_count'] ?? 1),
         'billing_interval_unit' => (string)($existingBaseService['billing_interval_unit'] ?? $existingContract['billing_interval_unit'] ?? 'month'),
@@ -188,6 +199,8 @@ try{
         'next_invoice_date' => $existingBaseService['next_invoice_date'] ?? $existingContract['next_invoice_date'] ?? null,
       ];
       $newBilling = [
+        'rate_basis' => $recurringRate['rate_basis'],
+        'monthly_rate' => $recurringRate['monthly_rate'],
         'amount' => (float)$longTerm['price_per_invoice'],
         'billing_interval_count' => (int)$longTerm['billing_interval_count'],
         'billing_interval_unit' => (string)$longTerm['billing_interval_unit'],

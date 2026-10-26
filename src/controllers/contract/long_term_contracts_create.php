@@ -1,6 +1,7 @@
 <?php
 // src/controllers/contract/long_term_contracts_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_selection.php';
 require_once __DIR__ . '/../../utils/contract_signatures.php';
@@ -40,6 +41,13 @@ $pricing_type = in_array($pricing_type_val, ['fixed_total','per_invoice']) ? $pr
 $billing_start_mode_val = $_POST['billing_start_mode'] ?? $_POST['lt_billing_start_mode'] ?? 'on_upload';
 $billing_start_mode = in_array($billing_start_mode_val, ['on_upload', 'manual'], true) ? $billing_start_mode_val : 'on_upload';
 $price_per_invoice = ($pricing_type === 'per_invoice') ? (float)($_POST['price_per_invoice'] ?? $_POST['lt_price_per_invoice'] ?? 0) : null;
+try {
+    $recurringRate = pa_document_recurring_rate($_POST, [], $billing_interval_count, $billing_interval_unit, $pricing_type, $price_per_invoice === null ? null : (string)$price_per_invoice);
+    pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
+    $price_per_invoice = $recurringRate['amount'];
+} catch (DomainException|InvalidArgumentException $e) {
+    header('Location: /?page=contract/contracts-create&error=' . rawurlencode($e->getMessage())); exit;
+}
 $invoice_count_posted = ($pricing_type === 'fixed_total') ? max(1, (int)($_POST['invoice_count'] ?? 1)) : null;
 $scope = trim((string)($_POST['scope'] ?? ''));
 
@@ -192,6 +200,7 @@ try{
     ]);
     
     $contract_id = (int)$pdo->lastInsertId();
+    pa_document_recurring_rate_save($pdo, 'contract', $contract_id, $recurringRate);
     $jobId = JobAssignmentService::ensureForCode($pdo, $client_id, $projectCode, $project_id ?: null, $sessionUserId);
     $serviceLocationId = document_resolve_service_location($pdo,$client_id,$project_id,$jobId,$requestedServiceLocationId);
     $pdo->prepare('UPDATE contracts SET job_id=?,service_location_id=? WHERE id=?')->execute([$jobId, $serviceLocationId, $contract_id]);

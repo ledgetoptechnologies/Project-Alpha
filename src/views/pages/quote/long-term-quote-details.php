@@ -295,6 +295,9 @@ $isOngoing = empty($quote['end_date']);
     </thead>
     <tbody>
       <?php if ($quote['pricing_type'] === 'per_invoice'): ?>
+        <?php if (($quote['rate_basis'] ?? 'per_period') === 'monthly'): ?>
+        <tr><td colspan="4" style="padding:12px">Monthly service rate: $<?php echo number_format((float)$quote['monthly_rate'], 2); ?> × <?php echo ($quote['billing_interval_unit'] ?? 'month') === 'year' ? '12 months' : '1 month'; ?> per invoice, before tax and discounts.</td></tr>
+        <?php endif; ?>
         <tr>
           <td colspan="3" style="padding:12px"><?php echo !empty($quote['scope']) ? htmlspecialchars($quote['scope']) : 'Recurring service fee'; ?> (billed <?php echo htmlspecialchars(strtolower($billingInterval)); ?>)</td>
           <td style="padding:12px;text-align:right;font-weight:600">$<?php echo number_format($quote['price_per_invoice'], 2); ?></td>

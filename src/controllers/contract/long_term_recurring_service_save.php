@@ -16,7 +16,9 @@ require_record_ownership($pdo, 'contracts', $contractId);
 
 $name = trim((string)($_POST['name'] ?? ''));
 $description = trim((string)($_POST['description'] ?? ''));
-$amount = round((float)($_POST['amount'] ?? 0), 2);
+$amount = trim((string)($_POST['amount'] ?? '0'));
+$rateBasis = (string)($_POST['rate_basis'] ?? 'per_period');
+$monthlyRate = null;
 $intervalCount = max(1, (int)($_POST['billing_interval_count'] ?? 1));
 $intervalUnit = strtolower((string)($_POST['billing_interval_unit'] ?? 'month'));
 $effectiveFrom = trim((string)($_POST['effective_from'] ?? date('Y-m-d')));
@@ -31,7 +33,20 @@ if(!preg_match('/^[a-f0-9]{32}$/',$prorationRequestKey))$prorationRequestKey=bin
 $prorationGenerationKey=hash('sha256','recurring-proration:'.$contractId.':'.$prorationRequestKey);
 $userId = (int)($_SESSION['user']['id'] ?? 0) ?: null;
 
-if ($name === '' || $amount <= 0) {
+try {
+    if (!in_array($rateBasis, ['per_period','monthly'], true)) throw new DomainException('Invalid rate basis.');
+    if ($rateBasis === 'monthly') {
+        $monthlyRate = pa_recurring_rate_money(pa_recurring_rate_minor((string)($_POST['monthly_rate'] ?? '0')));
+        $amount = pa_recurring_service_period_amount($monthlyRate, $intervalCount, $intervalUnit);
+    } else {
+        $amount = pa_recurring_rate_money(pa_recurring_rate_minor($amount));
+    }
+} catch (Throwable $error) {
+    header('Location: /?page=contract/long-term-contract-details&id=' . $contractId . '&service_error=' . urlencode($error->getMessage()));
+    exit;
+}
+
+if ($name === '' || (float)$amount <= 0) {
     header('Location: /?page=contract/long-term-contract-details&id=' . $contractId . '&service_error=' . urlencode('Service name and a positive recurring amount are required.'));
     exit;
 }
@@ -39,12 +54,12 @@ if (!in_array($intervalUnit, ['day', 'week', 'month', 'year'], true)) {
     $intervalUnit = 'month';
 }
 foreach ([$effectiveFrom, $nextInvoiceDate] as $requiredDate) {
-    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $requiredDate) !== 1) {
+    if (!pa_recurring_valid_date($requiredDate)) {
         header('Location: /?page=contract/long-term-contract-details&id=' . $contractId . '&service_error=' . urlencode('Effective and next invoice dates are required.'));
         exit;
     }
 }
-if ($effectiveUntil !== null && (preg_match('/^\d{4}-\d{2}-\d{2}$/', $effectiveUntil) !== 1 || $effectiveUntil < $effectiveFrom)) {
+if ($effectiveUntil !== null && (!pa_recurring_valid_date($effectiveUntil) || $effectiveUntil < $effectiveFrom)) {
     header('Location: /?page=contract/long-term-contract-details&id=' . $contractId . '&service_error=' . urlencode('The service end date must be on or after its effective date.'));
     exit;
 }
@@ -106,33 +121,40 @@ try {
     $contractStatus = strtolower((string)$contract['status']);
     $serviceStatus = !$approved ? 'pending' : ($contractStatus === 'active' ? 'active' : ($contractStatus === 'paused' ? 'paused' : 'pending'));
     if ($oldService) {
-        $pdo->prepare('
-            UPDATE contract_recurring_services
-            SET name=?,description=?,amount=?,billing_interval_count=?,billing_interval_unit=?,
-                effective_from=?,effective_until=?,next_invoice_date=?,status=?,approval_status=?
-            WHERE id=? AND contract_id=?
-        ')->execute([
-            substr($name, 0, 190), $description ?: null, $amount, $intervalCount, $intervalUnit,
-            $effectiveFrom, $effectiveUntil, $nextInvoiceDate, $serviceStatus, $approvalStatus,
-            $serviceId, $contractId,
+        $renewalBoundary = pa_recurring_change_boundary($oldService, date('Y-m-d'));
+        if ($nextInvoiceDate !== $renewalBoundary) throw new DomainException('The renewal date changed while this form was open. Reload and review the new effective date before saving.');
+        $nextInvoiceDate = $renewalBoundary;
+        $effectiveFrom = $nextInvoiceDate;
+        $newService = array_replace($oldService, [
+            'name' => substr($name, 0, 190), 'description' => $description ?: null,
+            'amount' => $amount, 'billing_interval_count' => $intervalCount,
+            'billing_interval_unit' => $intervalUnit, 'effective_from' => $effectiveFrom,
+            'effective_until' => $effectiveUntil, 'next_invoice_date' => $nextInvoiceDate,
+            'rate_basis' => $rateBasis, 'monthly_rate' => $monthlyRate,
         ]);
+        pa_recurring_service_queue_change($pdo, $oldService, pa_recurring_service_snapshot($newService), $approved, $addendumUrl, $userId);
     } else {
+        if ($nextInvoiceDate < $effectiveFrom) throw new DomainException('The first invoice date cannot precede the service start date.');
+        $billingAnchorDate = $rateBasis === 'monthly' ? $nextInvoiceDate : null;
+        pa_recurring_service_period_end(['rate_basis'=>$rateBasis,'billing_interval_count'=>$intervalCount,'billing_interval_unit'=>$intervalUnit,'effective_from'=>$effectiveFrom,'effective_until'=>$effectiveUntil,'billing_anchor_date'=>$billingAnchorDate], $nextInvoiceDate);
         $pdo->prepare('
             INSERT INTO contract_recurring_services
                 (contract_id,name,description,amount,billing_interval_count,billing_interval_unit,
-                 effective_from,effective_until,next_invoice_date,status,approval_status,is_base,created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?)
+                 effective_from,effective_until,next_invoice_date,status,approval_status,is_base,created_by,rate_basis,monthly_rate,billing_anchor_date)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)
         ')->execute([
             $contractId, substr($name, 0, 190), $description ?: null, $amount, $intervalCount,
             $intervalUnit, $effectiveFrom, $effectiveUntil, $nextInvoiceDate, $serviceStatus,
-            $approvalStatus, $userId,
+            $approvalStatus, $userId, $rateBasis, $monthlyRate, $billingAnchorDate,
         ]);
         $serviceId = (int)$pdo->lastInsertId();
     }
 
-    $serviceStmt = $pdo->prepare('SELECT * FROM contract_recurring_services WHERE id=?');
-    $serviceStmt->execute([$serviceId]);
-    $newService = $serviceStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    if (!$oldService) {
+        $serviceStmt = $pdo->prepare('SELECT * FROM contract_recurring_services WHERE id=?');
+        $serviceStmt->execute([$serviceId]);
+        $newService = $serviceStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
     pa_recurring_service_record_amendment(
         $pdo,
         $contractId,
@@ -146,15 +168,6 @@ try {
         $addendumUrl,
         $userId
     );
-
-    if (!empty($newService['is_base'])) {
-        $pdo->prepare('
-            UPDATE contracts
-            SET scope=?,price_per_invoice=?,billing_interval_count=?,billing_interval_unit=?,
-                start_date=?,end_date=?
-            WHERE id=?
-        ')->execute([$description ?: $name, $amount, $intervalCount, $intervalUnit, $effectiveFrom, $effectiveUntil, $contractId]);
-    }
 
     if ($prorationAmount > 0) {
         $prorationInvoiceId = generate_recurring_proration_invoice(

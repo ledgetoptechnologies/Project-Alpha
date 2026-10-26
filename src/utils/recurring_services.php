@@ -1,12 +1,16 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/recurring_schedule_changes.php';
 
 function pa_recurring_service_snapshot(array $service): array
 {
     return [
         'name' => (string)($service['name'] ?? ''),
         'description' => $service['description'] ?? null,
-        'amount' => (float)($service['amount'] ?? 0),
+        'amount' => (string)($service['amount'] ?? '0.00'),
+        'rate_basis' => (string)($service['rate_basis'] ?? 'per_period'),
+        'monthly_rate' => $service['monthly_rate'] ?? null,
+        'billing_anchor_date' => $service['billing_anchor_date'] ?? null,
         'billing_interval_count' => (int)($service['billing_interval_count'] ?? 1),
         'billing_interval_unit' => (string)($service['billing_interval_unit'] ?? 'month'),
         'effective_from' => $service['effective_from'] ?? null,
@@ -92,8 +96,8 @@ function pa_recurring_service_ensure_base(PDO $pdo, int $contractId): ?int
         INSERT INTO contract_recurring_services
             (contract_id,name,description,amount,billing_interval_count,billing_interval_unit,
              effective_from,effective_until,next_invoice_date,last_invoice_date,status,
-             approval_status,is_base,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+             approval_status,is_base,created_by,rate_basis,monthly_rate,billing_anchor_date)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)
     ');
     $insert->execute([
         $contractId,
@@ -109,6 +113,9 @@ function pa_recurring_service_ensure_base(PDO $pdo, int $contractId): ?int
         pa_recurring_service_contract_status($contract),
         'approved',
         !empty($contract['created_by']) ? (int)$contract['created_by'] : null,
+        (string)($contract['rate_basis'] ?? 'per_period'),
+        $contract['monthly_rate'] ?? null,
+        ($contract['rate_basis'] ?? 'per_period') === 'monthly' ? ($contract['next_invoice_date'] ?: $effectiveFrom) : null,
     ]);
     return (int)$pdo->lastInsertId();
 }
@@ -125,11 +132,14 @@ function pa_recurring_service_sync_base(PDO $pdo, int $contractId): void
     if ($baseId === null) {
         return;
     }
+    $changes = $pdo->prepare("SELECT 1 FROM contract_recurring_service_changes WHERE recurring_service_id=? AND state IN ('pending','approved') LIMIT 1");
+    $changes->execute([$baseId]);
+    if ($changes->fetchColumn()) throw new DomainException('Cancel the scheduled service change before editing the original billing setup.');
     $name = trim((string)($contract['scope'] ?? '')) ?: 'Recurring service';
     $pdo->prepare('
         UPDATE contract_recurring_services
         SET name=?, description=?, amount=?, billing_interval_count=?, billing_interval_unit=?,
-            effective_from=?, effective_until=?, next_invoice_date=?
+            effective_from=?, effective_until=?, next_invoice_date=?,rate_basis=?,monthly_rate=?,billing_anchor_date=?
         WHERE id=? AND contract_id=? AND is_base=1
     ')->execute([
         substr($name, 0, 190),
@@ -140,6 +150,9 @@ function pa_recurring_service_sync_base(PDO $pdo, int $contractId): void
         (string)($contract['start_date'] ?: date('Y-m-d')),
         $contract['end_date'] ?: null,
         $contract['next_invoice_date'] ?: null,
+        (string)($contract['rate_basis'] ?? 'per_period'),
+        $contract['monthly_rate'] ?? null,
+        ($contract['rate_basis'] ?? 'per_period') === 'monthly' ? ($contract['next_invoice_date'] ?: ($contract['start_date'] ?: date('Y-m-d'))) : null,
         $baseId,
         $contractId,
     ]);
@@ -172,8 +185,8 @@ function pa_recurring_services_activate(PDO $pdo, int $contractId, ?string $base
 {
     pa_recurring_service_ensure_base($pdo, $contractId);
     if ($baseNextDate !== null) {
-        $pdo->prepare('UPDATE contract_recurring_services SET next_invoice_date=? WHERE contract_id=? AND is_base=1')
-            ->execute([$baseNextDate, $contractId]);
+        $pdo->prepare("UPDATE contract_recurring_services SET next_invoice_date=?,billing_anchor_date=CASE WHEN rate_basis='monthly' AND last_invoice_date IS NULL THEN ? ELSE billing_anchor_date END WHERE contract_id=? AND is_base=1")
+            ->execute([$baseNextDate, $baseNextDate, $contractId]);
     }
     $pdo->prepare('
         UPDATE contract_recurring_services
@@ -232,7 +245,7 @@ function pa_recurring_services_due(PDO $pdo, int $contractId, string $throughDat
         FOR UPDATE
     ');
     $stmt->execute([$contractId, $throughDate, $throughDate, $throughDate, $throughDate]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    return array_map(fn(array $service): array => pa_recurring_service_apply_change($pdo, $service), $stmt->fetchAll(PDO::FETCH_ASSOC));
 }
 
 function pa_recurring_services_exist(PDO $pdo, int $contractId): bool

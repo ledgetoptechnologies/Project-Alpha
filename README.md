@@ -42,6 +42,46 @@ Quote -> Contract -> Invoice -> Payment
 
 Long-term and on-demand workflows branch after contract activation. See [Document Workflow](docs/DOCUMENT_WORKFLOW.md) for statuses, automatic actions, public-link behavior, and examples.
 
+### Service rates and renewal changes
+
+Quote and contract creation separates **Agreement** (one-time work or an ongoing
+service agreement) from **Invoicing** (recurring or as needed). These choices use
+the existing document families; upgrading does not convert saved documents.
+
+For recurring services, **Monthly service rate** calculates one month or twelve
+months per invoice. For example, a $100.01 monthly rate produces a $1,200.12 annual
+subtotal. **Amount per invoice** retains the existing behavior for custom billing
+periods. Tax and discount rules remain separate from the rate calculation.
+
+On an ongoing recurring agreement, use **Services & billing schedule** to propose
+a change for the next renewal. The current service continues until the change is
+approved and its renewal arrives. A client billed annually who requests monthly
+billing halfway through the year keeps that annual coverage; the first monthly
+charge starts after it ends. This boundary protects already-invoiced periods even
+when payment collection is delayed. It does not automatically refund or prorate an
+existing invoice. Outstanding overdue billing must be resolved before changing
+the renewal schedule.
+
+Rate-only changes preserve calendar anniversaries, including month-end and leap-day
+renewals. A new monthly-rate service starts its full billing period on its first
+invoice date. A full monthly or annual charge must fit within the service end date;
+choose a shorter frequency or revise the agreed end date when it does not.
+If a later final period is too short, billing stops before charging it. Resolve
+that period before renewal; once overdue, end the service and add the remaining
+period separately rather than rewriting its previously billed coverage.
+
+Signed agreement terms and previous invoices remain unchanged. New recurring
+invoices show their service coverage and monthly-rate calculation. Pending and
+approved changes can be cancelled before they take effect. Draft initial terms
+are edited on the draft agreement; ended services require a new service period.
+Fixed-total installments and existing on-demand generation retain their separate
+behavior. Bank AutoPay is not enabled by this feature.
+
+Migration `0111_recurring_service_schedule_versions.sql` is additive. Existing
+rates default to **Amount per invoice**, with no inferred monthly rate, historical
+coverage backfill, or queued change. Apply migrations before updating web and cron,
+and retain each deployment's existing cron execution profile.
+
 ## Current Scope
 
 Project Alpha currently targets a self-hosted deployment operated for one business. The schema includes organizations and organization-aware permissions, but the application is not yet offered as a fully isolated, hosted multi-tenant service.

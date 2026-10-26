@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../utils/document_recipient.php';
 require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
+require_once __DIR__ . '/../../../utils/contract_billing_start.php';
 $id = (int)($_GET['id'] ?? 0);
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/document_sender.php';
@@ -30,6 +31,7 @@ try {
 
 $recurringServices = [];
 $contractAmendments = [];
+$scheduledServiceChanges = [];
 if (!defined('PDF_MODE') && !defined('PUBLIC_VIEW')) {
     try {
         $serviceStmt = $pdo->prepare('SELECT * FROM contract_recurring_services WHERE contract_id=? ORDER BY is_base DESC,status="ended",effective_from,id');
@@ -38,6 +40,9 @@ if (!defined('PDF_MODE') && !defined('PUBLIC_VIEW')) {
         $amendmentStmt = $pdo->prepare('SELECT a.*,s.name AS service_name FROM contract_amendments a LEFT JOIN contract_recurring_services s ON s.id=a.recurring_service_id WHERE a.contract_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 50');
         $amendmentStmt->execute([$id]);
         $contractAmendments = $amendmentStmt->fetchAll(PDO::FETCH_ASSOC);
+        $changeStmt = $pdo->prepare('SELECT * FROM contract_recurring_service_changes WHERE contract_id=? AND state IN ("pending","approved") ORDER BY effective_date,id');
+        $changeStmt->execute([$id]);
+        $scheduledServiceChanges = $changeStmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Throwable $e) {
         $recurringServices = [];
         $contractAmendments = [];
@@ -149,9 +154,8 @@ $isOngoing = empty($contract['end_date']);
       <a href="<?php echo htmlspecialchars($contract['signed_pdf_path']); ?>" target="_blank" rel="noopener" class="btn btn-sm btn-success">View Signed PDF</a>
     <?php endif; ?>
     <?php
-      $noInvoicesYet = (int)($contract['invoices_generated'] ?? 0) === 0 && empty($contract['last_invoice_date']);
-      $canGenerateFirstInvoice = $contractStatus === 'active' && !empty($contract['signed_pdf_path']) && $noInvoicesYet;
-      $firstInvoiceButtonLabel = empty($contract['next_invoice_date']) ? 'Start Billing' : 'Generate Invoice Now';
+      $canGenerateFirstInvoice = pa_long_term_can_start_billing($pdo, $contract);
+      $firstInvoiceButtonLabel = 'Start Billing';
     ?>
     <?php if ($canGenerateFirstInvoice): ?>
       <form method="post" action="/?page=long-term-contract-start-billing" style="display:inline">
@@ -237,7 +241,7 @@ $isOngoing = empty($contract['end_date']);
     <div class="no-print" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd">Document date updated successfully.</div>
   <?php endif; ?>
   <?php if (!empty($_GET['service_saved']) || !empty($_GET['service_updated'])): ?>
-    <div class="no-print" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#166534;border:1px solid #86efac">Recurring service schedule updated.</div>
+    <div class="no-print" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#166534;border:1px solid #86efac">Service terms saved. Approved changes take effect at renewal; pending changes require approval.</div>
   <?php endif; ?>
   <?php if (!empty($_GET['service_invoice_generated'])): ?>
     <div class="no-print" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd">The service was due, so its recurring invoice was generated immediately<?php echo !empty($_GET['service_invoice_sent']) ? ' and emailed automatically' : ''; ?>.</div>
@@ -251,111 +255,7 @@ $isOngoing = empty($contract['end_date']);
     <div class="no-print" style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fff1f2;color:#9f1239;border:1px solid #fda4af"><?php echo htmlspecialchars((string)$_GET['service_error']); ?></div>
   <?php endif; ?>
 
-  <div id="recurring-services" class="no-print" style="margin:18px 0;padding:18px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;scroll-margin-top:20px">
-    <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px">
-      <div>
-        <h3 style="margin:0 0 4px;font-size:18px">Recurring Services &amp; Amendments</h3>
-        <div style="font-size:13px;color:#64748b;max-width:760px">Each approved service keeps its own amount, frequency, and effective dates. Services due on the same date appear as separate lines on one invoice; different schedules generate independently.</div>
-      </div>
-      <a href="/?page=invoice/recurring-invoices-list&status=all&contract_id=<?php echo (int)$id; ?>#invoice-history" class="btn btn-sm">View Invoice History</a>
-    </div>
-
-    <?php if (($contract['pricing_type'] ?? '') !== 'per_invoice'): ?>
-      <div style="padding:12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;color:#9a3412">Independent recurring services are available for recurring-amount contracts. Convert this fixed-total schedule through Edit Billing before adding services.</div>
-    <?php else: ?>
-      <div style="overflow:auto;margin-bottom:16px">
-        <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px">
-          <thead><tr style="text-align:left;border-bottom:1px solid #e2e8f0"><th style="padding:9px">Service</th><th style="padding:9px">Billing</th><th style="padding:9px">Effective</th><th style="padding:9px">Next invoice</th><th style="padding:9px">State</th><th style="padding:9px">Actions</th></tr></thead>
-          <tbody>
-            <?php if (!$recurringServices): ?>
-              <tr><td colspan="6" style="padding:14px;text-align:center;color:#64748b">No service schedules found. Saving the base billing terms or adding a service will create one.</td></tr>
-            <?php else: ?>
-              <?php foreach ($recurringServices as $service): ?>
-                <?php
-                  $serviceStatus = (string)$service['status'];
-                  $approvalStatus = (string)$service['approval_status'];
-                  $intervalText = max(1, (int)$service['billing_interval_count']) . ' ' . (string)$service['billing_interval_unit'];
-                  if ((int)$service['billing_interval_count'] > 1) $intervalText .= 's';
-                ?>
-                <tr style="border-top:1px solid #f1f5f9;<?php echo $serviceStatus === 'ended' ? 'opacity:.65;' : ''; ?>">
-                  <td style="padding:9px"><strong><?php echo htmlspecialchars((string)$service['name']); ?></strong><?php if (!empty($service['is_base'])): ?> <span style="font-size:11px;padding:2px 5px;background:#e0e7ff;color:#3730a3;border-radius:4px">Base</span><?php endif; ?><div style="font-size:12px;color:#64748b"><?php echo htmlspecialchars((string)($service['description'] ?? '')); ?></div></td>
-                  <td style="padding:9px"><strong>$<?php echo number_format((float)$service['amount'], 2); ?></strong><div style="font-size:12px;color:#64748b">Every <?php echo htmlspecialchars($intervalText); ?></div></td>
-                  <td style="padding:9px;white-space:nowrap"><?php echo date('M j, Y', strtotime((string)$service['effective_from'])); ?><?php if (!empty($service['effective_until'])): ?><div style="font-size:12px;color:#64748b">through <?php echo date('M j, Y', strtotime((string)$service['effective_until'])); ?></div><?php endif; ?></td>
-                  <td style="padding:9px;white-space:nowrap"><?php echo !empty($service['next_invoice_date']) ? date('M j, Y', strtotime((string)$service['next_invoice_date'])) : '—'; ?></td>
-                  <td style="padding:9px;text-transform:capitalize"><?php echo htmlspecialchars($serviceStatus); ?><div style="font-size:12px;color:<?php echo $approvalStatus === 'approved' ? '#166534' : '#9a3412'; ?>"><?php echo htmlspecialchars($approvalStatus); ?></div></td>
-                  <td style="padding:9px;white-space:nowrap">
-                    <?php if ($approvalStatus !== 'approved' && $serviceStatus !== 'ended'): ?>
-                      <form method="post" action="/?page=long-term-recurring-service-action" style="display:inline"><input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>"><input type="hidden" name="service_id" value="<?php echo (int)$service['id']; ?>"><input type="hidden" name="service_action" value="approve"><button class="btn btn-sm" type="submit">Approve</button></form>
-                    <?php endif; ?>
-                    <?php if ($serviceStatus === 'active'): ?>
-                      <form method="post" action="/?page=long-term-recurring-service-action" style="display:inline"><input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>"><input type="hidden" name="service_id" value="<?php echo (int)$service['id']; ?>"><input type="hidden" name="service_action" value="pause"><button class="btn btn-sm" type="submit">Pause</button></form>
-                    <?php elseif ($serviceStatus === 'paused' && $contractStatus === 'active'): ?>
-                      <form method="post" action="/?page=long-term-recurring-service-action" style="display:inline"><input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>"><input type="hidden" name="service_id" value="<?php echo (int)$service['id']; ?>"><input type="hidden" name="service_action" value="resume"><button class="btn btn-sm" type="submit">Resume</button></form>
-                    <?php endif; ?>
-                    <?php if ($serviceStatus !== 'ended'): ?>
-                      <form method="post" action="/?page=long-term-recurring-service-action" style="display:inline" onsubmit="return confirm('End this recurring service? Future charges for this service will stop.');"><input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>"><input type="hidden" name="service_id" value="<?php echo (int)$service['id']; ?>"><input type="hidden" name="service_action" value="end"><button class="btn btn-sm" type="submit">End</button></form>
-                    <?php endif; ?>
-                  </td>
-                </tr>
-                <?php if ($serviceStatus !== 'ended'): ?>
-                  <tr><td colspan="6" style="padding:0 9px 10px;background:#fff"><details><summary style="cursor:pointer;font-size:12px;color:#2563eb">Edit service terms / attach addendum</summary>
-                    <form method="post" action="/?page=long-term-recurring-service-save" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:12px 0 2px">
-                      <input type="hidden" name="generation_key" value="<?php echo bin2hex(random_bytes(16)); ?>">
-                      <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>"><input type="hidden" name="service_id" value="<?php echo (int)$service['id']; ?>">
-                      <label style="display:grid;gap:4px;font-size:12px">Service name<input name="name" required value="<?php echo htmlspecialchars((string)$service['name']); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Amount<input type="number" name="amount" min="0.01" step="0.01" required value="<?php echo htmlspecialchars(number_format((float)$service['amount'], 2, '.', '')); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Every<input type="number" name="billing_interval_count" min="1" required value="<?php echo (int)$service['billing_interval_count']; ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Frequency<select name="billing_interval_unit" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"><?php foreach (['day','week','month','year'] as $unit): ?><option value="<?php echo $unit; ?>" <?php echo $service['billing_interval_unit'] === $unit ? 'selected' : ''; ?>><?php echo ucfirst($unit); ?></option><?php endforeach; ?></select></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Effective from<input type="date" name="effective_from" required value="<?php echo htmlspecialchars((string)$service['effective_from']); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Effective until<input type="date" name="effective_until" value="<?php echo htmlspecialchars((string)($service['effective_until'] ?? '')); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Next invoice<input type="date" name="next_invoice_date" required value="<?php echo htmlspecialchars((string)($service['next_invoice_date'] ?: date('Y-m-d'))); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <label style="display:grid;gap:4px;font-size:12px">Signed addendum (PDF)<input type="file" name="signed_addendum" accept="application/pdf,.pdf" style="font-size:12px"></label>
-                      <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" name="client_approved" value="1" <?php echo $approvalStatus === 'approved' ? 'checked' : ''; ?>> Client approved</label>
-                      <label style="display:grid;gap:4px;font-size:12px;grid-column:1/-1">Description<input name="description" value="<?php echo htmlspecialchars((string)($service['description'] ?? '')); ?>" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-                      <div style="grid-column:1/-1"><button type="submit" class="btn btn-sm">Save Service Amendment</button></div>
-                    </form>
-                  </details></td></tr>
-                <?php endif; ?>
-              <?php endforeach; ?>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-
-      <details style="background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:12px" <?php echo !$recurringServices ? 'open' : ''; ?>><summary style="cursor:pointer;font-weight:700;color:#1d4ed8">Add a recurring service</summary>
-        <form method="post" action="/?page=long-term-recurring-service-save" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:14px">
-          <input type="hidden" name="generation_key" value="<?php echo bin2hex(random_bytes(16)); ?>">
-          <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>"><input type="hidden" name="contract_id" value="<?php echo (int)$id; ?>">
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Service name<input name="name" required placeholder="Advertising management" style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Recurring amount<input type="number" name="amount" min="0.01" step="0.01" required placeholder="500.00" style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Every<input type="number" name="billing_interval_count" min="1" value="1" required style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Frequency<select name="billing_interval_unit" style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"><option value="month">Month</option><option value="year">Year</option><option value="week">Week</option><option value="day">Day</option></select></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Effective from<input type="date" name="effective_from" value="<?php echo date('Y-m-d'); ?>" required style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Effective until<input type="date" name="effective_until" style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">First full invoice<input type="date" name="next_invoice_date" value="<?php echo date('Y-m-d'); ?>" required style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600">Signed addendum (PDF)<input type="file" name="signed_addendum" accept="application/pdf,.pdf" style="font-size:12px"></label>
-          <label style="display:grid;gap:4px;font-size:12px;font-weight:600;grid-column:1/-1">Description<input name="description" placeholder="Campaign management, optimization, and monthly reporting" style="padding:9px;border:1px solid #cbd5e1;border-radius:6px"></label>
-          <div style="grid-column:1/-1;padding:10px;background:#f8fafc;border-radius:7px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">
-            <label style="display:flex;align-items:center;gap:7px;font-size:13px"><input type="checkbox" name="client_approved" value="1"> Client approved this amendment</label>
-            <label style="display:grid;gap:4px;font-size:12px">Optional prorated subtotal<input type="number" name="proration_amount" min="0" step="0.01" placeholder="0.00" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-            <label style="display:grid;gap:4px;font-size:12px">Proration description<input name="proration_description" placeholder="Partial first month" style="padding:8px;border:1px solid #cbd5e1;border-radius:6px"></label>
-            <label style="display:flex;align-items:center;gap:7px;font-size:13px"><input type="checkbox" name="send_proration" value="1"> Email prorated invoice now</label>
-          </div>
-          <div style="grid-column:1/-1"><button type="submit" class="btn btn-sm btn-success">Add Recurring Service</button></div>
-        </form>
-      </details>
-    <?php endif; ?>
-
-    <?php if ($contractAmendments): ?>
-      <details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">Amendment history (<?php echo count($contractAmendments); ?>)</summary>
-        <div style="display:grid;gap:7px;margin-top:10px">
-          <?php foreach ($contractAmendments as $amendment): ?>
-            <div style="padding:9px 11px;background:#fff;border:1px solid #e2e8f0;border-radius:7px;font-size:13px"><strong><?php echo htmlspecialchars((string)$amendment['summary']); ?></strong><div style="color:#64748b;margin-top:2px"><?php echo date('M j, Y g:i A', strtotime((string)$amendment['created_at'])); ?> · effective <?php echo date('M j, Y', strtotime((string)$amendment['effective_date'])); ?> · <?php echo htmlspecialchars((string)$amendment['approval_status']); ?><?php if (!empty($amendment['signed_document_path'])): ?> · <a href="<?php echo htmlspecialchars((string)$amendment['signed_document_path']); ?>" target="_blank" rel="noopener">Signed addendum</a><?php endif; ?></div></div>
-          <?php endforeach; ?>
-        </div>
-      </details>
-    <?php endif; ?>
-  </div>
+  <?php require __DIR__ . '/../../components/recurring_service_panel.php'; ?>
 
   <div class="no-print" style="padding:8px 12px;background:#f3f4f6;border-radius:6px;margin-bottom:8px;font-size:13px;color:#374151">
     <strong>Created:</strong> <?php echo !empty($contract['created_at']) ? date('M j, Y g:i A', strtotime($contract['created_at'])) : 'N/A'; ?>
@@ -441,6 +341,9 @@ $isOngoing = empty($contract['end_date']);
       <td style="width:25%;padding:8px;border-right:1px solid #e5e7eb;vertical-align:top">
         <div style="font-size:11px;color:#6b7280">Billing Frequency</div>
         <div style="font-weight:600;color:#111"><?php echo htmlspecialchars($billingInterval); ?></div>
+        <?php if (($contract['rate_basis'] ?? 'per_period') === 'monthly'): ?>
+          <div style="font-size:12px;color:#475569">$<?php echo number_format((float)$contract['monthly_rate'], 2); ?>/month × <?php echo ($contract['billing_interval_unit'] ?? '') === 'year' ? '12' : '1'; ?> month(s)</div>
+        <?php endif; ?>
       </td>
       <td style="width:25%;padding:8px;vertical-align:top">
         <div style="font-size:11px;color:#6b7280">Status</div>

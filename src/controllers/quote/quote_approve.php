@@ -1,6 +1,7 @@
 <?php
 // src/controllers/quote_approve.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_billing.php';
 require_once __DIR__ . '/../../config/app.php';
@@ -110,7 +111,11 @@ try {
       $contract_id = (int)$pdo->lastInsertId();
       $pdo->prepare('UPDATE contracts SET job_id=?,service_location_id=? WHERE id=?')->execute([$jobId, $serviceLocationId, $contract_id]);
       if ($quoteType === 'long_term' && ($quote['pricing_type'] ?? '') === 'per_invoice') {
-        pa_recurring_service_ensure_base($pdo, $contract_id);
+        pa_document_recurring_rate_save($pdo, 'contract', $contract_id, [
+            'rate_basis' => $quote['rate_basis'] ?? 'per_period',
+            'monthly_rate' => $quote['monthly_rate'] ?? null,
+          ]);
+          pa_recurring_service_ensure_base($pdo, $contract_id);
       }
 
       if (!empty($qitems)) {

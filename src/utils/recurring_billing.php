@@ -48,9 +48,9 @@ function recurring_invoice_send_on_generate_if_enabled(PDO $pdo, ?int $invoiceId
     return $sent->fetchColumn() !== false;
 }
 
-function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig): ?int {
+function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig, ?DateTimeImmutable $billingDate = null): ?int {
     $logPrefix = '[generate_recurring_invoice]';
-    $today = date('Y-m-d');
+    $today = ($billingDate ?? new DateTimeImmutable('today'))->format('Y-m-d');
 
     try {
         $pdo->beginTransaction();
@@ -96,9 +96,11 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
                     $pdo->commit();
                     return null;
                 }
+                $subtotalMinor = 0;
                 foreach ($dueServices as $service) {
-                    $subtotal += max(0.0, (float)$service['amount']);
+                    $subtotalMinor += pa_recurring_money_to_minor((string)$service['amount']);
                 }
+                $subtotal = pa_recurring_minor_to_money($subtotalMinor);
             } else {
                 // Compatibility fallback for a database awaiting the service-schedule migration.
                 $subtotal = (float)$contract['price_per_invoice'];
@@ -217,8 +219,21 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
                     if ($serviceDescription !== '') {
                         $description .= ' — ' . $serviceDescription;
                     }
-                    $amount = max(0.0, (float)$service['amount']);
+                    $coverageStart = (string)$service['next_invoice_date'];
+                    $coverageEnd = pa_recurring_service_period_end($service, $coverageStart);
+                    $overlap = $pdo->prepare('SELECT id FROM recurring_invoice_coverage WHERE recurring_service_id=? AND coverage_start<? AND coverage_end>? LIMIT 1');
+                    $overlap->execute([(int)$service['id'], $coverageEnd, $coverageStart]);
+                    if ($overlap->fetchColumn()) throw new DomainException('The requested service period overlaps an existing invoice. Review its billing schedule before generating another charge.');
+                    $lastCoveredDay = (new DateTimeImmutable($coverageEnd))->modify('-1 day')->format('Y-m-d');
+                    $description .= ' | Service period: ' . $coverageStart . ' through ' . $lastCoveredDay;
+                    if (($service['rate_basis'] ?? 'per_period') === 'monthly') {
+                        $months = $service['billing_interval_unit'] === 'year' ? 12 : 1;
+                        $description .= ' | Monthly rate ' . $service['monthly_rate'] . ' x ' . $months . ' month' . ($months === 1 ? '' : 's');
+                    }
+                    $amount = (string)$service['amount'];
                     $itemInsert->execute([$invoiceId, $serviceName, $description, 1, $amount, $amount]);
+                    $pdo->prepare('INSERT INTO recurring_invoice_coverage (recurring_service_id,invoice_id,coverage_start,coverage_end,rate_basis,monthly_rate,amount,schedule_snapshot) VALUES (?,?,?,?,?,?,?,?)')
+                        ->execute([(int)$service['id'], $invoiceId, $coverageStart, $coverageEnd, (string)($service['rate_basis'] ?? 'per_period'), $service['monthly_rate'] ?? null, $amount, json_encode(pa_recurring_service_snapshot($service), JSON_THROW_ON_ERROR)]);
                 }
             } else {
                 $billingInterval = $contract['billing_interval_count'] . ' ' . ucfirst($contract['billing_interval_unit']);
@@ -261,7 +276,7 @@ function generate_recurring_invoice(PDO $pdo, array $contract, array $appConfig)
                     (string)$service['next_invoice_date'],
                     (int)$service['billing_interval_count'],
                     (string)$service['billing_interval_unit'],
-                    (string)$service['effective_from']
+                    (string)($service['billing_anchor_date'] ?? $service['effective_from'])
                 );
                 $serviceStatus = 'active';
                 if (!empty($service['effective_until']) && $serviceNextDate > (string)$service['effective_until']) {

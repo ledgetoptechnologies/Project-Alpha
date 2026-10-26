@@ -1551,6 +1551,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_once __DIR__ . '/../src/controllers/contract/long_term_recurring_service_action.php';
         exit;
     }
+    if ($page === 'long-term-recurring-history') {
+        require_once __DIR__ . '/../src/controllers/contract/long_term_recurring_history.php';
+        exit;
+    }
     if ($page === 'document-reenable') {
         require_once __DIR__ . '/../src/controllers/document_reenable_handler.php';
         exit;
