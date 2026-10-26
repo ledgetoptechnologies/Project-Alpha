@@ -230,16 +230,16 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
                 </dialog>
               <?php endif; ?>
               <?php if ($isProcessorBacked && $isSucceeded && $processorRefundRemaining > 0.005): ?>
-                <details style="position:relative">
+                <details>
                   <summary style="padding:6px 9px;border-radius:6px;border:1px solid #fecaca;background:#fff1f2;color:#991b1b;cursor:pointer;white-space:nowrap;list-style:none">Refund via Stripe</summary>
-                  <form method="post" action="/?page=payments/payment-refund" style="position:absolute;z-index:30;right:0;top:calc(100% + 6px);width:280px;display:grid;gap:8px;padding:12px;background:#fff;border:1px solid #fecaca;border-radius:8px;box-shadow:0 10px 25px rgba(15,23,42,.16)" onsubmit="return confirm('This sends real money back to the client through Stripe and cannot be undone. Continue?');">
+                  <form method="post" action="/?page=payments/payment-refund" style="width:280px;max-width:100%;box-sizing:border-box;margin-top:6px;display:grid;gap:8px;padding:12px;background:#fff;border:1px solid #fecaca;border-radius:8px;white-space:normal">
                     <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
                     <input type="hidden" name="payment_id" value="<?php echo (int)$r['id']; ?>">
-                    <input type="hidden" name="processor_refund" value="1">
                     <input type="hidden" name="refund_request_token" value="<?php echo bin2hex(random_bytes(16)); ?>">
                     <label><span style="display:block;font-size:12px;margin-bottom:3px">Amount to return (max $<?php echo number_format($processorRefundRemaining, 2); ?>)</span><input type="number" name="amount" step="0.01" min="0.01" max="<?php echo htmlspecialchars(number_format($processorRefundRemaining, 2, '.', '')); ?>" value="<?php echo htmlspecialchars(number_format($processorRefundRemaining, 2, '.', '')); ?>" required style="width:100%;padding:7px;box-sizing:border-box"></label>
                     <label><span style="display:block;font-size:12px;margin-bottom:3px">Reason</span><select name="refund_reason" style="width:100%;padding:7px"><option value="requested_by_customer">Requested by customer</option><option value="duplicate">Duplicate charge</option><option value="fraudulent">Fraudulent</option></select></label>
                     <div style="font-size:12px;color:#991b1b">This is a real Stripe refund, not an accounting correction.</div>
+                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.5"><input type="checkbox" name="processor_refund" value="1" required style="margin-top:4px;flex-shrink:0"><span>I confirm this sends the selected amount back through Stripe.</span></label>
                     <button type="submit" style="padding:7px 9px;border:1px solid #be123c;border-radius:6px;background:#be123c;color:#fff">Send Stripe refund</button>
                   </form>
                 </details>

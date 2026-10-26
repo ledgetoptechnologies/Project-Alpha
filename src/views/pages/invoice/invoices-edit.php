@@ -414,12 +414,16 @@ if (!empty($inv['contract_id'])) {
     </div>
 
     <div>
+      <?php require_once __DIR__.'/../../../utils/autopay_beta.php'; if(pa_autopay_enabled($appConfig)): ?>
+      <aside data-invoice-autopay-preview data-invoice-id="<?php echo (int)$inv['id']; ?>" aria-live="polite" style="padding:12px;border:1px solid #cbd5e1;border-radius:8px"><strong>AutoPay — test mode</strong><p data-autopay-preview-text>Saving changes does not start a payment. Review the saved invoice before finalizing.</p></aside>
+      <?php endif; ?>
       <button type="submit" style="padding:10px 14px;border-radius:8px;border:0;background:var(--nav-accent);color:#fff;font-weight:600">Update Invoice</button>
     </div>
   </form>
 </section>
 
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/invoices-edit-logic.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
+<?php if(pa_autopay_enabled($appConfig)): ?><script src="<?php echo htmlspecialchars(asset_url('/assets/js/invoice-autopay-preview.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script><?php endif; ?>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/document-recipient-presentation.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/tax-lookup-control.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/pricing-adjustments.js'), ENT_QUOTES, 'UTF-8'); ?>" defer></script>

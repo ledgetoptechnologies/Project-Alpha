@@ -43,6 +43,8 @@ if (invoice_should_prompt_for_missing_content_links($pdo, 'project_invoice', $id
         exit;
     }
 }
+require_once __DIR__ . '/../../utils/autopay_staff.php';
+$appConfig = pa_autopay_staff_request_config($appConfig, $_POST, csrf_token());
 $delivery = project_invoice_send_email_result($pdo, $id, $appConfig, $recipientClientIds, true, $recipientKeys);
 $param = $delivery['sent'] > 0
     ? 'emailed=1'

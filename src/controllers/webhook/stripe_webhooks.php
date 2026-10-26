@@ -109,8 +109,21 @@ try {
     // Route to appropriate handler based on event type
     $eventType = $event['type'];
     $eventData = $event['data']['object'] ?? [];
+    $autoPayHandled = false;
+    if ($eventType === 'setup_intent.succeeded' && !empty($eventData['metadata']['pa_autopay_authorization_id'])) {
+        if ($signatureValid !== true) throw new RuntimeException('AutoPay requires a verified webhook signature.');
+        require_once __DIR__ . '/../../utils/autopay_enrollment.php';
+        // A temporary feature/configuration stop must not acknowledge and lose
+        // a verified setup completion. Let Stripe retry once processing resumes.
+        if (!pa_autopay_enabled($appConfig)) throw new RuntimeException('AutoPay setup processing is temporarily unavailable.');
+        pa_autopay_setup_event($pdo, $event, $appConfig, static fn($method,$endpoint,$data,$key) => $stripe->autoPayRequest($method,$endpoint,$data,$key));
+        $autoPayHandled = true;
+    } elseif (str_starts_with($eventType, 'payment_intent.')) {
+        require_once __DIR__ . '/../../utils/autopay_collection.php';
+        $autoPayHandled = pa_autopay_handle_event($pdo, $event, $appConfig, $signatureValid === true);
+    }
     
-    switch ($eventType) {
+    if (!$autoPayHandled) switch ($eventType) {
         // Checkout events
         case 'checkout.session.completed':
             require_once __DIR__ . '/stripe_checkout_completed.php';
@@ -190,7 +203,9 @@ try {
         case 'refund.created':
         case 'refund.updated':
         case 'refund.failed':
-            stripe_record_refund($pdo, $eventData);
+            require_once __DIR__ . '/../../utils/autopay_collection.php';
+            pa_autopay_hold_financial_event($pdo, $eventData);
+            stripe_record_refund_event($pdo, $eventData, static fn(string $id): array => $stripe->getRefund($id));
             break;
             
         // Dispute events
@@ -199,6 +214,8 @@ try {
         case 'charge.dispute.closed':
         case 'charge.dispute.funds_withdrawn':
         case 'charge.dispute.funds_reinstated':
+            require_once __DIR__ . '/../../utils/autopay_collection.php';
+            pa_autopay_hold_financial_event($pdo, $eventData);
             stripe_record_dispute($pdo, $eventData, $eventType);
             break;
             

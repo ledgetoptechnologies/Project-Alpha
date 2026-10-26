@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
 require_once __DIR__ . '/../../utils/invoice_content_links.php';
 require_once __DIR__ . '/../../utils/audit.php';
+require_once __DIR__ . '/../../utils/autopay_staff.php';
+$appConfig = pa_autopay_staff_request_config($appConfig, $_POST, csrf_token());
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {

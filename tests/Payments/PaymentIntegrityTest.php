@@ -527,7 +527,7 @@ final class PaymentIntegrityTest extends TestCase
         self::assertStringContainsString('?string $idempotencyKey = null', $service);
         self::assertStringContainsString("\$this->apiRequest('POST', 'refunds', \$payload, \$idempotencyKey)", $service);
         self::assertStringContainsString('Send Stripe refund', $paymentsList);
-        self::assertStringContainsString('sends real money back', $paymentsList);
+        self::assertStringContainsString('I confirm this sends the selected amount back through Stripe.', $paymentsList);
     }
 
     public function testFullyRefundedZeroBalancePaymentHistoryDoesNotBlockInvoiceVoid(): void

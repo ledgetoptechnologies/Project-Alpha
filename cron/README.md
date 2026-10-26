@@ -32,12 +32,27 @@ before selecting it.
 
 ## Installed Schedule
 
+AutoPay collection is disabled in production. Staging acceptance requires migrations
+112–115, `APP_ENV=staging`, `AUTOPAY_BETA_ENABLED=true`, a unique persistent
+`AUTOPAY_INSTALLATION_ID`, the matching `AUTOPAY_STRIPE_ACCOUNT_ID`, Stripe test
+credentials, and verified webhook forwarding. Use synthetic clients and a mail
+catcher. Never copy production payment authorizations into staging.
+
+The worker only processes reservations created when an authorized invoice is first
+finalized; it never scans old unpaid invoices or imports legacy AutoPay flags.
+Drafts, historical paid periods, and refunds do not authorize another debit.
+Pending bank debits remain unpaid until Stripe confirms success. Unknown outcomes
+remain reserved for reconciliation; do not clear them to retry payment manually.
+The legacy `auto_charge_recurring.php` entry point delegates to this worker and
+cannot run its previous unpaid-invoice scanning logic.
+
 | Local schedule | Script | Purpose |
 |---|---|---|
 | Every minute | `process_notification_relay.php` | Process the disabled-by-default internal notification relay queue |
 | Every minute | `send_portal_projection_outbox.php` | Deliver enabled, signed portal projection outbox records with bounded retries |
 | Every minute | `reconcile_client_portal.php` | Resume the bounded historical client-portal provisioning backfill after producer preflight is ready |
 | Daily 02:00 | `generate_recurring_invoices.php` | Generate due long-term invoices and catch up missed periods |
+| Every minute | `process_autopay_collections.php` | Process explicit AutoPay reservations, only in configured staging/test mode |
 | Daily 02:15 | `generate_recurring_expenses.php` | Generate due recurring expenses once per scheduled occurrence |
 | Daily 02:30 | `purge_mileage_tracking_points.php` | Delete finalized GPS route points after 90 days and discarded points immediately |
 | Hourly at :30 | `backup_database.php --scheduled` | Creates rotating backups when the configured local backup hour matches |
@@ -126,3 +141,9 @@ Database backups are infrastructure protection and do not depend on the automati
 9. Confirm migration 0083 is applied. Schema health now treats a missing `portal_client_provisioning_backfill` table as an incomplete upgrade.
 
 Do not paste production logs into a public issue without removing credentials and customer information.
+
+## AutoPay missed-webhook recovery
+
+The Stripe reconciliation job also checks up to 100 stored AutoPay PaymentIntent IDs per run, independently of Stripe's creation-date listing window. This covers delayed bank settlement and repairs collection status after payment accounting already succeeded. Verified failures, cancellations and action-required outcomes are recovered only if the local snapshot is still current; terminal outcomes never regress. Checked rows rotate by their last update time. Recovery uses authenticated provider reads and existing accounting; it never creates or captures a payment and never treats provider reads as signed webhooks.
+
+Recovery remains restricted to the configured staging/test/development installation and Stripe test account. It can settle existing collections while the new-collection feature flag is off. Financial holds stay held for review; observed refunds/disputes also cause a hold. Unknown outcomes without a stored PaymentIntent ID are not retried by reconciliation. The existing invoice-notification job subsequently creates and retries the durable receipt work for recovered successes.

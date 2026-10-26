@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+require_once __DIR__ . '/../../utils/autopay_staff.php';
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) { header('Location: /?page=contract/contracts-list&error=Invalid%20contract'); exit; }
@@ -25,13 +26,14 @@ try {
   // Set invoice due date if not set
   $netDays = (int)($appConfig['net_terms_days'] ?? 30); if ($netDays < 0) { $netDays = 0; }
   $due = date('Y-m-d', strtotime('+' . $netDays . ' days'));
-  $inv = $pdo->prepare('SELECT id, due_date FROM invoices WHERE contract_id=? ORDER BY id DESC LIMIT 1');
+  $inv = $pdo->prepare('SELECT * FROM invoices WHERE contract_id=? ORDER BY id DESC LIMIT 1 FOR UPDATE');
   $inv->execute([$id]);
   $invoice = $inv->fetch(PDO::FETCH_ASSOC);
   if ($invoice && empty($invoice['due_date'])) {
     $pdo->prepare('UPDATE invoices SET due_date=? WHERE id=?')->execute([$due, (int)$invoice['id']]);
   }
-  if ($invoice) {
+  $autoPayReview = $invoice && pa_autopay_staff_state($pdo, $invoice, $appConfig)['eligible'];
+  if ($invoice && !$autoPayReview) {
     invoice_finalize(
       $pdo,
       (int)$invoice['id'],
@@ -42,6 +44,10 @@ try {
   }
 
   $pdo->commit();
+
+  if ($autoPayReview) {
+    header('Location: /?page=invoice/invoice-details&id=' . (int)$invoice['id'] . '&autopay_review=1'); exit;
+  }
 
   if ($invoice && !empty($appConfig['invoice_auto_email_on_contract_complete'])) {
     invoice_send_finalized($pdo, (int)$invoice['id'], $appConfig, 'contract_complete');

@@ -161,7 +161,11 @@ $showContactOnDocument = $organizationId && !empty($_POST['show_contact_on_docum
 invoice_ensure_payments_schema($pdo);
 $pdo->beginTransaction();
 try {
+  require_once __DIR__ . '/../../utils/autopay_collection.php';
+  pa_autopay_lock_parent_for_invoice_mutation($pdo, $id);
   $invoiceState=DocumentPolicy::assertMutable($pdo,'invoice',$id,'monetary_adjustment',true);
+  require_once __DIR__ . '/../../utils/autopay_collection.php';
+  pa_autopay_assert_payment_available($pdo, $id);
   require_record_ownership($pdo,'invoices',$id);
   if (invoice_workforce_history($pdo, $id) !== $workforceHistory) throw new DomainException('Invoice history changed; reload before saving.');
   if ($workforceHistory['linked'] && $client_id !== (int)$invoiceState['client_id']) throw new DomainException('Historical time and mileage must retain their original client.');

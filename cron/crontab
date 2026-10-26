@@ -26,6 +26,9 @@ CRON_LOG=/var/www/config/logs/cron/cron.log
 # Generate recurring invoices - daily at 2:00 AM
 0 2 * * * root . /etc/environment && php /var/www/src/cron/generate_recurring_invoices.php >> $CRON_LOG 2>&1
 
+# Collect explicitly reserved AutoPay invoices; disabled outside staging/test.
+* * * * * root . /etc/environment && php /var/www/src/cron/process_autopay_collections.php >> $CRON_LOG 2>&1
+
 # Deliver queued invoice emails and due retries independently of daily scheduling.
 */5 * * * * root . /etc/environment && php /var/www/src/cron/process_invoice_notifications.php >> $CRON_LOG 2>&1
 

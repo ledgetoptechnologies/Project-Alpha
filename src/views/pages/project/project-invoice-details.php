@@ -118,8 +118,9 @@ $documentSender = document_sender_for_document($pdo, $appConfig, $pi);
   <?php endif; ?>
 
   <?php if (!$isPdf && !$isPublic): ?>
+    <?php $autopayDocument = $pi; $autopayType = 'project_invoice'; $autopayForm = 'project-invoice-email-form'; require __DIR__ . '/../../components/autopay_invoice_status.php'; ?>
     <div id="emailPanel" class="no-print" style="display:<?php echo $showEmailPanel ? 'block' : 'none'; ?>;border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;padding:14px;margin-bottom:16px">
-      <form method="post" action="/?page=project/project-invoice-email" style="display:grid;gap:10px">
+      <form id="project-invoice-email-form" method="post" action="/?page=project/project-invoice-email" style="display:grid;gap:10px">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
         <input type="hidden" name="id" value="<?php echo (int)$id; ?>">
         <?php if (!empty($_GET['content_link_warning'])): ?>
@@ -147,7 +148,7 @@ $documentSender = document_sender_for_document($pdo, $appConfig, $pi);
             <?php endforeach; ?>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button type="submit" class="btn btn-sm btn-success">Send Email</button>
+            <button type="submit" class="btn btn-sm btn-success"><?php echo empty($pi['finalized_at']) ? 'Finalize & Email' : 'Send Email'; ?></button>
             <button type="button" class="btn btn-sm" onclick="closeEmailPanel()">Cancel</button>
           </div>
         <?php else: ?>

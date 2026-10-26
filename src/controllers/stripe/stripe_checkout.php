@@ -89,16 +89,24 @@ try {
         throw new Exception('Online payment is not configured. Please contact us for alternative payment methods.');
     }
     
+    // Serialize the collection decision with original issuance and the AutoPay worker.
+    require_once __DIR__ . '/../../utils/autopay_collection.php';
+    $pdo->beginTransaction();
     // Get invoice details
     $invSt = $documentType === 'project_invoice'
-        ? $pdo->prepare('SELECT pi.*,p.name AS project_name,p.name AS client_name,NULL AS client_email FROM project_invoices pi JOIN projects p ON p.id=pi.project_id WHERE pi.id=?')
-        : $pdo->prepare('SELECT i.*,c.name AS client_name,c.email AS client_email FROM invoices i JOIN clients c ON c.id=i.client_id WHERE i.id=?');
+        ? $pdo->prepare('SELECT pi.*,p.name AS project_name,p.name AS client_name,NULL AS client_email FROM project_invoices pi JOIN projects p ON p.id=pi.project_id WHERE pi.id=? FOR UPDATE')
+        : $pdo->prepare('SELECT i.*,c.name AS client_name,c.email AS client_email FROM invoices i JOIN clients c ON c.id=i.client_id WHERE i.id=? FOR UPDATE');
     $invSt->execute([$invoiceId]);
     $invoice = $invSt->fetch(PDO::FETCH_ASSOC);
     
     if (!$invoice) {
         throw new Exception('Invoice not found');
     }
+    pa_autopay_assert_payment_available($pdo, $invoiceId, $documentType);
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig, $documentType);
+    // Finalized documents cannot acquire a new AutoPay reservation on resend.
+    // Release before Stripe I/O; no network request holds a financial row lock.
+    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -256,6 +264,7 @@ try {
     exit;
     
 } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[StripeCheckout] Error: ' . $e->getMessage());
     http_response_code(400);
     ?>

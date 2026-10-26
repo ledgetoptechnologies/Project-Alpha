@@ -4,6 +4,33 @@
 class StripeService {
     private $apiKey;
     private $webhookSecret;
+
+    private function requireAutoPayTestCredentials(): void {
+        require_once __DIR__.'/../utils/autopay_beta.php';
+        require_autopay_beta();
+        if (!preg_match('/^(sk|rk)_test_[A-Za-z0-9]+$/D',(string)$this->apiKey)) throw new RuntimeException('AutoPay requires Stripe test credentials.');
+    }
+
+    public static function hasAutoPayTestKey(array $config): bool {
+        $key=self::resolveSecret($config, ['_stripe_secret_key'], 'stripe_secret_key_enc');
+        return is_string($key) && (bool)preg_match('/^(sk|rk)_test_[A-Za-z0-9]+$/D',$key);
+    }
+
+    public function autoPayRequest(string $method,string $endpoint,array $data=[],?string $key=null): array {
+        require_once __DIR__.'/../utils/autopay_beta.php';
+        $this->requireAutoPayTestCredentials();
+        if (!preg_match('/^(sk|rk)_test_[A-Za-z0-9]+$/D',(string)$this->apiKey)) throw new RuntimeException('AutoPay requires Stripe test credentials.');
+        $account=$this->apiRequest('GET','account');
+        if (($account['id']??'')!==(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID')) throw new RuntimeException('AutoPay Stripe account does not match this installation.');
+        return $this->apiRequest($method,$endpoint,$data,$key);
+    }
+
+    public function collectAutoPay(array $collection): array {
+        if (!empty($collection['stripe_payment_intent_id'])) return $this->autoPayRequest('GET','payment_intents/'.rawurlencode($collection['stripe_payment_intent_id']));
+        $metadata=['pa_autopay_collection_id'=>(string)$collection['id'],'pa_client_id'=>(string)$collection['client_id'],'pa_autopay_installation_id'=>$collection['installation_id'],'pa_autopay_account_id'=>$collection['processor_account_id'],'pa_invoice_amount'=>number_format($collection['amount_cents']/100,2,'.',''),'pa_surcharge_amount'=>'0.00'];
+        $metadata[$collection['document_type']==='project_invoice'?'pa_project_invoice_id':'pa_invoice_id']=(string)$collection['document_id'];
+        return $this->autoPayRequest('POST','payment_intents',['amount'=>$collection['amount_cents'],'currency'=>$collection['currency'],'customer'=>$collection['stripe_customer_id'],'payment_method'=>$collection['payment_method_id'],'payment_method_types'=>[$collection['method_type']],'confirm'=>'true','off_session'=>'true','metadata'=>$metadata],$collection['idempotency_key']);
+    }
     
     public function __construct($apiKey = null, $webhookSecret = null) {
         $this->apiKey = $apiKey;
@@ -40,7 +67,7 @@ class StripeService {
     public function createOrGetCustomer($pdo, $clientId) {
         try {
             require_once __DIR__ . '/../utils/autopay_beta.php';
-            require_autopay_beta();
+            $this->requireAutoPayTestCredentials();
             $stmt = $pdo->prepare("SELECT stripe_customer_id, name, email FROM clients WHERE id = ?");
             $stmt->execute([$clientId]);
             $clientData = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -82,7 +109,7 @@ class StripeService {
     public function createSubscription($customerId, $amount, $currency, $interval, $description) {
         try {
             require_once __DIR__ . '/../utils/autopay_beta.php';
-            require_autopay_beta();
+            $this->requireAutoPayTestCredentials();
             // Create a price for this subscription
             $price = $this->apiRequest('POST', 'prices', [
                 'unit_amount' => (int)($amount * 100), // Convert to cents
@@ -118,7 +145,7 @@ class StripeService {
     public function createPaymentIntent($customerId, $amount, $currency, $description) {
         try {
             require_once __DIR__ . '/../utils/autopay_beta.php';
-            require_autopay_beta();
+            $this->requireAutoPayTestCredentials();
             $paymentIntent = $this->apiRequest('POST', 'payment_intents', [
                 'amount' => (int)($amount * 100), // Convert to cents
                 'currency' => strtolower($currency ?? 'usd'),
@@ -166,7 +193,7 @@ class StripeService {
         try {
             if ($customerId !== null && $customerId !== '') {
                 require_once __DIR__ . '/../utils/autopay_beta.php';
-                require_autopay_beta();
+                $this->requireAutoPayTestCredentials();
             }
             $lineItems = [
                 [
@@ -477,7 +504,7 @@ class StripeService {
         try {
             if ($paymentMethodId !== null && $paymentMethodId !== '') {
                 require_once __DIR__ . '/../utils/autopay_beta.php';
-                require_autopay_beta();
+                $this->requireAutoPayTestCredentials();
             }
             $params = [
                 'amount' => (int)round($amount * 100), // Convert to cents
@@ -608,6 +635,11 @@ class StripeService {
     /**
      * Fetch a Stripe Charge with balance transaction details expanded.
      */
+    public function getRefund(string $refundId): array {
+        // Refund reconciliation serializes deliveries under a row lock.
+        return $this->apiRequest('GET', 'refunds/' . rawurlencode($refundId), [], null, 10);
+    }
+
     public function getCharge(string $chargeId): array {
         try {
             return $this->apiRequest('GET', 'charges/' . rawurlencode($chargeId) . '?' . http_build_query([
@@ -745,7 +777,7 @@ class StripeService {
     /**
      * Make API request to Stripe
      */
-    private function apiRequest($method, $endpoint, $data = [], ?string $idempotencyKey = null) {
+    private function apiRequest($method, $endpoint, $data = [], ?string $idempotencyKey = null, int $timeout = 45) {
         if (!$this->apiKey) {
             throw new \Exception('Stripe API key not configured');
         }
@@ -763,6 +795,8 @@ class StripeService {
         
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => $timeout,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_CUSTOMREQUEST => $method
         ]);

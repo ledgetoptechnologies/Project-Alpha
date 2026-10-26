@@ -34,6 +34,13 @@ function project_invoice_notification_process(PDO $pdo, array $config, $sender =
     if (getenv('TEST_PROJECT_FAILURE')) throw new RuntimeException('project queue unavailable');
     return ['claimed' => 4, 'sent' => 2, 'retry' => 1, 'suppressed' => 1];
 }
+function pa_autopay_deliver_notifications(PDO $pdo, array $config, $sender = null, int $limit = 25): array {
+    worker_test_event(['queue' => 'autopay', 'limit' => $limit, 'collection_enabled' => getenv('AUTOPAY_BETA_ENABLED')]);
+    if (getenv('TEST_AUTOPAY_FAILURE')) throw new RuntimeException('sensitive transport detail must not leak');
+    return getenv('TEST_AUTOPAY_DELIVERY')
+        ? ['sent' => 2, 'retried' => 1, 'suppressed' => 1]
+        : ['sent' => 0, 'retried' => 0, 'suppressed' => 0];
+}
 function cron_state_mark_success(PDO $pdo, string $jobName, ?string $result = null): void {
     worker_test_event(['status' => 'success', 'job' => $jobName, 'result' => $result]);
 }
@@ -42,7 +49,7 @@ function cron_state_mark_failure(PDO $pdo, string $jobName, Throwable $error): v
 }
 PHP);
         // Stub only the dependencies; execute the actual cron script unchanged.
-        foreach (['config/app.php', 'utils/cron_state.php', 'utils/invoice_notifications.php', 'utils/project_invoice_notifications.php'] as $file) {
+        foreach (['config/app.php', 'utils/cron_state.php', 'utils/invoice_notifications.php', 'utils/project_invoice_notifications.php', 'utils/autopay_notifications.php'] as $file) {
             file_put_contents($this->directory . '/' . $file, '<?php');
         }
     }
@@ -73,14 +80,14 @@ PHP);
     {
         [$exitCode, $events, $log] = $this->runWorker();
         self::assertSame(0, $exitCode, $log);
-        self::assertSame(['invoice', 'project'], array_column($events, 'queue'));
+        self::assertSame(['invoice', 'project', 'autopay'], array_column($events, 'queue'));
         foreach (array_slice($events, 0, 2) as $event) {
             self::assertSame(100, $event['limit']);
             self::assertSame(0, $event['config']['invoice_auto_send_due_7days']);
             self::assertSame(0, $event['config']['invoice_auto_send_overdue_weekly']);
         }
-        self::assertSame('success', $events[2]['status']);
-        self::assertSame('7 claimed; 3 sent; 2 retrying; 2 suppressed', $events[2]['result']);
+        self::assertSame('success', $events[3]['status']);
+        self::assertSame('7 claimed; 3 sent; 2 retrying; 2 suppressed', $events[3]['result']);
         self::assertStringContainsString('2 retrying', $log);
         // No reminder-scheduling functions exist in this fixture: calling one fails.
     }
@@ -89,10 +96,10 @@ PHP);
     {
         [$exitCode, $events, $log] = $this->runWorker(['TEST_INVOICE_FAILURE' => '1']);
         self::assertSame(1, $exitCode);
-        self::assertSame(['invoice', 'project'], array_column($events, 'queue'));
-        self::assertSame('failed', $events[2]['status']);
-        self::assertStringContainsString('4 claimed; 2 sent; 1 retrying; 1 suppressed', $events[2]['error']);
-        self::assertStringContainsString('invoice queue unavailable', $events[2]['error']);
+        self::assertSame(['invoice', 'project', 'autopay'], array_column($events, 'queue'));
+        self::assertSame('failed', $events[3]['status']);
+        self::assertStringContainsString('4 claimed; 2 sent; 1 retrying; 1 suppressed', $events[3]['error']);
+        self::assertStringContainsString('invoice queue unavailable', $events[3]['error']);
         self::assertStringContainsString('Failed:', $log);
     }
 
@@ -100,9 +107,27 @@ PHP);
     {
         [$exitCode, $events] = $this->runWorker(['TEST_PROJECT_FAILURE' => '1']);
         self::assertSame(1, $exitCode);
-        self::assertSame('failed', $events[2]['status']);
-        self::assertStringContainsString('3 claimed; 1 sent; 1 retrying; 1 suppressed', $events[2]['error']);
-        self::assertStringContainsString('project queue unavailable', $events[2]['error']);
+        self::assertSame('failed', $events[3]['status']);
+        self::assertStringContainsString('3 claimed; 1 sent; 1 retrying; 1 suppressed', $events[3]['error']);
+        self::assertStringContainsString('project queue unavailable', $events[3]['error']);
+    }
+
+    public function testAutoPayReceiptsDrainAndRetryEvenWhenNewCollectionIsDisabled(): void
+    {
+        [$exitCode, $events] = $this->runWorker(['TEST_AUTOPAY_DELIVERY' => '1']);
+        self::assertSame(0, $exitCode);
+        self::assertSame(['queue'=>'autopay','limit'=>25,'collection_enabled'=>'false'], $events[2]);
+        self::assertSame('7 claimed; 5 sent; 3 retrying; 3 suppressed', $events[3]['result']);
+    }
+
+    public function testAutoPayDeliveryFailureDoesNotUndoOtherQueuesOrExposeTransportDetails(): void
+    {
+        [$exitCode, $events, $log] = $this->runWorker(['TEST_AUTOPAY_FAILURE' => '1']);
+        self::assertSame(1, $exitCode);
+        self::assertSame(['invoice','project','autopay'], array_column($events, 'queue'));
+        self::assertStringContainsString('7 claimed; 3 sent; 2 retrying; 2 suppressed', $events[3]['error']);
+        self::assertStringContainsString('AutoPay notification queue failed.', $events[3]['error']);
+        self::assertStringNotContainsString('sensitive transport detail', $log . $events[3]['error']);
     }
 
     public function testWorkerIsScheduledEveryFiveMinutesAndRegisteredForStatus(): void
@@ -121,6 +146,9 @@ PHP);
             'TEST_CRON_ENABLED' => '1',
             'TEST_INVOICE_FAILURE' => '',
             'TEST_PROJECT_FAILURE' => '',
+            'TEST_AUTOPAY_FAILURE' => '',
+            'TEST_AUTOPAY_DELIVERY' => '',
+            'AUTOPAY_BETA_ENABLED' => 'false',
         ], $environment);
         $process = proc_open(
             [PHP_BINARY, '-d', 'error_log=', $this->directory . '/cron/worker.php'],

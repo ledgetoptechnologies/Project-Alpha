@@ -38,6 +38,14 @@ if ($projectInvoiceId > 0) {
         exit;
     }
     $emailResult = '';
+    require_once __DIR__ . '/../../utils/autopay_staff.php';
+    $review = $pdo->prepare('SELECT * FROM project_invoices WHERE id=?');
+    $review->execute([$projectInvoiceId]);
+    $reviewDocument = $review->fetch(PDO::FETCH_ASSOC) ?: [];
+    if (empty($reviewDocument['finalized_at']) && pa_autopay_staff_state($pdo, $reviewDocument, $appConfig, 'project_invoice')['eligible']) {
+        header('Location: /?page=project/project-invoice-details&id=' . $projectInvoiceId . '&generated=1&email_panel=1&autopay_review=1');
+        exit;
+    }
     if ($sendEmail) {
         if (invoice_should_prompt_for_missing_content_links($pdo, 'project_invoice', $projectInvoiceId, $appConfig)) {
             if (invoice_missing_content_links_behavior($appConfig) === 'block') {

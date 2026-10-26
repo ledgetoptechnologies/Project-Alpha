@@ -1,0 +1,458 @@
+<?php
+declare(strict_types=1);
+use PHPUnit\Framework\TestCase;
+require_once dirname(__DIR__,2).'/src/migrations/migration_lib.php';
+require_once dirname(__DIR__,2).'/src/utils/autopay_collection.php';
+
+final class AutoPayCollectionDatabaseTest extends TestCase
+{
+    private PDO $pdo;
+    private int $client=0;
+    private int $authorization=0;
+    private array $invoices=[];
+    private array $projects=[];
+    private array $projectInvoices=[];
+    private array $otherClients=[];
+    private array $users=[];
+    private array $environment=[];
+    private mixed $oldConfig;
+    private array $config=['_stripe_secret_key'=>'sk_test_SYNTHETIC','workforce_currency'=>'USD'];
+    protected function setUp():void
+    {
+        try{$this->pdo=migration_connection();$this->pdo->query('SELECT id FROM autopay_collections LIMIT 0');$this->pdo->query('SELECT effective_from FROM autopay_enrollments LIMIT 0');}
+        catch(Throwable){self::markTestSkipped('MySQL migrations 112 and 113 required.');}
+        foreach(['APP_ENV'=>'test','AUTOPAY_BETA_ENABLED'=>'true','AUTOPAY_INSTALLATION_ID'=>'synthetic-autopay-tests','AUTOPAY_STRIPE_ACCOUNT_ID'=>'acct_SYNTHETIC'] as $key=>$value){$this->environment[$key]=getenv($key);putenv($key.'='.$value);}
+        $this->oldConfig=$GLOBALS['appConfig']??null;
+        // Canonical accounting runs, but all processor lookups and mail are disabled.
+        $GLOBALS['appConfig']=['notify_invoice_paid'=>false,'payment_receipts_enabled'=>false];
+        $this->pdo->exec("INSERT INTO clients(name,email) VALUES('Synthetic AutoPay','never@example.invalid')");$this->client=(int)$this->pdo->lastInsertId();
+        $this->pdo->prepare('INSERT INTO autopay_enrollments(client_id,scope,status,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,currency,consent_version,consent_text,verified_email,consent_at,consent_proof,verified_at,effective_from) VALUES (?,"business","active","acct_SYNTHETIC","synthetic-autopay-tests","cus_SYNTHETIC","pm_SYNTHETIC","us_bank_account","usd","test","Synthetic test consent","never@example.invalid",DATE_SUB(NOW(),INTERVAL 1 DAY),REPEAT("a",64),NOW(),DATE_SUB(NOW(),INTERVAL 1 DAY))')->execute([$this->client]);$this->authorization=(int)$this->pdo->lastInsertId();
+    }
+    protected function tearDown():void
+    {
+        if(isset($this->pdo)){
+            if($this->pdo->inTransaction())$this->pdo->rollBack();
+            foreach($this->projectInvoices as $id){$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="project_invoice" AND document_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM project_invoices WHERE id=?')->execute([$id]);}
+            foreach($this->invoices as $id){$this->pdo->prepare('DELETE FROM stripe_refunds WHERE payment_id IN (SELECT id FROM payments WHERE invoice_id=?)')->execute([$id]);$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="invoice" AND document_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM payments WHERE invoice_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM invoices WHERE id=?')->execute([$id]);}
+            foreach($this->projects as $id)$this->pdo->prepare('DELETE FROM projects WHERE id=?')->execute([$id]);
+            if($this->authorization)$this->pdo->prepare('DELETE FROM autopay_enrollments WHERE id=?')->execute([$this->authorization]);
+            if($this->client){$this->pdo->prepare('DELETE FROM activity_log WHERE client_id=?')->execute([$this->client]);$this->pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$this->client]);}
+            foreach($this->otherClients as $id)$this->pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$id]);
+            foreach($this->users as $id){$this->pdo->prepare('DELETE FROM system_audit WHERE user_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM users WHERE id=?')->execute([$id]);}
+        }
+        foreach($this->environment as $key=>$value)putenv($value===false?$key:$key.'='.$value);
+        $GLOBALS['appConfig']=$this->oldConfig??null;
+    }
+    private function invoice(string $source='manual_finalize'):int
+    {
+        $this->pdo->prepare('INSERT INTO invoices(client_id,status,total,balance_due,finalized_at,finalization_source) VALUES (?,"unpaid",100,100,NOW(),?)')->execute([$this->client,$source]);$id=(int)$this->pdo->lastInsertId();$this->invoices[]=$id;return $id;
+    }
+    private function enqueue(int $id,string $source='manual_finalize'):?int
+    {
+        $this->pdo->beginTransaction();try{$result=pa_autopay_enqueue_invoice($this->pdo,$id,$this->config,null,$source);$this->pdo->commit();return $result;}catch(Throwable $e){$this->pdo->rollBack();throw $e;}
+    }
+    private function row(int $id):array{$s=$this->pdo->prepare('SELECT * FROM autopay_collections WHERE id=?');$s->execute([$id]);return $s->fetch(PDO::FETCH_ASSOC);}
+    private function intent(array $row,string $status='processing'):array
+    {
+        return ['object'=>'payment_intent','id'=>'pi_SYNTHETIC'.$row['id'],'livemode'=>false,'amount'=>(int)$row['amount_cents'],'amount_received'=>$status==='succeeded'?(int)$row['amount_cents']:0,'currency'=>$row['currency'],'customer'=>$row['stripe_customer_id'],'payment_method'=>$row['payment_method_id'],'status'=>$status,'metadata'=>['pa_autopay_collection_id'=>(string)$row['id'],'pa_client_id'=>(string)$row['client_id'],'pa_autopay_installation_id'=>$row['installation_id'],'pa_autopay_account_id'=>$row['processor_account_id'],'pa_invoice_amount'=>'100.00','pa_surcharge_amount'=>'0.00',$row['document_type']==='invoice'?'pa_invoice_id':'pa_project_invoice_id'=>(string)$row['document_id']]];
+    }
+    private function event(array $intent,string $type,int $created=100):array{return ['id'=>'evt_SYNTHETIC'.$created,'type'=>$type,'livemode'=>false,'created'=>$created,'data'=>['object'=>$intent]];}
+    private function projectDraft():array
+    {
+        require_once dirname(__DIR__,2).'/src/utils/project_invoice_billing.php';
+        require_once dirname(__DIR__,2).'/src/utils/autopay_staff.php';
+        $child=$this->invoice();$this->pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$child]);
+        $this->pdo->prepare('INSERT INTO projects(name,client_id) VALUES ("Synthetic draft statement",?)')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
+        $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,status,billing_period_start,billing_period_end,total,balance_due) VALUES (?,?,"draft",CURDATE(),CURDATE(),100,100)')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
+        $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
+        return $this->pdo->query('SELECT * FROM project_invoices WHERE id='.$id)->fetch(PDO::FETCH_ASSOC);
+    }
+    private function projectChoice(array $row,string $action):array
+    {
+        $secret='synthetic-project-preview-secret-long-enough';$state=pa_autopay_staff_state($this->pdo,$row,$this->config,'project_invoice');
+        return pa_autopay_staff_request_config($this->config,['autopay_action'=>$action,'autopay_preview_hash'=>pa_autopay_staff_preview_hash($row,$state,'project_invoice',$secret)],$secret);
+    }
+    public function testProjectFirstFinalizationRequiresReviewedChoiceAndResendNeverEnqueues():void
+    {
+        $row=$this->projectDraft();$this->pdo->beginTransaction();
+        try{project_invoice_finalize_locked($this->pdo,(int)$row['id'],$this->config);self::fail('Unreviewed collection');}catch(LogicException|DomainException $e){$this->pdo->rollBack();self::assertNotEmpty($e->getMessage());}
+        self::assertSame('draft',$this->pdo->query('SELECT status FROM project_invoices WHERE id='.$row['id'])->fetchColumn());
+        $config=$this->projectChoice($row,'hold');$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$row['id'],$config);$this->pdo->commit();
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$row['id'])->fetchColumn());
+        $this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$row['id'],$this->projectChoice($row,'collect'));$this->pdo->commit();
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$row['id'])->fetchColumn());
+    }
+    public function testProjectConfirmedFinalizationQueuesOnceAndBlocksManualPayment():void
+    {
+        $row=$this->projectDraft();$config=$this->projectChoice($row,'collect');$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$row['id'],$config);$this->pdo->commit();
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$row['id'])->fetchColumn());
+        self::assertNull(project_invoice_record_manual_payment($this->pdo,(int)$row['id'],100,'cash'));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM project_invoice_payments WHERE project_invoice_id='.$row['id'])->fetchColumn());
+        $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$row['id'])->fetchColumn();
+        $this->pdo->beginTransaction();try{pa_autopay_lock_parent_for_invoice_mutation($this->pdo,$child);self::fail('Child mutation while statement reserved');}catch(DomainException $e){self::assertStringContainsString('reserved',$e->getMessage());}finally{$this->pdo->rollBack();}
+    }
+    public function testConcurrentStatementCreationCannotSlipPastChildMutationParentLookup():void
+    {
+        $child=$this->invoice();
+        $this->pdo->prepare('INSERT INTO projects(name,client_id,invoice_billing_period) VALUES ("Synthetic parent creation race",?,"monthly")')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
+        $this->pdo->prepare('UPDATE invoices SET project_id=?,collection_mode="project_aggregate" WHERE id=?')->execute([$project,$child]);
+        $this->pdo->beginTransaction();$lock=$this->pdo->prepare('SELECT id FROM projects WHERE id=? FOR UPDATE');$lock->execute([$project]);
+        $root=dirname(__DIR__,2);$script=tempnam(sys_get_temp_dir(),'pa-parent-race-');$marker=$script.'.lock-ready';$process=null;$pipes=[];
+        // A local barrier observes the exact locking statement without needing
+        // server-wide PROCESS access (ordinary application users do not have it).
+        // Execution still goes through the real PDO statement on connection 2.
+        $barrier=<<<'PHP'
+class ParentRaceStatement extends PDOStatement {
+ protected function __construct(private string $marker) {}
+ public function execute(?array $params=null):bool {
+  if($this->queryString==='SELECT id FROM projects WHERE id=? FOR UPDATE')file_put_contents($this->marker,'project-lock-ready');
+  return parent::execute($params);
+ }
+}
+PHP;
+        $code='<?php require '.var_export($root.'/vendor/autoload.php',true).';require '.var_export($root.'/src/migrations/migration_lib.php',true).';require '.var_export($root.'/src/utils/autopay_collection.php',true).';'.$barrier.'$pdo=migration_connection();$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS,[ParentRaceStatement::class,['.var_export($marker,true).']]);$pdo->exec("SET SESSION innodb_lock_wait_timeout=10");$pdo->beginTransaction();try{pa_autopay_lock_parent_for_invoice_mutation($pdo,'.$child.');$pdo->exec("UPDATE invoices SET total=999 WHERE id='.$child.'");$pdo->commit();echo "mutated";}catch(DomainException $e){$pdo->rollBack();echo "blocked";}';
+        try {
+            file_put_contents($script,$code);$process=proc_open([PHP_BINARY,$script],[1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);self::assertIsResource($process);
+            $waiting=false;
+            for($i=0;$i<150;$i++){
+                if(is_file($marker)&&file_get_contents($marker)==='project-lock-ready'){$waiting=true;break;}
+                usleep(20000);
+            }
+            self::assertTrue($waiting,'The editor must wait for the generator project lock before reading parent membership.');
+            // The generator publishes its newly finalized statement while the
+            // editor has already established a snapshot without that parent.
+            $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,billing_period_start,billing_period_end,total,balance_due,finalized_at,finalization_source) VALUES (?,?,CURDATE(),CURDATE(),100,100,NOW(),"project_finalize")')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
+            $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
+            self::assertNotNull(pa_autopay_enqueue_project_invoice($this->pdo,$id,$this->config,null,'project_finalize'));$this->pdo->commit();
+            $out=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);$pipes=[];$exit=proc_close($process);$process=null;
+            self::assertSame(0,$exit,$err);self::assertSame('blocked',$out,$err);self::assertSame('100.00',$this->pdo->query('SELECT total FROM invoices WHERE id='.$child)->fetchColumn());
+        } finally {
+            if($this->pdo->inTransaction())$this->pdo->rollBack();
+            if(is_resource($process)){proc_terminate($process);foreach($pipes as $pipe)if(is_resource($pipe))fclose($pipe);proc_close($process);}
+            if(is_file($script))unlink($script);if(is_file($marker))unlink($marker);
+        }
+    }
+    public function testProjectAutomaticFirstFinalizationQueuesButHistoricalChildPreventsAutoCollection():void
+    {
+        $row=$this->projectDraft();$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$row['id'],$this->config,true);$this->pdo->commit();
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$row['id'])->fetchColumn());
+        $old=$this->projectDraft();$this->pdo->prepare('UPDATE project_invoice_items SET invoice_date=DATE_SUB(CURDATE(),INTERVAL 2 MONTH) WHERE project_invoice_id=?')->execute([$old['id']]);
+        self::assertFalse(pa_autopay_staff_state($this->pdo,$old,$this->config,'project_invoice')['eligible']);
+        $this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$old['id'],$this->config,true);$this->pdo->commit();
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$old['id'])->fetchColumn());
+    }
+    public function testDisabledProductionLiveKeysAndHistoricalInvoicesNeverQueue():void
+    {
+        $id=$this->invoice();putenv('APP_ENV=production');self::assertNull($this->enqueue($id));putenv('APP_ENV=test');
+        $this->config['_stripe_secret_key']='sk_live_SYNTHETIC';self::assertNull($this->enqueue($id));$this->config['_stripe_secret_key']='sk_test_SYNTHETIC';
+        self::assertNull($this->enqueue($this->invoice('historical_recurring_payment')));
+        self::assertNull($this->enqueue($id,'historical_recurring_payment'));
+        $this->pdo->prepare('UPDATE invoices SET finalized_at=DATE_SUB(NOW(),INTERVAL 2 DAY) WHERE id=?')->execute([$id]);self::assertNull($this->enqueue($id));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM autopay_collections WHERE client_id='.$this->client)->fetchColumn());
+    }
+    public function testQueueIsUniqueAndReservesAgainstManualPaymentAndCheckout():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);self::assertNotNull($id);self::assertSame($id,$this->enqueue($invoice));
+        self::assertSame(10000,(int)$this->row($id)['amount_cents']);
+        $this->expectException(DomainException::class);pa_autopay_assert_payment_available($this->pdo,$invoice);
+    }
+    public function testScopePendingVerificationAndExistingCheckoutExcludeCollection():void
+    {
+        $invoice=$this->invoice();
+        $this->pdo->prepare('UPDATE autopay_enrollments SET scope="agreement",contract_id=999999 WHERE id=?')->execute([$this->authorization]);self::assertNull($this->enqueue($invoice));
+        $this->pdo->prepare('UPDATE autopay_enrollments SET scope="business",contract_id=NULL,status="pending" WHERE id=?')->execute([$this->authorization]);self::assertNull($this->enqueue($invoice));
+        $this->pdo->prepare('UPDATE autopay_enrollments SET status="active",verified_at=NULL WHERE id=?')->execute([$this->authorization]);self::assertNull($this->enqueue($invoice));
+        $this->pdo->prepare('UPDATE autopay_enrollments SET verified_at=NOW() WHERE id=?')->execute([$this->authorization]);
+        $this->pdo->prepare('UPDATE invoices SET stripe_session_id="cs_SYNTHETIC" WHERE id=?')->execute([$invoice]);self::assertNull($this->enqueue($invoice));
+    }
+    public function testNewlyGeneratedHistoricalRecurringPeriodDoesNotBecomeAutoPayBackfill():void
+    {
+        $id=$this->invoice('recurring_schedule');self::assertNull($this->enqueue($id,'recurring_auto'));
+        $this->config['_autopay_period_start']=date('Y-m-d',strtotime('-2 months'));self::assertNull($this->enqueue($id,'recurring_auto'));
+        $this->config['_autopay_period_start']=date('Y-m-d');self::assertNotNull($this->enqueue($id,'recurring_auto'));
+    }
+    public function testTimeoutRetriesSameIdentityWithoutTransactionAndAchWaitsForWebhook():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);$key=$this->row($id)['idempotency_key'];
+        $first=pa_autopay_run_one($this->pdo,$this->config,function($row)use($key){self::assertFalse($this->pdo->inTransaction());self::assertSame($key,$row['idempotency_key']);throw new RuntimeException('Synthetic timeout after request');});self::assertSame('retry',$first['status']);
+        $this->pdo->prepare('UPDATE autopay_collections SET next_attempt_at=NOW() WHERE id=?')->execute([$id]);
+        $second=pa_autopay_run_one($this->pdo,$this->config,function($row)use($key){self::assertSame($key,$row['idempotency_key']);self::assertFalse($this->pdo->inTransaction());return $this->intent($row);});self::assertSame('processing',$second['status']);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());self::assertSame('unpaid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());
+        self::assertSame('idle',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Must not send again'))['status']);
+    }
+    public function testUnknownOutcomeExpiresBeforeStripeIdempotencyRetention():void
+    {
+        $id=$this->enqueue($this->invoice());$this->pdo->prepare('UPDATE autopay_collections SET state="processing",attempt_count=1,first_attempt_at=DATE_SUB(NOW(),INTERVAL 24 HOUR) WHERE id=?')->execute([$id]);
+        self::assertSame('held',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Unsafe retry'))['status']);
+    }
+    public function testRevocationAndInvoiceAmountChangeStopBeforeTransport():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);$this->pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE id=?')->execute([$this->authorization]);
+        self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Revoked mandate'))['status']);
+        $this->pdo->prepare('UPDATE autopay_enrollments SET status="active",revoked_at=NULL WHERE id=?')->execute([$this->authorization]);
+        $invoice=$this->invoice();$this->enqueue($invoice);$this->pdo->prepare('UPDATE invoices SET total=110,balance_due=110 WHERE id=?')->execute([$invoice]);
+        self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Changed amount'))['status']);
+    }
+    public function testSettlementIsCanonicalDuplicateSafeAndOlderFailureCannotUndoSuccess():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);$pi=$this->intent($this->row($id),'succeeded');$event=$this->event($pi,'payment_intent.succeeded',200);
+        self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+        $pi['status']='requires_payment_method';pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.payment_failed',100),$this->config,true);self::assertSame('succeeded',$this->row($id)['state']);
+        pa_autopay_hold_financial_event($this->pdo,['payment_intent'=>$pi['id']]);self::assertSame(1,(int)$this->row($id)['financial_hold']);
+        $refund=['object'=>'refund','id'=>'re_SYNTHETIC'.$id,'payment_intent'=>$pi['id'],'amount'=>5000,'currency'=>'usd','status'=>'succeeded'];
+        stripe_record_refund($this->pdo,$refund);stripe_record_refund($this->pdo,$refund);
+        self::assertSame('50.00',$this->pdo->query('SELECT balance_due FROM invoices WHERE id='.$invoice)->fetchColumn());
+        try{pa_autopay_assert_payment_available($this->pdo,$invoice);self::fail('Refund hold released to another payment');}catch(DomainException $e){self::assertStringContainsString('Resolve',$e->getMessage());}
+        self::assertNull($this->enqueue($invoice));self::assertSame('idle',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Refund re-debit'))['status']);
+    }
+    public function testWebhookRejectsUnverifiedAndMismatchedAccountEvidence():void
+    {
+        $id=$this->enqueue($this->invoice());$pi=$this->intent($this->row($id));
+        try{pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.processing'),$this->config);self::fail('Missing signature');}catch(DomainException $e){self::assertStringContainsString('signature',$e->getMessage());}
+        $pi['metadata']['pa_autopay_account_id']='acct_OTHER';$this->expectException(DomainException::class);pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.processing'),$this->config,true);
+    }
+    public function testDisablingNewDebitsStillReconcilesExistingTestCollectionExactlyOnce():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);pa_autopay_run_one($this->pdo,$this->config,fn($row)=>$this->intent($row));
+        putenv('AUTOPAY_BETA_ENABLED=false');
+        self::assertNull($this->enqueue($this->invoice()));self::assertSame('disabled',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Feature disabled'))['status']);
+        $event=$this->event($this->intent($this->row($id),'succeeded'),'payment_intent.succeeded');
+        self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+    }
+    public function testKnownIntentWithRemovedCollectionMetadataCannotFallIntoLegacyHandler():void
+    {
+        $id=$this->enqueue($this->invoice());pa_autopay_run_one($this->pdo,$this->config,fn($row)=>$this->intent($row));
+        $pi=$this->intent($this->row($id),'succeeded');unset($pi['metadata']['pa_autopay_collection_id']);
+        $this->expectException(DomainException::class);pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.succeeded'),$this->config,true);
+    }
+    public function testConcurrentWorkerCannotClaimAnActiveLeaseAndStaleEventsDoNotRegress():void
+    {
+        $id=$this->enqueue($this->invoice());
+        pa_autopay_run_one($this->pdo,$this->config,function($row){$other=migration_connection();self::assertSame('idle',pa_autopay_run_one($other,$this->config,fn()=>self::fail('Duplicate worker'))['status']);return $this->intent($row);});
+        $pi=$this->intent($this->row($id),'requires_action');pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.requires_action',200),$this->config,true);
+        $pi['status']='processing';pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.processing',100),$this->config,true);self::assertSame('requires_action',$this->row($id)['state']);
+    }
+    public function testFailedAttemptCannotBeResurrectedByTiedOrLaterIntermediateEvents():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);
+        $pi=$this->intent($this->row($id),'requires_payment_method');
+        pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.payment_failed',100),$this->config,true);
+        foreach([['processing',100],['requires_action',101]] as [$status,$created]){
+            $pi['status']=$status;pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.'.$status,$created),$this->config,true);
+            self::assertSame('failed',$this->row($id)['state']);pa_autopay_assert_payment_available($this->pdo,$invoice);
+        }
+        $success=$this->event($this->intent($this->row($id),'succeeded'),'payment_intent.succeeded',102);
+        pa_autopay_handle_event($this->pdo,$success,$this->config,true);pa_autopay_handle_event($this->pdo,$success,$this->config,true);
+        self::assertSame('succeeded',$this->row($id)['state']);self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+    }
+    public function testReservedProjectStatementPreventsReopeningChildInvoice():void
+    {
+        $project=$this->projectDraft();$config=$this->projectChoice($project,'collect');
+        $this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$project['id'],$config);$this->pdo->commit();
+        $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$project['id'])->fetchColumn();
+        $before=$this->pdo->query('SELECT status,finalized_at FROM invoices WHERE id='.$child)->fetch(PDO::FETCH_ASSOC);
+        foreach(['pending','processing'] as $state){
+            $this->pdo->prepare('UPDATE autopay_collections SET state=? WHERE document_type="project_invoice" AND document_id=?')->execute([$state,$project['id']]);
+            try{invoice_reopen_draft($this->pdo,$child);self::fail('Reserved child reopened');}catch(DomainException $e){self::assertStringContainsString('AutoPay',$e->getMessage());}
+            self::assertSame($before,$this->pdo->query('SELECT status,finalized_at FROM invoices WHERE id='.$child)->fetch(PDO::FETCH_ASSOC));
+            self::assertFalse($this->pdo->inTransaction());
+        }
+    }
+    public function testProjectStatementOnlyCollectsSameClientChildrenAndNeverChildInvoices():void
+    {
+        $child=$this->invoice();$this->pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$child]);self::assertNull($this->enqueue($child));
+        $this->pdo->prepare('INSERT INTO projects(name,client_id) VALUES ("Synthetic AutoPay project",?)')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
+        $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,billing_period_start,billing_period_end,total,balance_due,finalized_at,finalization_source) VALUES (?,?,CURDATE(),CURDATE(),100,100,NOW(),"project_finalize")')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
+        $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
+        $this->pdo->beginTransaction();$collection=pa_autopay_enqueue_project_invoice($this->pdo,$id,$this->config,null,'project_finalize');$this->pdo->commit();self::assertNotNull($collection);
+        $this->pdo->exec('INSERT INTO clients(name) VALUES ("Synthetic other payer")');$other=(int)$this->pdo->lastInsertId();$this->otherClients[]=$other;
+        $this->pdo->prepare('UPDATE invoices SET client_id=? WHERE id=?')->execute([$other,$child]);
+        self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Foreign client charge'))['status']);
+    }
+
+    public function testCancellationCannotReleaseUnknownOutcomeAndRequiresProcessorConfirmation():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);
+        pa_autopay_cancel_collection($this->pdo,$id,$this->config,fn()=>self::fail('Unsent reservation needs no network'));
+        self::assertSame('failed',$this->row($id)['state']);pa_autopay_assert_payment_available($this->pdo,$invoice);
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);
+        pa_autopay_run_one($this->pdo,$this->config,fn()=>throw new RuntimeException('Unknown network outcome'));
+        try{pa_autopay_cancel_collection($this->pdo,$id,$this->config,fn()=>self::fail('Cannot cancel unknown request'));self::fail('Unknown outcome released');}catch(DomainException $e){self::assertStringContainsString('reconciled',$e->getMessage());}
+        $pi=$this->intent($this->row($id),'requires_action');pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.requires_action'),$this->config,true);
+        pa_autopay_cancel_collection($this->pdo,$id,$this->config,function($row){self::assertFalse($this->pdo->inTransaction());return $this->intent($row,'canceled');});
+        self::assertSame('failed',$this->row($id)['state']);pa_autopay_assert_payment_available($this->pdo,$invoice);
+    }
+    public function testCancellationControllerEnforcesCsrfPermissionOwnershipAndDocumentLookup():void
+    {
+        $invoice=$this->invoice();$collection=$this->enqueue($invoice);
+        $this->pdo->prepare('INSERT INTO users(username,email,password_hash,role,is_disabled) VALUES (?,?,"synthetic","member",1)')->execute(['Synthetic cancellation',bin2hex(random_bytes(8)).'@example.invalid']);$user=(int)$this->pdo->lastInsertId();$this->users[]=$user;
+        $this->pdo->prepare('INSERT INTO user_permissions_overrides(user_id,permission,allowed) VALUES (?,"invoices.send",1)')->execute([$user]);
+        $this->pdo->prepare('UPDATE invoices SET created_by=? WHERE id=?')->execute([$user,$invoice]);
+        $run=function(array $post)use($user):int{
+            $root=dirname(__DIR__,2);$file=tempnam(sys_get_temp_dir(),'pa-cancel-');
+            $script='<?php require '.var_export($root.'/vendor/autoload.php',true).';session_start();$_SESSION=["csrf"=>str_repeat("x",64),"user"=>["id"=>'.$user.',"role"=>"member"]];$_SERVER["REQUEST_METHOD"]="POST";$_POST='.var_export($post,true).';require '.var_export($root.'/src/config/db.php',true).';require '.var_export($root.'/src/config/app.php',true).';$appConfig='.var_export($this->config,true).';register_shutdown_function(static function(){echo "STATUS=".(http_response_code()?:200);});require '.var_export($root.'/src/controllers/invoice/autopay_cancel.php',true).';';
+            file_put_contents($file,$script);$process=proc_open([PHP_BINARY,$file],[1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);$out=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);$exit=proc_close($process);unlink($file);self::assertSame(0,$exit,$err);preg_match('/STATUS=(\d+)/',$out,$match);return (int)($match[1]??0);
+        };
+        $post=['document_type'=>'invoice','document_id'=>$invoice,'csrf'=>'bad','collection_id'=>999999];self::assertSame(403,$run($post));self::assertSame('pending',$this->row($collection)['state']);
+        $post['csrf']=str_repeat('x',64);$this->pdo->prepare('UPDATE user_permissions_overrides SET allowed=0 WHERE user_id=?')->execute([$user]);self::assertSame(403,$run($post));
+        $this->pdo->prepare('UPDATE user_permissions_overrides SET allowed=1 WHERE user_id=?')->execute([$user]);$this->pdo->prepare('UPDATE invoices SET created_by=NULL WHERE id=?')->execute([$invoice]);self::assertSame(403,$run($post));
+        $this->pdo->prepare('UPDATE invoices SET created_by=? WHERE id=?')->execute([$user,$invoice]);self::assertSame(302,$run($post));self::assertSame('failed',$this->row($collection)['state']);
+    }
+
+    public function testCheckoutPreparationReservationPreventsReopeningOrNewCollection():void
+    {
+        $invoice=$this->invoice();$row=$this->pdo->query('SELECT * FROM invoices WHERE id='.$invoice)->fetch(PDO::FETCH_ASSOC);
+        $this->pdo->beginTransaction();pa_autopay_reserve_checkout($this->pdo,$row,$this->config);$this->pdo->commit();
+        self::assertNull($this->enqueue($invoice));
+        $this->expectException(RuntimeException::class);invoice_reopen_draft($this->pdo,$invoice,$this->config);
+    }
+
+    private function recoveryProvider(array $pi,array $listed=[]):StripeService
+    {
+        require_once dirname(__DIR__,2).'/src/utils/stripe_reconciliation_import.php';
+        return new class($pi,$listed) extends StripeService {
+            public array $reads=[];public string $account='acct_SYNTHETIC';
+            public function __construct(public array $intent,public array $listed){}
+            public function getReconciliationContext():array{return ['account_id'=>$this->account,'livemode'=>false];}
+            public function getPaymentIntentWithBalanceTransaction(string $id):array{$this->reads[]=$id;return $this->intent;}
+            public function listPaymentIntentsBetween(int $since,?int $until=null,?int $maxItems=1000):array{return $this->listed;}
+            public function listChargesBetween(int $since,?int $until=null,?int $maxItems=null):array{return [];}
+            public function collectAutoPay(array $collection):array{throw new LogicException('Reconciliation must never collect.');}
+        };
+    }
+    private function knownIntent(int $collection,string $status='succeeded'):array
+    {
+        $pi=$this->intent($this->row($collection),$status);
+        $this->pdo->prepare('UPDATE autopay_collections SET state="processing",stripe_payment_intent_id=?,next_attempt_at=NULL,created_at=DATE_SUB(NOW(),INTERVAL 10 DAY) WHERE id=?')->execute([$pi['id'],$collection]);
+        return $pi;
+    }
+    public function testReconciliationRecoversOldAchOutsideListingWindowWithFlagOffAndRetriesReceipt():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi);
+        putenv('AUTOPAY_BETA_ENABLED=false');
+        $result=stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time()-60);
+        self::assertSame(1,$result['reconciled']);self::assertSame(0,$result['errors']);self::assertSame([$pi['id']],$provider->reads);
+        self::assertSame('succeeded',$this->row($collection)['state']);self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$id)->fetchColumn());
+        self::assertSame(0,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['checked']);
+        require_once dirname(__DIR__,2).'/src/utils/autopay_notifications.php';
+        $attempt=0;$keys=[];$sender=static function($to,$subject,$body,$options)use(&$attempt,&$keys){$keys[]=$options['message_key'];return [++$attempt>1,'Synthetic failure'];};
+        $mailConfig=['app_host'=>'https://example.invalid','payment_receipts_enabled'=>false];
+        self::assertSame(1,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['retried']);
+        $this->pdo->prepare('UPDATE autopay_notifications SET next_attempt_at=NOW() WHERE collection_id=?')->execute([$collection]);
+        self::assertSame(1,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['sent']);
+        self::assertSame(0,pa_autopay_deliver_notifications($this->pdo,$mailConfig,$sender)['sent']);self::assertSame($keys[0],$keys[1]);
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationRepairsAlreadyImportedPaymentAndRejectsWrongProviderBinding():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        $provider->account='acct_OTHER';$result=stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time());
+        self::assertSame(2,$result['errors']);self::assertSame('processing',$this->row($collection)['state']);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+        $provider->account='acct_SYNTHETIC';require_once dirname(__DIR__,2).'/src/controllers/webhook/stripe_payment_succeeded.php';handlePaymentIntentSucceeded($this->pdo,$pi);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame('succeeded',$this->row($collection)['state']);self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationPreservesFinancialHoldsAndNeverRegressesTerminalSuccess():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        $this->pdo->prepare('UPDATE autopay_collections SET financial_hold=1 WHERE id=?')->execute([$collection]);
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+        self::assertSame('processing',$this->row($collection)['state']);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+        $this->pdo->prepare('UPDATE autopay_collections SET financial_hold=0 WHERE id=?')->execute([$collection]);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        $provider->intent['status']='processing';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame('succeeded',$this->row($collection)['state']);
+    }
+    public function testProjectReconciliationUsesDurableIntentAndCanonicalChildAllocation():void
+    {
+        $draft=$this->projectDraft();$id=(int)$draft['id'];$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,$id,$this->projectChoice($draft,'collect'));$this->pdo->commit();
+        $collection=(int)$this->pdo->query('SELECT id FROM autopay_collections WHERE document_type="project_invoice" AND document_id='.$id)->fetchColumn();
+        $pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi);putenv('AUTOPAY_BETA_ENABLED=false');
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['reconciled']);
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM project_invoices WHERE id='.$id)->fetchColumn());
+        self::assertSame('succeeded',$this->row($collection)['state']);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM project_invoice_payments WHERE project_invoice_id='.$id)->fetchColumn());
+        $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$id)->fetchColumn();self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$child)->fetchColumn());
+    }
+    public function testReconciliationRejectsMutatedEvidenceAndProductionAndHoldsObservedRefund():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection);$provider=$this->recoveryProvider($pi,[$pi]);
+        foreach(['amount'=>9999,'customer'=>'cus_OTHER','payment_method'=>'pm_OTHER','livemode'=>true,'amount_received'=>9999] as $key=>$value){
+            $provider->intent=$pi;$provider->intent[$key]=$value;
+            self::assertSame(2,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+            self::assertSame('processing',$this->row($collection)['state']);
+        }
+        $provider->intent=$pi;putenv('APP_ENV=production');$provider->reads=[];
+        self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);self::assertSame([],$provider->reads);
+        putenv('APP_ENV=test');$provider->intent['latest_charge']=['amount_refunded'=>100,'disputed'=>false];
+        self::assertSame(2,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);
+        self::assertSame(1,(int)$this->row($collection)['financial_hold']);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testReconciliationRotatesBoundedProcessingRowsAndSkipsUnknownIntent():void
+    {
+        $first=$this->enqueue($this->invoice());$second=$this->enqueue($this->invoice());$unknown=$this->enqueue($this->invoice());
+        $firstPi=$this->knownIntent($first,'processing');$secondPi=$this->knownIntent($second);$provider=$this->recoveryProvider($firstPi);
+        $this->pdo->prepare('UPDATE autopay_collections SET updated_at=DATE_SUB(NOW(),INTERVAL 2 DAY) WHERE id=?')->execute([$first]);
+        $this->pdo->prepare('UPDATE autopay_collections SET updated_at=DATE_SUB(NOW(),INTERVAL 1 DAY) WHERE id=?')->execute([$second]);
+        self::assertSame(0,pa_autopay_reconcile_known_collections($this->pdo,$provider,$this->config,1)['reconciled']);
+        $provider->intent=$secondPi;self::assertSame(1,pa_autopay_reconcile_known_collections($this->pdo,$provider,$this->config,1)['reconciled']);
+        self::assertSame([$firstPi['id'],$secondPi['id']],$provider->reads);self::assertNull($this->row($unknown)['stripe_payment_intent_id']);
+    }
+    public function testReconciliationRecoversActionAndFailureWithoutRegressingNewerWebhook():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->knownIntent($collection,'requires_action');$provider=$this->recoveryProvider($pi);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('requires_action',$this->row($collection)['state']);
+        $stale=$this->row($collection);$this->pdo->prepare('UPDATE autopay_collections SET last_event_created=99 WHERE id=?')->execute([$collection]);
+        $provider->intent['status']='requires_payment_method';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$stale));self::assertSame('requires_action',$this->row($collection)['state']);
+        self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+        $provider->intent['status']='requires_action';self::assertFalse(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+    }
+    public function testGenericReconciliationRejectsMalformedAutoPayMarkersBeforeImport():void
+    {
+        $id=$this->invoice();$collection=$this->enqueue($id);$pi=$this->intent($this->row($collection),'succeeded');$provider=$this->recoveryProvider($pi);
+        foreach(['0','', 'invalid',null,'01'] as $marker){$listed=$pi;$listed['metadata']['pa_autopay_collection_id']=$marker;$provider->listed=[$listed];
+            self::assertSame(1,stripe_reconcile_payment_intents($this->pdo,$provider,$this->config,time())['errors']);}
+        self::assertSame([],$provider->reads);self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$id)->fetchColumn());
+    }
+    public function testActualBankFailureShapeWithClearedMethodSettlesFailureAndReconciles():void
+    {
+        $invoice=$this->invoice();$collection=$this->enqueue($invoice);$pi=$this->knownIntent($collection,'requires_payment_method');
+        $pi['payment_method']=null;$pi['last_payment_error']=['type'=>'card_error','code'=>'insufficient_funds','payment_method'=>['object'=>'payment_method','id'=>'pm_SYNTHETIC','type'=>'us_bank_account','livemode'=>false,'customer'=>'cus_SYNTHETIC']];
+        self::assertTrue(pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.payment_failed',101),$this->config,true));
+        self::assertSame('failed',$this->row($collection)['state']);self::assertSame('unpaid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+        // The same provider shape must repair a missed callback without charging.
+        $this->pdo->prepare('UPDATE autopay_collections SET state="processing" WHERE id=?')->execute([$collection]);$provider=$this->recoveryProvider($pi);
+        putenv('AUTOPAY_BETA_ENABLED=false');self::assertTrue(pa_autopay_reconcile_collection($this->pdo,$provider,$this->config,$this->row($collection)));self::assertSame('failed',$this->row($collection)['state']);
+    }
+    public function testErrorMethodFallbackCannotAuthorizeSuccessOrUnboundFailure():void
+    {
+        $collection=$this->enqueue($this->invoice());$row=$this->row($collection);$base=$this->intent($row,'requires_payment_method');
+        $base['payment_method']=null;$base['last_payment_error']=['type'=>'card_error','code'=>'insufficient_funds','payment_method'=>['object'=>'payment_method','id'=>'pm_SYNTHETIC','type'=>'us_bank_account','livemode'=>false,'customer'=>'cus_SYNTHETIC']];
+        $cases=[];
+        foreach(['id'=>'pm_OTHER','customer'=>'cus_OTHER','type'=>'card','livemode'=>true,'object'=>'other'] as $key=>$value){$pi=$base;$pi['last_payment_error']['payment_method'][$key]=$value;$cases[]=$pi;}
+        foreach(['succeeded','processing','requires_action','canceled'] as $status){$pi=$base;$pi['status']=$status;$cases[]=$pi;}
+        $pi=$base;unset($pi['payment_method']);$cases[]=$pi;$pi=$base;unset($pi['last_payment_error']);$cases[]=$pi;
+        foreach($cases as $pi){try{pa_autopay_validate_intent($row,$pi);self::fail('Unbound error method accepted');}catch(DomainException){self::assertTrue(true);}}
+        self::assertSame('pending',$this->row($collection)['state']);
+    }
+
+    public function testProjectSettlementAllocatesOnceToChildrenThroughCanonicalAccounting():void
+    {
+        $child=$this->invoice();$this->pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$child]);
+        $this->pdo->prepare('INSERT INTO projects(name,client_id) VALUES ("Synthetic settlement project",?)')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
+        $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,billing_period_start,billing_period_end,total,balance_due,finalized_at,finalization_source) VALUES (?,?,CURDATE(),CURDATE(),100,100,NOW(),"project_finalize")')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
+        $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
+        $this->pdo->beginTransaction();$collection=pa_autopay_enqueue_project_invoice($this->pdo,$id,$this->config,null,'project_finalize');$this->pdo->commit();
+        $pi=$this->intent($this->row($collection),'succeeded');$event=$this->event($pi,'payment_intent.succeeded');
+        self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));self::assertTrue(pa_autopay_handle_event($this->pdo,$event,$this->config,true));
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM project_invoices WHERE id='.$id)->fetchColumn());
+        self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$child)->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$child)->fetchColumn());
+    }
+}
