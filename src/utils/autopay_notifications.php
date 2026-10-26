@@ -2,10 +2,11 @@
 declare(strict_types=1);
 require_once __DIR__.'/autopay_status.php';
 require_once __DIR__.'/payment_receipts.php';
+require_once __DIR__.'/autopay_enrollment_notifications.php';
 
 /** Recover delivery work from durable processor outcomes, including webhook retries. */
 function pa_autopay_deliver_notifications(PDO $pdo,array $config,?callable $sender=null,int $limit=25):array {
-    $stats=['sent'=>0,'retried'=>0,'suppressed'=>0];
+    $stats=pa_autopay_deliver_enrollment_confirmations($pdo,$config,$sender,$limit);
     if(!invoice_table_has_column($pdo,'autopay_notifications','kind'))return $stats;
     $installation=(string)getenv('AUTOPAY_INSTALLATION_ID');$account=(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID');
     if(!preg_match('/^[a-zA-Z0-9_-]{8,64}$/D',$installation)||!preg_match('/^acct_[a-zA-Z0-9]+$/D',$account))return $stats;

@@ -97,7 +97,9 @@ function pa_autopay_setup_event(PDO $pdo,array $event,array $config,callable $tr
         if(($intent['status']??'')!=='succeeded' || ($intent['usage']??'')!=='off_session' || ($intent['livemode']??true)!==false || ($method['livemode']??true)!==false || ($intent['customer']??'')!==$auth['stripe_customer_id'] || ($method['customer']??'')!==$auth['stripe_customer_id'] || ($method['type']??'')!==$auth['method_type'] || (string)($m['pa_autopay_authorization_id']??'')!==(string)$id || (string)($m['pa_client_id']??'')!==(string)$auth['client_id'] || ($m['pa_autopay_installation_id']??'')!==$auth['installation_id'] || ($m['pa_autopay_account_id']??'')!==$auth['processor_account_id'] || $auth['installation_id']!==(string)getenv('AUTOPAY_INSTALLATION_ID') || $auth['processor_account_id']!==(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID'))throw new DomainException('AutoPay setup binding mismatch.');
         $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND id<>? AND status IN ("active","pending")')->execute([$auth['client_id'],$auth['scope'],$auth['contract_id'],$auth['installation_id'],$auth['processor_account_id'],$id]);
         $last4=(string)($method[$method['type']]['last4']??'');if(!preg_match('/^[0-9]{4}$/D',$last4))$last4=null;
-        $pdo->prepare('UPDATE autopay_enrollments SET status="active",payment_method_id=?,setup_intent_id=?,last4=?,verified_at=NOW(),effective_from=NOW() WHERE id=?')->execute([$method['id'],$intent['id'],$last4,$id]);$pdo->commit();return true;
+        $pdo->prepare('UPDATE autopay_enrollments SET status="active",payment_method_id=?,setup_intent_id=?,last4=?,verified_at=NOW(),effective_from=NOW(),management_token=COALESCE(management_token,?) WHERE id=?')->execute([$method['id'],$intent['id'],$last4,bin2hex(random_bytes(32)),$id]);
+        $pdo->prepare('INSERT IGNORE INTO autopay_enrollment_notifications(enrollment_id) VALUES (?)')->execute([$id]);
+        $pdo->commit();return true;
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
 
