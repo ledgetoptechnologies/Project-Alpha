@@ -5,6 +5,8 @@ require_once __DIR__.'/../../config/app.php';
 require_once __DIR__.'/../../utils/csrf.php';
 require_once __DIR__.'/../../utils/rate_limiter.php';
 require_once __DIR__.'/../../utils/autopay_enrollment.php';
+require_once __DIR__.'/../../utils/security_headers.php';
+send_security_headers(true);
 header('Cache-Control: no-store');header('Referrer-Policy: no-referrer');
 if(!pa_autopay_test_context_enabled($appConfig)){http_response_code(404);echo 'AutoPay is unavailable.';exit;}
 $token=(string)($_POST['token']??$_GET['token']??'');$manage=(string)($_POST['manage']??$_GET['manage']??'');$message='';$error='';
