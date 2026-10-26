@@ -201,7 +201,10 @@ function pa_autopay_handle_event(PDO $pdo,array $event,array $config,bool $signa
         $pdo->prepare('UPDATE autopay_collections SET state="succeeded",stripe_payment_intent_id=?,next_attempt_at=NULL,lease_token=NULL,lease_until=NULL,last_event_created=GREATEST(last_event_created,?) WHERE id=?')->execute([$intent['id'],(int)($event['created']??0),$row['id']]);
     }else{
         $state=match($type){'payment_intent.payment_failed','payment_intent.canceled'=>'failed','payment_intent.requires_action'=>'requires_action','payment_intent.processing'=>'processing',default=>null};
-        if($state!==null)$pdo->prepare('UPDATE autopay_collections SET state=?,stripe_payment_intent_id=?,next_attempt_at=NULL,lease_token=NULL,lease_until=NULL,last_event_created=? WHERE id=? AND state<>"succeeded" AND last_event_created<=?')->execute([$state,$intent['id'],(int)($event['created']??0),$row['id'],(int)($event['created']??0)]);
+        // Failed attempts are not retried by this workflow. Delayed intermediate
+        // events (including ties at Stripe's second precision) must not reserve
+        // them again; verified settlement above remains authoritative.
+        if($state!==null)$pdo->prepare('UPDATE autopay_collections SET state=?,stripe_payment_intent_id=?,next_attempt_at=NULL,lease_token=NULL,lease_until=NULL,last_event_created=? WHERE id=? AND state NOT IN ("succeeded","failed") AND last_event_created<=?')->execute([$state,$intent['id'],(int)($event['created']??0),$row['id'],(int)($event['created']??0)]);
     }
     return true;
 }

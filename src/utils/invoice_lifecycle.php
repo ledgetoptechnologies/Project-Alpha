@@ -590,6 +590,8 @@ function invoice_reopen_draft(PDO $pdo, int $invoiceId): void
 {
     $pdo->beginTransaction();
     try {
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
         $stmt = $pdo->prepare('SELECT status,stripe_session_id,stripe_checkout_expires_at FROM invoices WHERE id=? FOR UPDATE');
         $stmt->execute([$invoiceId]);
         $invoice = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];

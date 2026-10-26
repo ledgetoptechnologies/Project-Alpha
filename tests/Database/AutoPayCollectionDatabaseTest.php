@@ -193,6 +193,33 @@ final class AutoPayCollectionDatabaseTest extends TestCase
         $pi=$this->intent($this->row($id),'requires_action');pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.requires_action',200),$this->config,true);
         $pi['status']='processing';pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.processing',100),$this->config,true);self::assertSame('requires_action',$this->row($id)['state']);
     }
+    public function testFailedAttemptCannotBeResurrectedByTiedOrLaterIntermediateEvents():void
+    {
+        $invoice=$this->invoice();$id=$this->enqueue($invoice);
+        $pi=$this->intent($this->row($id),'requires_payment_method');
+        pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.payment_failed',100),$this->config,true);
+        foreach([['processing',100],['requires_action',101]] as [$status,$created]){
+            $pi['status']=$status;pa_autopay_handle_event($this->pdo,$this->event($pi,'payment_intent.'.$status,$created),$this->config,true);
+            self::assertSame('failed',$this->row($id)['state']);pa_autopay_assert_payment_available($this->pdo,$invoice);
+        }
+        $success=$this->event($this->intent($this->row($id),'succeeded'),'payment_intent.succeeded',102);
+        pa_autopay_handle_event($this->pdo,$success,$this->config,true);pa_autopay_handle_event($this->pdo,$success,$this->config,true);
+        self::assertSame('succeeded',$this->row($id)['state']);self::assertSame('paid',$this->pdo->query('SELECT status FROM invoices WHERE id='.$invoice)->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payments WHERE invoice_id='.$invoice)->fetchColumn());
+    }
+    public function testReservedProjectStatementPreventsReopeningChildInvoice():void
+    {
+        $project=$this->projectDraft();$config=$this->projectChoice($project,'collect');
+        $this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$project['id'],$config);$this->pdo->commit();
+        $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$project['id'])->fetchColumn();
+        $before=$this->pdo->query('SELECT status,finalized_at FROM invoices WHERE id='.$child)->fetch(PDO::FETCH_ASSOC);
+        foreach(['pending','processing'] as $state){
+            $this->pdo->prepare('UPDATE autopay_collections SET state=? WHERE document_type="project_invoice" AND document_id=?')->execute([$state,$project['id']]);
+            try{invoice_reopen_draft($this->pdo,$child);self::fail('Reserved child reopened');}catch(DomainException $e){self::assertStringContainsString('AutoPay',$e->getMessage());}
+            self::assertSame($before,$this->pdo->query('SELECT status,finalized_at FROM invoices WHERE id='.$child)->fetch(PDO::FETCH_ASSOC));
+            self::assertFalse($this->pdo->inTransaction());
+        }
+    }
     public function testProjectStatementOnlyCollectsSameClientChildrenAndNeverChildInvoices():void
     {
         $child=$this->invoice();$this->pdo->prepare('UPDATE invoices SET collection_mode="project_aggregate" WHERE id=?')->execute([$child]);self::assertNull($this->enqueue($child));
