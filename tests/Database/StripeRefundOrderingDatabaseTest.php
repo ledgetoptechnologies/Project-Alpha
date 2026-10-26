@@ -58,6 +58,18 @@ final class StripeRefundOrderingDatabaseTest extends TestCase
         }
     }
 
+    public function testActualAchChargeWrapperUsesBankRefundIdentityAndDeduplicates():void
+    {
+        $suffix=bin2hex(random_bytes(8));$refund=['object'=>'refund','id'=>'pyr_'.$suffix,'payment_intent'=>'pi_'.$suffix,'amount'=>100,'status'=>'succeeded'];
+        $charge=['object'=>'charge','id'=>'py_'.$suffix,'refunds'=>['data'=>[$refund]]];$reads=[];
+        $retrieve=static function(string $id)use($refund,&$reads):array{$reads[]=$id;return $refund;};
+        stripe_record_refund_event($this->pdo,$charge,$retrieve);stripe_record_refund_event($this->pdo,$charge,$retrieve);
+        stripe_record_refund($this->pdo,$charge);
+        self::assertSame([$refund['id'],$refund['id']],$reads);
+        $s=$this->pdo->prepare('SELECT COUNT(*) FROM stripe_refunds WHERE stripe_refund_id=?');$s->execute([$refund['id']]);self::assertSame(1,(int)$s->fetchColumn());
+        $charge['object']='refund';$this->expectException(DomainException::class);stripe_record_refund_event($this->pdo,$charge,$retrieve);
+    }
+
     public function testOlderPendingSnapshotsDoNotUndoSettlementOrFailure(): void
     {
         foreach (['succeeded','failed','canceled'] as $terminal) {

@@ -99,10 +99,30 @@ function stripe_link_pending_project_financial_events(PDO $pdo, int $projectPaym
     stripe_refresh_project_payment_totals($pdo, $projectPaymentId);
 }
 
+/** Resolve the authenticated expanded charge, including bank-payment IDs. */
+function stripe_refund_charge_id(array $intent,string $expectedIntentId): string
+{
+    $charge=$intent['latest_charge']??null;
+    if(($intent['object']??'')!=='payment_intent' || ($intent['id']??'')!==$expectedIntentId || ($intent['status']??'')!=='succeeded'
+        || !is_bool($intent['livemode']??null) || !is_array($charge) || ($charge['object']??'')!=='charge'
+        || !preg_match('/^(?:ch|py)_[A-Za-z0-9_]+$/D',(string)($charge['id']??''))
+        || ($charge['payment_intent']??'')!==$expectedIntentId || ($charge['status']??'')!=='succeeded'
+        || ($charge['livemode']??null)!==$intent['livemode'] || ($charge['customer']??null)!==($intent['customer']??null)
+        || ($charge['amount_captured']??$charge['amount']??null)!==($intent['amount_received']??null) || ($charge['currency']??null)!==($intent['currency']??null))throw new DomainException('Stripe charge identity could not be verified. No refund was created.');
+    return $charge['id'];
+}
+
+function stripe_validate_created_refund(array $refund,string $chargeId,int $amountCents,?array $intent=null):void
+{
+    if(($refund['object']??'')!=='refund' || !preg_match('/^(?:re|pyr)_[A-Za-z0-9_]+$/D',(string)($refund['id']??''))
+        || ($refund['charge']??'')!==$chargeId || ($refund['amount']??null)!==$amountCents
+        || ($intent!==null && (($refund['payment_intent']??'')!==$intent['id'] || (array_key_exists('livemode',$refund) && $refund['livemode']!==$intent['livemode']) || ($refund['currency']??'')!==$intent['currency'])))throw new DomainException('Stripe did not confirm the refund. No local refund was recorded.');
+}
+
 /** Signed delivery snapshots can be stale; serialize and retrieve current state. */
 function stripe_record_refund_event(PDO $pdo, array $object, callable $retrieve): void
 {
-    if (str_starts_with((string)($object['id'] ?? ''), 'ch_')) {
+    if (str_starts_with((string)($object['id'] ?? ''), 'ch_') || (($object['object']??'')==='charge' && preg_match('/^py_[A-Za-z0-9_]+$/D',(string)($object['id']??'')))) {
         foreach (($object['refunds']['data'] ?? []) as $refund) {
             if (is_array($refund)) stripe_record_refund_event($pdo, $refund, $retrieve);
         }
@@ -136,7 +156,8 @@ function stripe_record_refund(
     ?int $knownProjectPaymentId = null
 ): void
 {
-    if (str_starts_with((string)($refund['id'] ?? ''), 'ch_')) {
+    if(str_starts_with((string)($refund['id']??''),'py_') && ($refund['object']??'')!=='charge')throw new DomainException('Charge wrapper identity is invalid.');
+    if (str_starts_with((string)($refund['id'] ?? ''), 'ch_') || (($refund['object']??'')==='charge' && preg_match('/^py_[A-Za-z0-9_]+$/D',(string)($refund['id']??'')))) {
         foreach (($refund['refunds']['data'] ?? []) as $item) {
             if (is_array($item)) {
                 stripe_record_refund($pdo, $item, $knownPaymentId, $knownProjectPaymentId);

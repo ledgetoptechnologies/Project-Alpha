@@ -81,15 +81,14 @@ try {
 
         if ($paymentIntentId !== '') {
             $intent = $stripe->getPaymentIntentWithBalanceTransaction($paymentIntentId);
-            if (is_array($intent['latest_charge'] ?? null)) {
-                $chargeId = (string)($intent['latest_charge']['id'] ?? '');
-            } elseif (is_string($intent['latest_charge'] ?? null)) {
-                $chargeId = (string)$intent['latest_charge'];
+            if (is_string($intent['latest_charge'] ?? null)) {
+                $intent['latest_charge'] = $stripe->getCharge($intent['latest_charge']);
             } elseif (is_array($intent['charges']['data'][0] ?? null)) {
-                $chargeId = (string)($intent['charges']['data'][0]['id'] ?? '');
+                $intent['latest_charge'] ??= $intent['charges']['data'][0];
             }
+            $chargeId = stripe_refund_charge_id($intent,$paymentIntentId);
         }
-        if (!$chargeId || !str_starts_with($chargeId, 'ch_')) {
+        if (!$chargeId || !preg_match('/^(?:ch|py)_[A-Za-z0-9_]+$/D',$chargeId)) {
             throw new RuntimeException('Stripe charge ID could not be resolved for this payment. No refund was created.');
         }
 
@@ -103,9 +102,7 @@ try {
             'pa-refund-v1-' . $paymentId . '-' . $requestToken,
             $reason
         );
-        if (empty($refund['id']) || !str_starts_with((string)$refund['id'], 're_')) {
-            throw new RuntimeException('Stripe did not confirm the refund. No local refund was recorded.');
-        }
+        stripe_validate_created_refund($refund,$chargeId,(int)round($amount*100),$paymentIntentId!==''?$intent:null);
 
         // The controller already knows the PA payment. Pass it explicitly so
         // legacy records that only stored a Charge ID reconcile immediately.
