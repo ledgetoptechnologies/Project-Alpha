@@ -16,7 +16,8 @@ function pa_autopay_assert_payment_available(PDO $pdo, int $id, string $type='in
     // Upgrades without migration 112 remain usable while this disabled feature is absent.
     require_once __DIR__ . '/invoice_lifecycle.php';
     if (!invoice_table_has_column($pdo,'autopay_collections','state')) return;
-    $s=$pdo->prepare('SELECT state,financial_hold FROM autopay_collections WHERE document_type=? AND document_id=?');$s->execute([$type,$id]);$collection=$s->fetch(PDO::FETCH_ASSOC);
+    $suffix=$pdo->inTransaction() && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+    $s=$pdo->prepare('SELECT state,financial_hold FROM autopay_collections WHERE document_type=? AND document_id=?'.$suffix);$s->execute([$type,$id]);$collection=$s->fetch(PDO::FETCH_ASSOC);
     if ($collection && (!empty($collection['financial_hold']) || in_array($collection['state'],['pending','processing','requires_action','held'],true))) {
         throw new DomainException('AutoPay has reserved this invoice. Resolve or cancel the collection before another payment or invoice change.');
     }
@@ -37,15 +38,24 @@ function pa_autopay_reserve_checkout(PDO $pdo,array $document,array $config,stri
         ->execute(['pa_checkout_pending_'.bin2hex(random_bytes(16)),(int)$document['id']]);
 }
 
-/** Lock the statement before its child, matching project payment allocation order. */
+/** Serialize statement creation, then lock parent before child like payment allocation. */
 function pa_autopay_lock_parent_for_invoice_mutation(PDO $pdo,int $invoiceId): void
 {
     if(!$pdo->inTransaction())throw new LogicException('Invoice mutation requires a transaction.');
-    $s=$pdo->prepare('SELECT project_invoice_id FROM project_invoice_items WHERE invoice_id=?');$s->execute([$invoiceId]);
-    $parent=(int)($s->fetchColumn()?:0);if(!$parent)return;
     $suffix=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
-    $s=$pdo->prepare('SELECT id FROM project_invoices WHERE id=?'.$suffix);$s->execute([$parent]);
-    pa_autopay_assert_payment_available($pdo,$parent,'project_invoice');
+    $s=$pdo->prepare('SELECT project_id FROM invoices WHERE id=?');$s->execute([$invoiceId]);
+    $project=(int)($s->fetchColumn()?:0);
+    if($project){$s=$pdo->prepare('SELECT id FROM projects WHERE id=?'.$suffix);$s->execute([$project]);}
+    // This must be a current read: a generator may have committed while the
+    // project lock was being acquired, after our initial snapshot was opened.
+    $s=$pdo->prepare('SELECT project_invoice_id FROM project_invoice_items WHERE invoice_id=?'.$suffix);$s->execute([$invoiceId]);
+    $parent=(int)($s->fetchColumn()?:0);
+    if($parent){
+        $s=$pdo->prepare('SELECT id FROM project_invoices WHERE id=?'.$suffix);$s->execute([$parent]);
+        pa_autopay_assert_payment_available($pdo,$parent,'project_invoice');
+    }
+    $s=$pdo->prepare('SELECT project_id FROM invoices WHERE id=?'.$suffix);$s->execute([$invoiceId]);
+    if((int)($s->fetchColumn()?:0)!==$project)throw new DomainException('The invoice project changed. Reload before adjusting this invoice.');
 }
 
 function pa_autopay_authorization_for_invoice(PDO $pdo,array $invoice,array $config): ?array

@@ -91,6 +91,35 @@ final class AutoPayCollectionDatabaseTest extends TestCase
         $child=(int)$this->pdo->query('SELECT invoice_id FROM project_invoice_items WHERE project_invoice_id='.$row['id'])->fetchColumn();
         $this->pdo->beginTransaction();try{pa_autopay_lock_parent_for_invoice_mutation($this->pdo,$child);self::fail('Child mutation while statement reserved');}catch(DomainException $e){self::assertStringContainsString('reserved',$e->getMessage());}finally{$this->pdo->rollBack();}
     }
+    public function testConcurrentStatementCreationCannotSlipPastChildMutationParentLookup():void
+    {
+        $child=$this->invoice();
+        $this->pdo->prepare('INSERT INTO projects(name,client_id,invoice_billing_period) VALUES ("Synthetic parent creation race",?,"monthly")')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
+        $this->pdo->prepare('UPDATE invoices SET project_id=?,collection_mode="project_aggregate" WHERE id=?')->execute([$project,$child]);
+        $this->pdo->beginTransaction();$lock=$this->pdo->prepare('SELECT id FROM projects WHERE id=? FOR UPDATE');$lock->execute([$project]);
+        $root=dirname(__DIR__,2);$script=tempnam(sys_get_temp_dir(),'pa-parent-race-');$marker=$script.'.connection';$process=null;$pipes=[];
+        $code='<?php require '.var_export($root.'/vendor/autoload.php',true).';require '.var_export($root.'/src/migrations/migration_lib.php',true).';require '.var_export($root.'/src/utils/autopay_collection.php',true).';$pdo=migration_connection();$pdo->exec("SET SESSION innodb_lock_wait_timeout=10");$pdo->beginTransaction();file_put_contents('.var_export($marker,true).',(string)$pdo->query("SELECT CONNECTION_ID()")->fetchColumn());try{pa_autopay_lock_parent_for_invoice_mutation($pdo,'.$child.');$pdo->exec("UPDATE invoices SET total=999 WHERE id='.$child.'");$pdo->commit();echo "mutated";}catch(DomainException $e){$pdo->rollBack();echo "blocked";}';
+        try {
+            file_put_contents($script,$code);$process=proc_open([PHP_BINARY,$script],[1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);self::assertIsResource($process);
+            $waiting=false;
+            for($i=0;$i<150;$i++){
+                if(is_file($marker)){$connection=(int)file_get_contents($marker);$s=$this->pdo->prepare('SELECT trx_state FROM information_schema.innodb_trx WHERE trx_mysql_thread_id=?');$s->execute([$connection]);if($s->fetchColumn()==='LOCK WAIT'){$waiting=true;break;}}
+                usleep(20000);
+            }
+            self::assertTrue($waiting,'The editor must wait for the generator project lock before reading parent membership.');
+            // The generator publishes its newly finalized statement while the
+            // editor has already established a snapshot without that parent.
+            $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,billing_period_start,billing_period_end,total,balance_due,finalized_at,finalization_source) VALUES (?,?,CURDATE(),CURDATE(),100,100,NOW(),"project_finalize")')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
+            $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
+            self::assertNotNull(pa_autopay_enqueue_project_invoice($this->pdo,$id,$this->config,null,'project_finalize'));$this->pdo->commit();
+            $out=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);$pipes=[];$exit=proc_close($process);$process=null;
+            self::assertSame(0,$exit,$err);self::assertSame('blocked',$out,$err);self::assertSame('100.00',$this->pdo->query('SELECT total FROM invoices WHERE id='.$child)->fetchColumn());
+        } finally {
+            if($this->pdo->inTransaction())$this->pdo->rollBack();
+            if(is_resource($process)){proc_terminate($process);foreach($pipes as $pipe)if(is_resource($pipe))fclose($pipe);proc_close($process);}
+            if(is_file($script))unlink($script);if(is_file($marker))unlink($marker);
+        }
+    }
     public function testProjectAutomaticFirstFinalizationQueuesButHistoricalChildPreventsAutoCollection():void
     {
         $row=$this->projectDraft();$this->pdo->beginTransaction();project_invoice_finalize_locked($this->pdo,(int)$row['id'],$this->config,true);$this->pdo->commit();

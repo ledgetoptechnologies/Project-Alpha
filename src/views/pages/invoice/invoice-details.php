@@ -146,7 +146,7 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
           $finalizeConfirmation = 'Finalize this invoice using the AutoPay choice shown above? Initiating AutoPay can debit the saved payment method; holding it will not collect payment.';
         }
       ?>
-      <form id="invoice-finalize-form" method="post" action="/?page=invoice/invoice-finalize" style="display:inline" onsubmit="return confirm(<?php echo htmlspecialchars(json_encode($finalizeConfirmation), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>);">
+      <form id="invoice-finalize-form" method="post" action="/?page=invoice/invoice-finalize" style="display:inline" <?php if (!$autopayState['eligible']): ?>onsubmit="return confirm(<?php echo htmlspecialchars(json_encode($finalizeConfirmation), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>);"<?php endif; ?>>
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
         <input type="hidden" name="id" value="<?php echo (int)$id; ?>">
         <?php if (!empty($_GET['content_link_warning']) && $autopayState['eligible']): ?><input type="hidden" name="confirm_missing_content_links" value="1"><?php endif; ?>
