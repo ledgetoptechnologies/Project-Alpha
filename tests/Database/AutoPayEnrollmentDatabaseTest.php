@@ -77,6 +77,15 @@ final class AutoPayEnrollmentDatabaseTest extends TestCase {
         self::assertTrue(pa_autopay_enabled($this->config));self::assertFalse(pa_autopay_enabled(['_stripe_secret_key'=>'sk_live_synthetic']));
         putenv('APP_ENV=production');self::assertFalse(pa_autopay_enabled($this->config));putenv('APP_ENV=test');putenv('AUTOPAY_INSTALLATION_ID');self::assertFalse(pa_autopay_enabled($this->config));
     }
+    public function testGeneralRecipientLinkCannotResolvePrivateClientOrRequestCode():void {
+        $this->pdo->prepare('INSERT INTO invoices(client_id,status,total,balance_due,recipient_presentation_mode) VALUES (?,"unpaid",10,10,"general")')->execute([$this->clientId]);$id=(int)$this->pdo->lastInsertId();$token=bin2hex(random_bytes(24));
+        $this->pdo->prepare('INSERT INTO public_links(document_type,document_id,token,expires_at,expire_when_paid) VALUES ("invoice",?,?,DATE_ADD(NOW(),INTERVAL 1 DAY),0)')->execute([$id,$token]);
+        try{pa_autopay_context($this->pdo,$token);self::fail('General recipient resolved private client');}catch(DomainException $e){self::assertSame('This document link is unavailable.',$e->getMessage());}
+        $root=dirname(__DIR__,2);$payload=base64_encode(json_encode([$token,$this->config],JSON_THROW_ON_ERROR));
+        $code='require '.var_export($root.'/vendor/autoload.php',true).';require '.var_export($root.'/src/config/app.php',true).';[$token,$config]=json_decode(base64_decode('.var_export($payload,true).'),true);$appConfig=array_replace($appConfig,$config);session_start();$_SESSION=["csrf"=>"synthetic"];$_SERVER["REQUEST_METHOD"]="POST";$_POST=["action"=>"send_code","token"=>$token,"csrf"=>"synthetic"];class EmailService {public static function sendEmail(...$args){throw new RuntimeException("Mail forbidden in this test");}}require '.var_export($root.'/src/controllers/public_view/public_autopay.php',true).';';
+        $process=proc_open([PHP_BINARY,'-r',$code],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);fclose($pipes[0]);$output=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);self::assertSame(0,proc_close($process),$err);self::assertStringContainsString('This document link is unavailable.',$output);self::assertStringNotContainsString($this->client['email'],$output);
+        $s=$this->pdo->prepare('SELECT COUNT(*) FROM autopay_email_challenges WHERE client_id=?');$s->execute([$this->clientId]);self::assertSame(0,(int)$s->fetchColumn());
+    }
     public function testRealControllerRequiresCsrfAndEmailStepUpAndGetDoesNotMutate():void {
         $this->pdo->prepare('INSERT INTO invoices(client_id,status,total,balance_due) VALUES (?,"unpaid",10,10)')->execute([$this->clientId]);$id=(int)$this->pdo->lastInsertId();$token=bin2hex(random_bytes(24));
         $this->pdo->prepare('INSERT INTO public_links(document_type,document_id,token,expires_at,expire_when_paid) VALUES ("invoice",?,?,DATE_ADD(NOW(),INTERVAL 1 DAY),0)')->execute([$id,$token]);

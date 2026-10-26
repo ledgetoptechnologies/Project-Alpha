@@ -171,7 +171,7 @@ try {
   }
 
   require_once __DIR__ . '/../../utils/autopay_beta.php';
-  if (in_array($type, ['invoice','contract','project_invoice'], true) && pa_autopay_enabled($appConfig)) {
+  if (in_array($type, ['invoice','contract','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice) && pa_autopay_enabled($appConfig)) {
     echo '<p class="public-doc-wrap"><a href="/?page=public-autopay&amp;token=' . htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8') . '">Set up or manage AutoPay (test mode)</a></p>';
   }
   // Prefer Twig template if available, otherwise include PHP view wrapper

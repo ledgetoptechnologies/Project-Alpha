@@ -97,13 +97,25 @@ final class AutoPayCollectionDatabaseTest extends TestCase
         $this->pdo->prepare('INSERT INTO projects(name,client_id,invoice_billing_period) VALUES ("Synthetic parent creation race",?,"monthly")')->execute([$this->client]);$project=(int)$this->pdo->lastInsertId();$this->projects[]=$project;
         $this->pdo->prepare('UPDATE invoices SET project_id=?,collection_mode="project_aggregate" WHERE id=?')->execute([$project,$child]);
         $this->pdo->beginTransaction();$lock=$this->pdo->prepare('SELECT id FROM projects WHERE id=? FOR UPDATE');$lock->execute([$project]);
-        $root=dirname(__DIR__,2);$script=tempnam(sys_get_temp_dir(),'pa-parent-race-');$marker=$script.'.connection';$process=null;$pipes=[];
-        $code='<?php require '.var_export($root.'/vendor/autoload.php',true).';require '.var_export($root.'/src/migrations/migration_lib.php',true).';require '.var_export($root.'/src/utils/autopay_collection.php',true).';$pdo=migration_connection();$pdo->exec("SET SESSION innodb_lock_wait_timeout=10");$pdo->beginTransaction();file_put_contents('.var_export($marker,true).',(string)$pdo->query("SELECT CONNECTION_ID()")->fetchColumn());try{pa_autopay_lock_parent_for_invoice_mutation($pdo,'.$child.');$pdo->exec("UPDATE invoices SET total=999 WHERE id='.$child.'");$pdo->commit();echo "mutated";}catch(DomainException $e){$pdo->rollBack();echo "blocked";}';
+        $root=dirname(__DIR__,2);$script=tempnam(sys_get_temp_dir(),'pa-parent-race-');$marker=$script.'.lock-ready';$process=null;$pipes=[];
+        // A local barrier observes the exact locking statement without needing
+        // server-wide PROCESS access (ordinary application users do not have it).
+        // Execution still goes through the real PDO statement on connection 2.
+        $barrier=<<<'PHP'
+class ParentRaceStatement extends PDOStatement {
+ protected function __construct(private string $marker) {}
+ public function execute(?array $params=null):bool {
+  if($this->queryString==='SELECT id FROM projects WHERE id=? FOR UPDATE')file_put_contents($this->marker,'project-lock-ready');
+  return parent::execute($params);
+ }
+}
+PHP;
+        $code='<?php require '.var_export($root.'/vendor/autoload.php',true).';require '.var_export($root.'/src/migrations/migration_lib.php',true).';require '.var_export($root.'/src/utils/autopay_collection.php',true).';'.$barrier.'$pdo=migration_connection();$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS,[ParentRaceStatement::class,['.var_export($marker,true).']]);$pdo->exec("SET SESSION innodb_lock_wait_timeout=10");$pdo->beginTransaction();try{pa_autopay_lock_parent_for_invoice_mutation($pdo,'.$child.');$pdo->exec("UPDATE invoices SET total=999 WHERE id='.$child.'");$pdo->commit();echo "mutated";}catch(DomainException $e){$pdo->rollBack();echo "blocked";}';
         try {
             file_put_contents($script,$code);$process=proc_open([PHP_BINARY,$script],[1=>['pipe','w'],2=>['pipe','w']],$pipes,$root);self::assertIsResource($process);
             $waiting=false;
             for($i=0;$i<150;$i++){
-                if(is_file($marker)){$connection=(int)file_get_contents($marker);$s=$this->pdo->prepare('SELECT trx_state FROM information_schema.innodb_trx WHERE trx_mysql_thread_id=?');$s->execute([$connection]);if($s->fetchColumn()==='LOCK WAIT'){$waiting=true;break;}}
+                if(is_file($marker)&&file_get_contents($marker)==='project-lock-ready'){$waiting=true;break;}
                 usleep(20000);
             }
             self::assertTrue($waiting,'The editor must wait for the generator project lock before reading parent membership.');

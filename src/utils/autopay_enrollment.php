@@ -14,7 +14,7 @@ function pa_autopay_context(PDO $pdo,string $token): array {
     if (!$link || !in_array($link['document_type'],['invoice','contract','project_invoice'],true)) throw new DomainException('This document link is unavailable.');
     $table=['invoice'=>'invoices','contract'=>'contracts','project_invoice'=>'project_invoices'][$link['document_type']];
     $s=$pdo->prepare("SELECT * FROM $table WHERE id=?");$s->execute([$link['document_id']]);$doc=$s->fetch(PDO::FETCH_ASSOC);
-    if (!$doc || in_array($doc['status'],['void','cancelled','canceled'],true) || (!empty($link['expire_when_paid']) && $doc['status']==='paid')) throw new DomainException('This document link is unavailable.');
+    if (!$doc || in_array($doc['status'],['void','cancelled','canceled'],true) || (!empty($link['expire_when_paid']) && $doc['status']==='paid') || ($link['document_type']==='invoice' && ($doc['recipient_presentation_mode']??'named')==='general')) throw new DomainException('This document link is unavailable.');
     $s=$pdo->prepare('SELECT id,name,email FROM clients WHERE id=?');$s->execute([$doc['client_id']??$doc['primary_client_id']??0]);$client=$s->fetch(PDO::FETCH_ASSOC);
     if (!$client || !filter_var($client['email'],FILTER_VALIDATE_EMAIL)) throw new DomainException('A valid client email is required.');
     $contractId=$link['document_type']==='contract'?(int)$doc['id']:(int)($doc['contract_id']??0);
