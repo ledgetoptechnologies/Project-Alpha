@@ -180,12 +180,24 @@ function project_payment_receipt_email_issue(
 
     require_once __DIR__ . '/project_invoice_billing.php';
     $recipients = project_invoice_client_recipients($pdo, (int)$payment['project_invoice_id']);
+    $appConfig=payment_receipt_autopay_management($pdo,$projectPaymentId,$appConfig,'project_invoice');
+    // Statement delivery preferences cannot opt the actual AutoPay payer out
+    // of the receipt or the separate, email-verified management capability.
+    $autoPayPayer=trim((string)($appConfig['_autopay_manage_email']??''));
+    if(!empty($appConfig['_autopay_manage_url']) && filter_var($autoPayPayer,FILTER_VALIDATE_EMAIL)){
+        $recipients[]=['name'=>'there','email'=>$autoPayPayer];
+        $unique=[];
+        foreach($recipients as $recipient){
+            $address=strtolower(trim((string)($recipient['email']??'')));
+            if($address!==''&&!isset($unique[$address]))$unique[$address]=$recipient;
+        }
+        $recipients=array_values($unique);
+    }
     if (!$recipients) {
         return 0;
     }
 
     $sender ??= [EmailService::class, 'sendEmail'];
-    $appConfig=payment_receipt_autopay_management($pdo,$projectPaymentId,$appConfig,'project_invoice');
     $receiptNumber = 'PR-' . str_pad((string)$projectPaymentId, 6, '0', STR_PAD_LEFT);
     $invoiceNumber = (string)($payment['doc_number'] ?: $payment['project_invoice_id']);
     $statusText = (string)$payment['status'] === 'paid' ? 'paid in full' : 'partially paid';

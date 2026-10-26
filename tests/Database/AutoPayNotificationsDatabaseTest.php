@@ -76,6 +76,19 @@ final class AutoPayNotificationsDatabaseTest extends TestCase {
             $messages=[];$sender=static function($to,$subject,$body,$options)use(&$messages){$messages[$to]=$body;return [true,''];};$config=$this->config;$config['payment_receipts_enabled']=true;
             self::assertSame(2,project_payment_receipt_email_issue($this->pdo,$payment,$config,$sender,true));
             self::assertStringContainsString('manage=',$messages['payer@example.invalid']);self::assertStringNotContainsString('manage=',$messages['stakeholder@example.invalid']);
+            // Alternate billing contacts must not remove the actual payer's
+            // receipt, and that contact must never receive its management link.
+            $this->pdo->prepare('DELETE FROM project_invoice_recipients WHERE project_id=? AND client_id=?')->execute([$project,$this->client]);$messages=[];
+            self::assertSame(2,project_payment_receipt_email_issue($this->pdo,$payment,$config,$sender,true));
+            self::assertStringContainsString('manage=',$messages['payer@example.invalid']);self::assertStringNotContainsString('manage=',$messages['stakeholder@example.invalid']);
+            $this->pdo->prepare('DELETE FROM project_invoice_recipients WHERE project_id=?')->execute([$project]);$messages=[];
+            self::assertSame(1,project_payment_receipt_email_issue($this->pdo,$payment,$config,$sender,true));
+            self::assertSame(['payer@example.invalid'],array_keys($messages));self::assertStringContainsString('manage=',$messages['payer@example.invalid']);
+            // Ordinary project payments still honor their existing recipient list.
+            $this->pdo->prepare('UPDATE autopay_collections SET stripe_payment_intent_id=NULL WHERE id=?')->execute([$this->collection]);$messages=[];
+            self::assertSame(0,project_payment_receipt_email_issue($this->pdo,$payment,$config,$sender,true));self::assertSame([],$messages);
+            $this->pdo->prepare('INSERT INTO project_invoice_recipients(project_id,client_id,recipient_key) VALUES (?,?,?)')->execute([$project,$other,'client:'.$other]);
+            self::assertSame(1,project_payment_receipt_email_issue($this->pdo,$payment,$config,$sender,true));self::assertSame(['stakeholder@example.invalid'],array_keys($messages));self::assertStringNotContainsString('manage=',$messages['stakeholder@example.invalid']);
         }finally{
             if($statement){$this->pdo->prepare('DELETE FROM project_invoice_payments WHERE project_invoice_id=?')->execute([$statement]);$this->pdo->prepare('DELETE FROM project_invoices WHERE id=?')->execute([$statement]);}
             if($project)$this->pdo->prepare('DELETE FROM projects WHERE id=?')->execute([$project]);if($other)$this->pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$other]);
