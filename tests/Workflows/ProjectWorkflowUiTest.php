@@ -545,7 +545,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('$next_invoice_date = null;', (string)$ltCreate);
         self::assertStringContainsString('pa_long_term_starts_billing_on_upload($contract)', (string)$sign);
         self::assertStringContainsString('generate_recurring_invoice($pdo, $contract, $appConfig)', (string)$start);
-        self::assertStringContainsString('$hasGeneratedInvoices', (string)$activate);
+        self::assertStringContainsString('pa_long_term_billing_start_date($pdo, $contract)', (string)$activate);
         self::assertStringContainsString('recurring_invoice_send_on_generate_if_enabled($pdo, $invoiceId, $appConfig)', (string)$start);
         self::assertStringContainsString('UPDATE invoices SET sent_at=COALESCE(sent_at,NOW())', (string)file_get_contents($this->root . '/src/controllers/email_send.php'));
         self::assertStringContainsString('$billingText = \'Manual invoices\';', (string)$odcList);
@@ -559,7 +559,8 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('Long-term recurring invoices are historical billing records and must not be rewritten.', (string)$update);
         self::assertStringContainsString('if (!$isLongTermContract)', (string)$update);
         self::assertStringContainsString("['pending', 'active', 'paused']", (string)$ltDetails);
-        self::assertStringContainsString('Generate Invoice Now', (string)$ltDetails);
+        self::assertStringContainsString('Start Billing', (string)$ltDetails);
+        self::assertStringNotContainsString('Generate Invoice Now', (string)$ltDetails);
         self::assertStringContainsString('Email Latest Invoice', (string)$ltDetails);
         self::assertStringContainsString('Edit Billing', (string)$ltList);
         self::assertStringContainsString('invoices_generated', (string)$ltList);

@@ -26,6 +26,8 @@ Use **Recurring Services & Amendments** on the long-term contract details page t
 
 When a long-term contract becomes active and the first invoice is already due, PA attempts to generate it immediately. This avoids waiting until the next scheduled cron run or the next yearly date.
 
+Activation and **Start Billing** preserve an explicitly scheduled first invoice date, including a date retained after recording historical payments. A future date does not generate an invoice early. With manual billing start selected, uploading a signed PDF leaves the agreement pending until staff explicitly starts billing. An agreement with no selected billing date starts today, unless its service start date is in the future.
+
 When `invoice_auto_email_on_generate` is enabled, each generated direct-collection invoice is finalized and emailed once with a public payment link. Delivery uses an idempotent `on_generate` notification record, so a cron retry does not send the same invoice twice.
 
 ## Catch-Up Behavior
@@ -48,6 +50,16 @@ Selecting **View history** on a billing schedule filters that history to the sel
 Invoice display numbers are type-specific while preserving the existing numeric sequence: regular invoices use `I-#`, long-term recurring invoices use `LTI-#`, and on-demand invoices use `ODI-#`. Existing records are not renumbered; the prefix is derived from `invoice_type` everywhere the invoice is displayed, emailed, downloaded, or sent to Stripe.
 
 ## Manual Recovery
+
+### Record a previously received check for monthly periods
+
+For an approved monthly service, open **Record paid monthly periods** in the agreement's services panel. Enter the first covered period, number of months, date the check was received, check reference, and the full amount. Use this only when the payment has not already been recorded elsewhere.
+
+Preview the coverage dates, invoice totals, and next billing date before confirming. PA creates one paid invoice per month and allocates the check across those invoices using the same reference. The sum must match the check exactly, including any configured tax and discount. The current month's coverage may extend into the future, but every selected period must already have started.
+
+Recording history does not activate the agreement, collect money, or send invoices or receipts. It preserves the signed agreement and advances the service's next invoice date past the paid coverage. Start billing separately after reviewing the remaining schedule. Retries of the same request return the existing entries; overlapping invoiced periods are rejected. All invoices and payment allocations are saved together or rolled back together.
+
+This workflow supports monthly direct-collection services and checks. It rejects queued service changes, ambiguous older invoices without coverage records, project statement collection, and unsupported inherited pricing. Existing invoices should receive payments through their normal payment actions. Annual conversions, partial-year settlement, and automatic withdrawals are separate workflows.
 
 If a long-term contract is active but an invoice was not generated when expected, use the long-term contract details page to review the schedule and generate or send the needed invoice.
 

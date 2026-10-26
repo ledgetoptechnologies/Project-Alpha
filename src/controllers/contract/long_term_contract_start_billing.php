@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/recurring_billing.php';
 require_once __DIR__ . '/../../utils/recurring_services.php';
+require_once __DIR__ . '/../../utils/contract_billing_start.php';
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {
@@ -26,14 +27,11 @@ try {
     if (empty($contract['signed_pdf_path'])) {
         throw new Exception('Upload signed contract first');
     }
-    if (in_array((string)$contract['status'], ['cancelled', 'completed', 'void'], true)) {
-        throw new Exception('Billing cannot be started for this contract status');
-    }
-    if ((int)($contract['invoices_generated'] ?? 0) > 0 || !empty($contract['last_invoice_date'])) {
-        throw new Exception('Initial billing has already started. Open the latest invoice instead.');
+    if (!pa_long_term_can_start_billing($pdo, $contract)) {
+        throw new Exception('Billing is already scheduled or cannot be started for this contract status.');
     }
 
-    $startDate = date('Y-m-d');
+    $startDate = pa_long_term_billing_start_date($pdo, $contract);
     $update = $pdo->prepare('UPDATE contracts SET status="active", next_invoice_date=? WHERE id=? AND contract_type="long_term"');
     $update->execute([$startDate, $id]);
     pa_recurring_services_activate($pdo, $id, $startDate);

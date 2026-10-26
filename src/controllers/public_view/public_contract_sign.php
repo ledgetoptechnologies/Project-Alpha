@@ -26,6 +26,7 @@ if (!csrf_sf_is_valid('public_contract_sign', $submitted)) {
     exit;
 }
 
+$storedFile = null;
 try {
     $token = isset($_POST['token']) ? (string)$_POST['token'] : '';
     
@@ -113,15 +114,18 @@ try {
     $fileUrl = '/?page=serve-upload&file=' . rawurlencode('signed_contracts/' . $filename);
     
     $pdo->beginTransaction();
+    $contract = array_replace($contract, pa_contract_lock_public_signing($pdo, $contractId, $token));
+    $manualStart = ($contract['contract_type'] ?? '') === 'long_term' && !pa_long_term_starts_billing_on_upload($contract);
+    $nextInvoiceDate = pa_long_term_starts_billing_on_upload($contract) ? pa_long_term_billing_start_date($pdo, $contract) : null;
     
     // Update contract with signed file path and set to active. Keep the
     // pending/unsigned predicate inside the write so concurrent submissions
     // cannot race and overwrite the first signature.
     $billingStartSql = '';
-    $updateParams = [$fileUrl, 'active'];
+    $updateParams = [$fileUrl, $manualStart ? 'pending' : 'active'];
     if (pa_long_term_starts_billing_on_upload($contract)) {
         $billingStartSql = ', next_invoice_date = ?';
-        $updateParams[] = date('Y-m-d');
+        $updateParams[] = $nextInvoiceDate;
     }
     $updateParams[] = $contractId;
 
@@ -143,12 +147,13 @@ try {
     }
 
     if (($contract['contract_type'] ?? '') === 'long_term' && pa_long_term_starts_billing_on_upload($contract)) {
-        pa_recurring_services_activate($pdo, $contractId, date('Y-m-d'));
+        pa_recurring_services_activate($pdo, $contractId, $nextInvoiceDate);
     }
 
     pa_public_link_terminalize($pdo, 'contract', $contractId, 'signed');
     
     $pdo->commit();
+    $storedFile = null;
     
     // Notify admin
     try {
@@ -168,6 +173,7 @@ try {
         $pdo->rollBack();
     }
     
+    if (is_string($storedFile) && is_file($storedFile)) @unlink($storedFile);
     @error_log('[public_contract_sign] Error: ' . $e->getMessage());
     
     $t = isset($_POST['token']) ? (string)$_POST['token'] : '';

@@ -83,11 +83,11 @@ try {
     $pdo->prepare('UPDATE contracts SET signed_pdf_path=?,status=?,signed_at=NOW(),signed_revision_number=?,signed_pdf_sha256=? WHERE id=? AND signed_at IS NULL AND (signed_pdf_path IS NULL OR signed_pdf_path="")')
         ->execute([$publicUrl,'active',$signedRevision,$signedHash,$contract_id]);
   } elseif (pa_long_term_starts_billing_on_upload($contract)) {
-    $pdo->prepare('UPDATE contracts SET signed_pdf_path=?,next_invoice_date=?,signed_at=NOW(),signed_revision_number=?,signed_pdf_sha256=? WHERE id=? AND signed_at IS NULL AND (signed_pdf_path IS NULL OR signed_pdf_path="")')
-        ->execute([$publicUrl,date('Y-m-d'),$signedRevision,$signedHash,$contract_id]);
+    $pdo->prepare('UPDATE contracts SET signed_pdf_path=?,status="pending",next_invoice_date=?,signed_at=NOW(),signed_revision_number=?,signed_pdf_sha256=? WHERE id=? AND signed_at IS NULL AND (signed_pdf_path IS NULL OR signed_pdf_path="")')
+        ->execute([$publicUrl,pa_long_term_selected_billing_date($pdo, $contract),$signedRevision,$signedHash,$contract_id]);
   } else {
-    // LT/OD: just save the path and leave status unchanged; the user clicks Activate separately.
-    $pdo->prepare('UPDATE contracts SET signed_pdf_path=?,signed_at=NOW(),signed_revision_number=?,signed_pdf_sha256=? WHERE id=? AND signed_at IS NULL AND (signed_pdf_path IS NULL OR signed_pdf_path="")')
+    // LT/OD: move drafts to pending; the user explicitly activates after signing.
+    $pdo->prepare('UPDATE contracts SET signed_pdf_path=?,status="pending",signed_at=NOW(),signed_revision_number=?,signed_pdf_sha256=? WHERE id=? AND signed_at IS NULL AND (signed_pdf_path IS NULL OR signed_pdf_path="")')
         ->execute([$publicUrl,$signedRevision,$signedHash,$contract_id]);
   }
   if($pdo->query('SELECT ROW_COUNT()')->fetchColumn()!=1)throw new Exception('This contract was signed by another request. The existing signed file was not replaced.');
@@ -103,23 +103,6 @@ try {
     @unlink($storedFile);
   }
   $redirectError($e->getMessage());
-}
-
-// For long-term contracts that are already active, re-uploading a signed PDF can trigger
-// billing if the next invoice date is due. This does not run on first upload because
-// long-term contracts are not auto-activated.
-if ($contractType === 'long_term') {
-  try {
-    require_once __DIR__ . '/../../utils/recurring_billing.php';
-    $cStmt = $pdo->prepare('SELECT * FROM contracts WHERE id=? AND contract_type="long_term"');
-    $cStmt->execute([$contract_id]);
-    $ltContract = $cStmt->fetch(PDO::FETCH_ASSOC);
-    if ($ltContract && $ltContract['status'] === 'active' && !empty($ltContract['next_invoice_date']) && $ltContract['next_invoice_date'] <= date('Y-m-d')) {
-      generate_recurring_invoice($pdo, $ltContract, $appConfig);
-    }
-  } catch (Throwable $e) {
-    @error_log('[contract_sign] LT first-invoice generation failed: ' . $e->getMessage());
-  }
 }
 
 header('Location: /?page=' . $listPage . '&signed=1');

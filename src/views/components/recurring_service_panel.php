@@ -100,6 +100,11 @@ $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((s
             <p class="service-help">Cancel the queued change before replacing it. Current service terms continue until an approved change takes effect.</p>
           <?php endif; ?>
         <?php endif; ?>
+        <?php if ((int)$service['billing_interval_count'] === 1 && $service['billing_interval_unit'] === 'month'
+            && $service['status'] !== 'ended' && $service['approval_status'] === 'approved' && !$serviceChanges
+            && in_array($contractStatus, ['draft', 'pending', 'active', 'paused'], true)): ?>
+          <?php require __DIR__ . '/recurring_service_history_form.php'; ?>
+        <?php endif; ?>
       </article>
     <?php endforeach; ?>
     <details class="service-card" <?= !$recurringServices ? 'open' : '' ?>><summary>Add a recurring service</summary>
@@ -116,3 +121,4 @@ $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((s
     </details>
   <?php endif; ?>
 </section>
+<script src="/assets/js/recurring-service-history.js" defer></script>

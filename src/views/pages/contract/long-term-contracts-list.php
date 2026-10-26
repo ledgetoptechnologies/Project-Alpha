@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
+require_once __DIR__ . '/../../../utils/contract_billing_start.php';
 
 
 
@@ -44,7 +45,7 @@ $documentJoins = ' LEFT JOIN clients c ON c.id=ltc.client_id' . pa_document_effe
 $sqlCount = 'SELECT COUNT(*) FROM contracts ltc'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
 $stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
 
-$sql="SELECT ltc.id, ltc.doc_number, ltc.project_code, ltc.status, ltc.total, ltc.deposit_type, ltc.deposit_amount, ltc.deposit_paid, ltc.start_date, ltc.end_date, ltc.billing_interval_count, ltc.billing_interval_unit, ltc.pricing_type, ltc.price_per_invoice, ltc.total_invoiced, ltc.next_invoice_date, ltc.last_invoice_date, ltc.invoices_generated, ltc.signed_at, ltc.signed_pdf_path, c.name client, c.id AS client_id, o.name organization_name, (SELECT i.id FROM invoices i WHERE i.contract_id=ltc.id AND i.invoice_type=\"long_term\" ORDER BY i.created_at DESC, i.id DESC LIMIT 1) AS latest_invoice_id, (SELECT i.sent_at FROM invoices i WHERE i.contract_id=ltc.id AND i.invoice_type=\"long_term\" ORDER BY i.created_at DESC, i.id DESC LIMIT 1) AS latest_invoice_sent_at, (SELECT COUNT(*) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status<>\"ended\") AS recurring_service_count, (SELECT COALESCE(SUM(rs.amount),0) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status IN (\"active\",\"paused\") AND rs.approval_status=\"approved\" AND rs.next_invoice_date=ltc.next_invoice_date) AS next_service_amount FROM contracts ltc{$documentJoins}";
+$sql="SELECT ltc.id, ltc.contract_type, ltc.doc_number, ltc.project_code, ltc.status, ltc.total, ltc.deposit_type, ltc.deposit_amount, ltc.deposit_paid, ltc.start_date, ltc.end_date, ltc.billing_interval_count, ltc.billing_interval_unit, ltc.pricing_type, ltc.price_per_invoice, ltc.total_invoiced, ltc.next_invoice_date, ltc.last_invoice_date, ltc.invoices_generated, ltc.signed_at, ltc.signed_pdf_path, c.name client, c.id AS client_id, o.name organization_name, (SELECT i.id FROM invoices i WHERE i.contract_id=ltc.id AND i.invoice_type=\"long_term\" ORDER BY i.created_at DESC, i.id DESC LIMIT 1) AS latest_invoice_id, (SELECT i.sent_at FROM invoices i WHERE i.contract_id=ltc.id AND i.invoice_type=\"long_term\" ORDER BY i.created_at DESC, i.id DESC LIMIT 1) AS latest_invoice_sent_at, (SELECT COUNT(*) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status<>\"ended\") AS recurring_service_count, (SELECT COALESCE(SUM(rs.amount),0) FROM contract_recurring_services rs WHERE rs.contract_id=ltc.id AND rs.status IN (\"active\",\"paused\") AND rs.approval_status=\"approved\" AND rs.next_invoice_date=ltc.next_invoice_date) AS next_service_amount FROM contracts ltc{$documentJoins}";
 if($where){$sql.=' WHERE '.implode(' AND ',$where);} 
 $sql.=" ORDER BY ltc.created_at DESC LIMIT $per OFFSET $offset";
 $st=$pdo->prepare($sql);$st->execute($p);$rows=$st->fetchAll();
@@ -174,9 +175,8 @@ $clients=$pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archive
   } else {
     $amountText = '$' . number_format((float)$r['total'], 2) . ' total';
   }
-  $noInvoicesYet = (int)($r['invoices_generated'] ?? 0) === 0 && empty($r['last_invoice_date']);
-  $canGenerateFirstInvoice = $r['status'] === 'active' && !empty($r['signed_pdf_path']) && $noInvoicesYet;
-  $firstInvoiceButtonLabel = empty($r['next_invoice_date']) ? 'Start Billing' : 'Generate Invoice Now';
+  $canGenerateFirstInvoice = $r['status'] !== 'pending' && pa_long_term_can_start_billing($pdo, $r);
+  $firstInvoiceButtonLabel = 'Start Billing';
   $latestInvoiceId = !empty($r['latest_invoice_id']) ? (int)$r['latest_invoice_id'] : 0;
 ?>
           <tr style="border-top:1px solid #f3f4f6;<?php echo $rowStyle; ?>">

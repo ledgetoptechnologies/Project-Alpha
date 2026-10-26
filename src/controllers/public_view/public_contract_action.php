@@ -25,6 +25,7 @@ if (!csrf_sf_is_valid('public_contract_action', $submitted)) {
   exit;
 }
 
+$storedFile = null;
 try {
   $token = isset($_POST['token']) ? (string)$_POST['token'] : '';
   if ($token === '' || preg_match('/^[a-f0-9]{32,64}$/', $token) !== 1) { throw new Exception('notoken'); }
@@ -46,7 +47,7 @@ try {
   $f = $_FILES['signed_pdf'];
 
   // Load contract and check allowed status
-  $c = $pdo->prepare('SELECT * FROM contracts WHERE id=? FOR UPDATE');
+  $c = $pdo->prepare('SELECT * FROM contracts WHERE id=?');
   $c->execute([$cid]);
   $contract = $c->fetch(PDO::FETCH_ASSOC);
   if (!$contract) { throw new Exception('Not found'); }
@@ -78,16 +79,20 @@ try {
       exit;
   }
   $name = $filename;
+  $storedFile = $internal . DIRECTORY_SEPARATOR . $name;
   $publicUrl = '/?page=serve-upload&file=' . rawurlencode('signed_contracts/' . $name);
 
   // Save path and activate contract
   $pdo->beginTransaction();
   try {
+    $contract = pa_contract_lock_public_signing($pdo, $cid, $token);
+    $manualStart = ($contract['contract_type'] ?? '') === 'long_term' && !pa_long_term_starts_billing_on_upload($contract);
+    $nextInvoiceDate = pa_long_term_starts_billing_on_upload($contract) ? pa_long_term_billing_start_date($pdo, $contract) : null;
     $billingStartSql = '';
-    $updateParams = [$publicUrl, 'active', hash_file('sha256',$internal . DIRECTORY_SEPARATOR . $name)];
+    $updateParams = [$publicUrl, $manualStart ? 'pending' : 'active', hash_file('sha256',$internal . DIRECTORY_SEPARATOR . $name)];
     if (pa_long_term_starts_billing_on_upload($contract)) {
       $billingStartSql = ', next_invoice_date=?';
-      $updateParams[] = date('Y-m-d');
+      $updateParams[] = $nextInvoiceDate;
     }
     $updateParams[] = $cid;
     $update = $pdo->prepare("UPDATE contracts SET signed_pdf_path=?,status=?,signed_at=NOW(),signed_revision_number=revision_number,signed_pdf_sha256=?{$billingStartSql} WHERE id=? AND status='pending' AND (signed_pdf_path IS NULL OR signed_pdf_path='')");
@@ -100,10 +105,11 @@ try {
       throw new RuntimeException('Contract cannot be uploaded for current status');
     }
     if (($contract['contract_type'] ?? '') === 'long_term' && pa_long_term_starts_billing_on_upload($contract)) {
-      pa_recurring_services_activate($pdo, $cid, date('Y-m-d'));
+      pa_recurring_services_activate($pdo, $cid, $nextInvoiceDate);
     }
     pa_public_link_terminalize($pdo, 'contract', $cid, 'signed');
     $pdo->commit();
+    $storedFile = null;
   } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     throw $e;
@@ -114,6 +120,7 @@ try {
   header('Location: ' . pa_public_link_redirect_path('contract', 'signed'));
   exit;
 } catch (Throwable $e) {
+  if (is_string($storedFile) && is_file($storedFile)) @unlink($storedFile);
   $t = isset($token) ? (string)$token : '';
   header('Location: /?page=public-doc&token=' . rawurlencode($t) . '&error=' . urlencode('Unable to upload signed contract'));
   exit;

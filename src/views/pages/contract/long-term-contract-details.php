@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../utils/document_recipient.php';
 require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
+require_once __DIR__ . '/../../../utils/contract_billing_start.php';
 $id = (int)($_GET['id'] ?? 0);
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/document_sender.php';
@@ -153,9 +154,8 @@ $isOngoing = empty($contract['end_date']);
       <a href="<?php echo htmlspecialchars($contract['signed_pdf_path']); ?>" target="_blank" rel="noopener" class="btn btn-sm btn-success">View Signed PDF</a>
     <?php endif; ?>
     <?php
-      $noInvoicesYet = (int)($contract['invoices_generated'] ?? 0) === 0 && empty($contract['last_invoice_date']);
-      $canGenerateFirstInvoice = $contractStatus === 'active' && !empty($contract['signed_pdf_path']) && $noInvoicesYet;
-      $firstInvoiceButtonLabel = empty($contract['next_invoice_date']) ? 'Start Billing' : 'Generate Invoice Now';
+      $canGenerateFirstInvoice = pa_long_term_can_start_billing($pdo, $contract);
+      $firstInvoiceButtonLabel = 'Start Billing';
     ?>
     <?php if ($canGenerateFirstInvoice): ?>
       <form method="post" action="/?page=long-term-contract-start-billing" style="display:inline">
