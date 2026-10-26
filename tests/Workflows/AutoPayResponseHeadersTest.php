@@ -7,7 +7,9 @@ final class AutoPayResponseHeadersTest extends TestCase {
         $directory=sys_get_temp_dir().'/autopay-headers-'.bin2hex(random_bytes(8));
         foreach(['controllers/public_view','utils','config'] as $part)mkdir($directory.'/'.$part,0700,true);
         $root=dirname(__DIR__,2).'/src/';
-        foreach(['controllers/public_view/public_autopay.php','utils/security_headers.php','utils/request_security.php','utils/client_ip.php','utils/csrf.php'] as $file)copy($root.$file,$directory.'/'.$file);
+        foreach(['controllers/public_view/public_autopay.php','utils/security_headers.php','utils/request_security.php','utils/client_ip.php','utils/csrf.php','utils/acl_middleware.php'] as $file)copy($root.$file,$directory.'/'.$file);
+        file_put_contents($directory.'/utils/acl.php','<?php function user_can(...$args){return false;}');
+        file_put_contents($directory.'/utils/audit.php','<?php function audit_log(...$args){}');
         file_put_contents($directory.'/config/db.php','<?php $pdo=new PDO("sqlite::memory:");');
         file_put_contents($directory.'/config/app.php','<?php $appConfig=[];');
         file_put_contents($directory.'/utils/rate_limiter.php','<?php function rate_limit_check(...$args){return true;}');
@@ -17,14 +19,17 @@ function pa_autopay_test_context_enabled(array $config):bool{return true;}
 function pa_autopay_enabled(array $config):bool{return true;}
 function pa_autopay_context(PDO $pdo,string $token):array{return ['client'=>['id'=>1,'name'=>'Synthetic','email'=>'never@example.invalid'],'contract_id'=>0];}
 function pa_autopay_authority(array $client,array $session):bool{return false;}
-function pa_autopay_enroll(...$args):array{return ['url'=>'https://checkout.stripe.com/c/pay/synthetic'];}
+function pa_autopay_enroll(...$args):array{if(empty($_SESSION['autopay_verified']))throw new DomainException('Verify your email before managing AutoPay.');return ['url'=>'https://checkout.stripe.com/c/pay/synthetic'];}
 class StripeService {public static function fromAppConfig(array $config):self{return new self();}}
 PHP);
         file_put_contents($directory.'/router.php',<<<'PHP'
 <?php
-session_start();$_SESSION['csrf']='synthetic-csrf';
+session_start();$_SESSION['csrf']='synthetic-csrf';$_SESSION['user']=['id'=>42,'role'=>'member'];
+if(!empty($_POST['verified']))$_SESSION['autopay_verified']=['synthetic'=>true];
 require __DIR__.'/utils/security_headers.php';send_security_headers();
 if(parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH)==='/default'){echo 'default';return;}
+require __DIR__.'/config/db.php';require __DIR__.'/utils/acl_middleware.php';
+acl_middleware($pdo,parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH)==='/staff'?'invoice-autopay-preview':'public-autopay');
 require __DIR__.'/controllers/public_view/public_autopay.php';
 PHP);
         $socket=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);self::assertIsResource($socket);$address=stream_socket_get_name($socket,false);fclose($socket);
@@ -34,10 +39,13 @@ PHP);
             $request=static function(string $path,?string $post=null)use($address):array{
                 $ch=curl_init('http://'.$address.$path);curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_TIMEOUT=>5]);
                 if($post!==null)curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$post,CURLOPT_HTTPHEADER=>['Content-Type: application/x-www-form-urlencoded']]);
-                $raw=curl_exec($ch);self::assertIsString($raw);$status=curl_getinfo($ch,CURLINFO_RESPONSE_CODE);$ch=null;$headers=explode("\r\n\r\n",$raw,2)[0];return [$status,$headers];
+                $raw=curl_exec($ch);self::assertIsString($raw);$status=curl_getinfo($ch,CURLINFO_RESPONSE_CODE);$ch=null;[$headers,$body]=explode("\r\n\r\n",$raw,2);return [$status,$headers,$body];
             };
             [$status,$default]=$request('/default');self::assertSame(200,$status);self::assertStringContainsString("form-action 'self';",$default);self::assertStringNotContainsString('https://checkout.stripe.com',$default);
-            foreach([null,'action=setup&token=synthetic&csrf=synthetic-csrf&scope=business&consent=1&business_consent=1'] as $post){
+            [$status,$headers,$body]=$request('/autopay','action=setup&token=synthetic&csrf=synthetic-csrf');
+            self::assertSame(200,$status);self::assertStringContainsString('Verify your email before managing AutoPay.',$body);self::assertStringNotContainsString('Location:',$headers);
+            [$status,$headers]=$request('/staff?ajax=1');self::assertSame(403,$status);
+            foreach([null,'action=setup&token=synthetic&csrf=synthetic-csrf&scope=business&consent=1&business_consent=1&verified=1'] as $post){
                 [$status,$headers]=$request('/autopay',$post);self::assertSame($post===null?200:303,$status);
                 preg_match('/form-action ([^;]+);/',$headers,$match);self::assertSame("'self' https://checkout.stripe.com",$match[1]??'');
                 self::assertStringContainsString('Cache-Control: no-store',$headers);self::assertStringContainsString('Referrer-Policy: no-referrer',$headers);

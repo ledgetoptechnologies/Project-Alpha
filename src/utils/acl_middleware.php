@@ -343,7 +343,7 @@ function page_permission_map(): array
 
 function acl_middleware(PDO $pdo, string $page): void
 {
-    $publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
+    $publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
     if (in_array($page, $publicPages, true)) return;
 
     $userId = (int)($_SESSION['user']['id'] ?? 0);
