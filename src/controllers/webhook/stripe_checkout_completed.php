@@ -3,6 +3,7 @@
 // Handler for checkout.session.completed events
 
 // The signed webhook router owns the database connection.
+require_once __DIR__ . '/../../utils/stripe_payment_notifications.php';
 require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../utils/notifications.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
@@ -97,15 +98,9 @@ function handleCheckoutSessionCompleted($pdo, $session) {
             stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $GLOBALS['appConfig'] ?? []);
             $pdo->commit();
             if ($existing) {
-                require_once __DIR__ . '/../../utils/payment_receipts.php';
-                payment_email_attempt_all(
-                    static fn() => notify_admin_invoice_paid(
-                        $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, (float)$existing['amount'],
-                        (string)$existing['invoice_status'], false, true, null, 'payment:' . $existingPaymentId
-                    ),
-                    static fn() => payment_receipt_issue(
-                        $pdo, $existingPaymentId, $GLOBALS['appConfig'] ?? [], true, null, true
-                    )
+                stripe_invoice_deliver_payment_emails(
+                    $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, $existingPaymentId,
+                    (float)$existing['amount'], (string)$existing['invoice_status'], false
                 );
             }
             @error_log('[StripeWebhook] Session ' . $session['id'] . ' already processed - skipping');
@@ -185,15 +180,9 @@ function handleCheckoutSessionCompleted($pdo, $session) {
         // Delivery failures deliberately fail the webhook after the payment is
         // committed. Stripe's retry then enters the idempotent branch above
         // and retries only the missing email side effects.
-        require_once __DIR__ . '/../../utils/payment_receipts.php';
-        payment_email_attempt_all(
-            static fn() => notify_admin_invoice_paid(
-                $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, $paymentAmount, $status,
-                true, true, null, 'payment:' . $paymentId
-            ),
-            static fn() => payment_receipt_issue(
-                $pdo, $paymentId, $GLOBALS['appConfig'] ?? [], true, null, true
-            )
+        stripe_invoice_deliver_payment_emails(
+            $pdo, $GLOBALS['appConfig'] ?? [], $invoiceId, $paymentId,
+            $paymentAmount, $status, true
         );
         
     } catch (Throwable $e) {

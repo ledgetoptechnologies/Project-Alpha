@@ -530,7 +530,7 @@ final class ProjectWorkflowUiTest extends TestCase
         $recurringList = file_get_contents($this->root . '/src/views/pages/invoice/recurring-invoices-list.php');
         $recurringBilling = file_get_contents($this->root . '/src/utils/recurring_billing.php');
         $invoiceLifecycle = file_get_contents($this->root . '/src/utils/invoice_lifecycle.php');
-        $stripePayment = file_get_contents($this->root . '/src/controllers/webhook/stripe_payment_succeeded.php');
+        $stripePayment = file_get_contents($this->root . '/src/utils/stripe_payment_settlement.php');
         $stripeCheckout = file_get_contents($this->root . '/src/controllers/webhook/stripe_checkout_completed.php');
         $stripeReconciliation = file_get_contents($this->root . '/src/utils/stripe_reconciliation_import.php');
         $recurringServices = file_get_contents($this->root . '/src/utils/recurring_services.php');

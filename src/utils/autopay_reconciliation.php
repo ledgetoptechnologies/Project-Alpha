@@ -51,9 +51,10 @@ function pa_autopay_reconcile_collection(PDO $pdo,StripeService $stripe,array $c
         $pdo->prepare('UPDATE autopay_collections SET financial_hold=1,next_attempt_at=NULL,last_error="Refund or dispute requires review." WHERE id=?')->execute([$row['id']]);
         throw new DomainException('AutoPay financial reversal requires review.');
     }
-    require_once __DIR__.'/../controllers/webhook/stripe_payment_succeeded.php';
+    // Preserve legacy accounting configuration; $config above gates collection identity.
+    require_once __DIR__.'/stripe_payment_settlement.php';
     $accountingError=null;
-    try{handlePaymentIntentSucceeded($pdo,$intent);}catch(Throwable $error){$accountingError=$error;}
+    try{stripe_settle_payment_intent($pdo,$intent,$GLOBALS['appConfig'] ?? []);}catch(Throwable $error){$accountingError=$error;}
     $table=$row['document_type']==='invoice'?'payments':'project_invoice_payments';
     $field=$row['document_type']==='invoice'?'invoice_id':'project_invoice_id';
     $cents=(int)$row['amount_cents'];$amount=intdiv($cents,100).'.'.str_pad((string)($cents%100),2,'0',STR_PAD_LEFT);
