@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/resolver_link_policy.php';
 require_once __DIR__ . '/../../../utils/external_ops.php';
 require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+require_once __DIR__ . '/../../../utils/billing_recipients.php';
+require_once __DIR__ . '/../../../utils/organization_link_strategy.php';
 $directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $id = (int)($_GET['id'] ?? 0);
@@ -380,6 +382,43 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
 
     <main class="org-view__main">
       <?php
+        $canEditBilling = user_can($pdo, $currentUserId, 'invoices.edit', $id);
+        $canViewBilling = $canEditBilling || user_can($pdo, $currentUserId, 'invoices.view', $id);
+        $organizationBilling = $canViewBilling ? pa_billing_organization_preferences($pdo, $id) : null;
+        $billingContactIds = array_map('intval', $organizationBilling['recipient_ids'] ?? []);
+      ?>
+      <?php if ($canViewBilling): ?>
+      <section id="organization-billing" style="padding:16px;border:1px solid #dbe3ed;border-radius:10px;margin-bottom:18px;min-width:0">
+        <h3 style="margin:0 0 6px">Invoice delivery</h3>
+        <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Choose who handles accounting. Contract signing and working-contact ownership stay separate. Explicit project and invoice recipient choices take precedence.</p>
+        <?php if (!empty($_GET['billing_saved'])): ?><p role="status" style="color:#166534">Billing delivery preferences saved.</p><?php endif; ?>
+        <form method="post" action="/?page=organization/organization-billing-save">
+          <input type="hidden" name="csrf" value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES, 'UTF-8') ?>">
+          <input type="hidden" name="organization_id" value="<?= (int)$id ?>">
+          <fieldset <?= !$canEditBilling ? 'disabled' : '' ?> style="border:0;padding:0;margin:0;min-width:0;display:grid;gap:10px">
+            <label>Delivery policy
+              <select name="billing_policy_mode" style="display:block;width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:6px">
+                <option value="legacy" <?= !$organizationBilling ? 'selected' : '' ?>>Keep existing working-contact delivery</option>
+                <option value="accounting" <?= $organizationBilling ? 'selected' : '' ?>>Use selected accounting contacts</option>
+              </select>
+            </label>
+            <div style="display:grid;gap:8px;max-height:240px;overflow:auto">
+              <?php foreach ($clients as $billingContact): ?>
+              <label style="display:flex;gap:8px;align-items:flex-start;overflow-wrap:anywhere">
+                <input type="checkbox" name="billing_recipient_ids[]" value="<?= (int)$billingContact['id'] ?>" <?= in_array((int)$billingContact['id'], $billingContactIds, true) ? 'checked' : '' ?> <?= !filter_var((string)$billingContact['email'], FILTER_VALIDATE_EMAIL) ? 'disabled' : '' ?>>
+                <span><?= htmlspecialchars((string)$billingContact['name'], ENT_QUOTES, 'UTF-8') ?><small style="display:block;color:var(--muted)"><?= htmlspecialchars((string)($billingContact['email'] ?: 'No email address'), ENT_QUOTES, 'UTF-8') ?></small></span>
+              </label>
+              <?php endforeach; ?>
+              <?php if (!$clients): ?><p>No active contacts are assigned to this organization.</p><?php endif; ?>
+            </div>
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="billing_copy_working_contact" value="1" <?= !empty($organizationBilling['copy_working_contact']) ? 'checked' : '' ?>><span>Also include the working contact on billing emails</span></label>
+            <p style="margin:0;color:var(--muted);font-size:12px">These financial delivery preferences apply to future sends, reminders, and receipts, including existing invoices that inherit this default. Previously sent delivery history stays unchanged. Selecting recipients does not give portal access or payment-method management permission. A missing or removed accounting contact requires review instead of silently redirecting email.</p>
+            <?php if ($canEditBilling): ?><button class="org-view__button org-view__button--primary" type="submit">Save invoice delivery</button><?php endif; ?>
+          </fieldset>
+        </form>
+      </section>
+      <?php endif; ?>
+      <?php
         $hasDepartments = !empty($departments);
         $storedLinkStrategy = (string)($org['link_strategy'] ?? 'overall_folder');
         if (!in_array($storedLinkStrategy, ['department_links_only', 'overall_folder', 'shared_folder'], true)) {
@@ -389,6 +428,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
             ? 'overall_folder'
             : $storedLinkStrategy;
       ?>
+      <?php if (pa_link_resolver_enabled($pdo)): ?>
       <div class="org-link-strategy">
         <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap">
           <div>
@@ -426,7 +466,7 @@ $taxFileUrl = !empty($org['tax_exempt_file'])
           </form>
         </div>
       </div>
-
+      <?php endif; ?>
       <?php
         $entityType = 'organization';
         $entityId = $id;

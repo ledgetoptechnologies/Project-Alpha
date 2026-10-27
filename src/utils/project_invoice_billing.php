@@ -307,6 +307,13 @@ function project_invoice_saved_recipients(PDO $pdo, int $projectId): array
 
 function project_invoice_client_recipients(PDO $pdo, int $projectInvoiceId, ?array $clientIds = null): array
 {
+    if ($clientIds === null) {
+        require_once __DIR__ . '/billing_recipients.php';
+        $resolution = pa_billing_resolve($pdo, 'project_invoice', $projectInvoiceId);
+        if (!empty($resolution['configured'])) {
+            return $resolution['recipients'];
+        }
+    }
     $selectedClientIds = $clientIds === null ? null : array_values(array_unique(array_filter(array_map('intval', $clientIds), static fn($id) => $id > 0)));
     if ($selectedClientIds === null && project_invoice_table_has_column($pdo, 'project_invoice_recipients', 'recipient_key')) {
         $projectIdStmt = $pdo->prepare('SELECT project_id FROM project_invoices WHERE id = ?');

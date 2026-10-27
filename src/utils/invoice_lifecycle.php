@@ -568,23 +568,20 @@ function invoice_send_finalized(PDO $pdo, int $invoiceId, array $appConfig, stri
         return false;
     }
 
-    $email = trim((string)($invoice['email'] ?? ''));
-    $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
-    $error = $status === 'suppressed' ? 'Missing or invalid client email.' : null;
     $deliveryKey = $notificationType === 'on_generate' ? 'generated' : 'finalized';
-    invoice_notification_enqueue(
-        $pdo, $invoiceId, $notificationType, $deliveryKey, $email, $status, $error
-    );
-    $stats = invoice_notification_process($pdo, $appConfig, null, null, 10, $invoiceId);
-    if ($stats['sent'] > 0) {
-        return true;
-    }
+    invoice_notification_enqueue_resolved($pdo, $invoiceId, $notificationType, $deliveryKey);
+    invoice_notification_process($pdo, $appConfig, null, null, 10, $invoiceId);
+    $resolution = pa_billing_resolve($pdo, 'invoice', $invoiceId);
+    if (!$resolution['recipients']) return false;
     $check = $pdo->prepare(
         'SELECT delivery_status FROM invoice_notifications
          WHERE invoice_id=? AND notification_type=? AND delivery_key=? AND recipient_key=? LIMIT 1'
     );
-    $check->execute([$invoiceId, $notificationType, $deliveryKey, invoice_notification_recipient_key($email)]);
-    return $check->fetchColumn() === 'sent';
+    foreach ($resolution['recipients'] as $recipient) {
+        $check->execute([$invoiceId, $notificationType, $deliveryKey, invoice_notification_recipient_key((string)$recipient['email'])]);
+        if ($check->fetchColumn() !== 'sent') return false;
+    }
+    return true;
 }
 function invoice_reopen_draft(PDO $pdo, int $invoiceId): void
 {

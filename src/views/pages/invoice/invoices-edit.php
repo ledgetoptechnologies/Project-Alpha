@@ -170,6 +170,7 @@ if (!empty($inv['contract_id'])) {
   <form id="invEditForm" method="post" action="/?page=invoices-update" style="display:grid;gap:16px;max-width:900px">
     <input type="hidden" name="csrf" value="<?php echo csrf_token(); ?>">
     <?php $issuerChoiceRow = $inv; require __DIR__ . '/../../components/document_issuer_choice.php'; ?>
+    <?php if (!$isGeneralRecipientInvoice): require __DIR__ . '/../../components/invoice_billing_recipients.php'; endif; ?>
     <input type="hidden" name="id" value="<?php echo (int)$inv['id']; ?>">
     <?php echo !$isGeneralRecipientInvoice?pricing_adjustment_override_controls($pdo,(int)($inv['organization_id']??$clientOrganizationId),'invoice',$id):''; ?>
     <div style="display:grid;gap:12px;grid-template-columns:1fr 1fr 1fr">

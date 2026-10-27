@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../utils/acl_middleware.php';
 require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
 require_once __DIR__ . '/../../utils/invoice_workforce_history.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/billing_recipients.php';
 require_once __DIR__ . '/../../utils/document_locations.php';
 require_once __DIR__ . '/../../utils/catalog_documents.php';
 require_once __DIR__ . '/../../utils/project_selection.php';
@@ -193,6 +194,11 @@ try {
       $normalizedDueDate, $dueDateSource, $fulfillment_date, $customFieldsJson, $serviceLocationId, $id,
     ]);
   
+  if (!empty($_POST['billing_recipients_present']) && !$isGeneralRecipientInvoice) {
+    if (!$isDraft) throw new DomainException('Reopen this invoice before changing its billing recipients.');
+    if (!is_array($_POST['billing_recipient_ids'] ?? [])) throw new DomainException('Select saved invoice recipients.');
+    pa_billing_invoice_save($pdo, $id, (string)($_POST['billing_recipient_mode'] ?? 'inherit'), $_POST['billing_recipient_ids'] ?? [], !empty($_POST['billing_copy_working_contact']));
+  }
   $row = $pdo->prepare('SELECT project_code FROM invoices WHERE id=?');
   $row->execute([$id]);
   $pc = (string)$row->fetchColumn();

@@ -2,6 +2,7 @@
 // src/services/LinkResolverService.php
 
 require_once __DIR__ . '/../utils/link_provider_config.php';
+require_once __DIR__ . '/../utils/organization_link_strategy.php';
 
 class LinkResolverService
 {
@@ -15,7 +16,9 @@ class LinkResolverService
         $this->pdo = $pdo;
         $this->providerFactory = $providerFactory;
         $this->loadConfig();
-        $this->clearResolverExpirationDates();
+        if ($this->config['enabled']) {
+            $this->clearResolverExpirationDates();
+        }
     }
 
     private function loadConfig(): void
@@ -73,7 +76,7 @@ class LinkResolverService
 
     public function autoGenerateForClient(int $clientId, ?string $provider = null): array
     {
-        if (!$this->config['enabled']) {
+        if (!$this->config['enabled'] || !pa_link_resolver_enabled($this->pdo)) {
             return ['success' => false, 'message' => 'Link resolver is disabled'];
         }
 
@@ -109,7 +112,7 @@ class LinkResolverService
 
     public function autoGenerateForOrganization(int $orgId, ?string $provider = null): array
     {
-        if (!$this->config['enabled']) {
+        if (!$this->config['enabled'] || !pa_link_resolver_enabled($this->pdo)) {
             return ['success' => false, 'message' => 'Link resolver is disabled'];
         }
 
@@ -225,6 +228,9 @@ class LinkResolverService
 
     private function deleteResolverOrgLinks(int $orgId): void
     {
+        if (!pa_link_resolver_enabled($this->pdo)) {
+            return;
+        }
         try {
             $stmt = $this->pdo->prepare('
                 DELETE FROM entity_links
@@ -232,6 +238,8 @@ class LinkResolverService
                   AND entity_id = ?
                   AND link_source = "resolver"
                   AND link_type LIKE "auto_%"
+                  AND EXISTS (SELECT 1 FROM app_config WHERE organization_id = 0
+                              AND config_key = "link_resolver_enabled" AND config_value = "1")
             ');
             $stmt->execute([$orgId]);
         } catch (Throwable $e) {
@@ -246,7 +254,7 @@ class LinkResolverService
 
     public function autoGenerateForDepartment(int $departmentId, ?string $provider = null): array
     {
-        if (!$this->config['enabled']) {
+        if (!$this->config['enabled'] || !pa_link_resolver_enabled($this->pdo)) {
             return ['success' => false, 'message' => 'Link resolver is disabled'];
         }
 
@@ -615,6 +623,8 @@ class LinkResolverService
                 UPDATE entity_links
                 SET expiration_date = NULL
                 WHERE link_source = "resolver" AND expiration_date IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM app_config WHERE organization_id = 0
+                              AND config_key = "link_resolver_enabled" AND config_value = "1")
             ');
         } catch (Throwable $e) {
             @error_log('[LinkResolverService] Error clearing resolver expiration dates: ' . $e->getMessage());
@@ -835,7 +845,7 @@ class LinkResolverService
         if (!in_array($provider, ['dropbox', 'gdrive', 's3', 'r2'], true)) {
             return ['success' => false, 'message' => 'Invalid provider'];
         }
-        if (!$this->config['enabled']) {
+        if (!$this->config['enabled'] || !pa_link_resolver_enabled($this->pdo)) {
             return ['success' => false, 'message' => 'Link resolver is disabled'];
         }
         if (empty($this->config['providers'][$provider])) {

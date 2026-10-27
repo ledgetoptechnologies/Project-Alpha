@@ -15,6 +15,7 @@ require_once __DIR__ . '/../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../utils/document_locations.php';
 require_once __DIR__ . '/../../utils/catalog_documents.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/billing_recipients.php';
 require_once __DIR__ . '/../../utils/document_pricing_adjustments.php';
 require_once __DIR__ . '/../../services/JobAssignmentService.php';
 require_once __DIR__ . '/../../services/DocumentRevisionService.php';
@@ -400,6 +401,10 @@ try {
     }
     
     audit_log($pdo, 'invoice.create', 'invoice', $invoice_id, ['client_id' => $client_id, 'organization_id' => $__orgId, 'created_by' => $__creator, 'recipient_presentation_mode' => $recipientPresentationMode]);
+    if (!empty($_POST['billing_recipients_present']) && $recipientPresentationMode !== PA_GENERAL_RECIPIENT_MODE) {
+        if (!is_array($_POST['billing_recipient_ids'] ?? [])) throw new DomainException('Select saved invoice recipients.');
+        pa_billing_invoice_save($pdo, $invoice_id, (string)($_POST['billing_recipient_mode'] ?? 'inherit'), $_POST['billing_recipient_ids'] ?? [], !empty($_POST['billing_copy_working_contact']));
+    }
     if ($__orgId !== null) {
         pricing_apply_posted_override($pdo,(int)$__orgId,'invoice',$invoice_id,(int)($__creator ?? 0),$_POST);
     }

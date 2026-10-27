@@ -213,6 +213,7 @@ All HTTP requests enter through `public/index.php`. Application source is under 
 |---|---|
 | `src/utils/invoice_notification_queue.php` | Shared queue claims, stale-claim recovery, retries, delivery state, and reminder stages for ordinary and project invoices |
 | `src/utils/invoice_notifications.php` and `project_invoice_notifications.php` | Document-specific eligibility, recipients, rendering, and delivery orchestration |
+| `src/utils/billing_recipients.php` | PA-owned organization billing defaults, draft invoice overrides, and scoped recipient resolution; separate from directory identity and payment authorization |
 | `src/utils/stripe_payment_settlement.php` | PaymentIntent accounting used by verified webhook and AutoPay recovery paths |
 | `src/utils/stripe_payment_notifications.php` | Post-commit administrator notices and payer receipts, with stable delivery keys and retry behavior |
 | `src/controllers/webhook/stripe_payment_succeeded.php` | Compatibility adapter retaining the existing webhook handler entry point |

@@ -239,4 +239,151 @@ final class PaymentEmailDeliveryTest extends TestCase
         );
 
     }
+
+    private function configuredBillingFixture(): void
+    {
+        $this->pdo->exec("ALTER TABLE clients ADD COLUMN organization_id INTEGER");
+        $this->pdo->exec("ALTER TABLE invoices ADD COLUMN organization_id INTEGER");
+        $this->pdo->exec('CREATE TABLE organization_billing_preferences (organization_id INTEGER PRIMARY KEY,copy_working_contact INTEGER)');
+        $this->pdo->exec('CREATE TABLE organization_billing_recipients (organization_id INTEGER,client_id INTEGER,PRIMARY KEY(organization_id,client_id))');
+        $this->pdo->exec('CREATE TABLE payment_receipt_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT,receipt_id INTEGER,recipient_key TEXT,email_to TEXT,recipient_name TEXT,emailed_at TEXT,suppressed_at TEXT,UNIQUE(receipt_id,recipient_key))');
+        $this->pdo->exec("INSERT INTO organizations VALUES (9,'Company','general@example.test')");
+        $this->pdo->exec("INSERT INTO clients VALUES (1,'Working Contact','working@example.test',0,9),(2,'Accounting One','one@example.test',0,9),(3,'Accounting Two','two@example.test',0,9)");
+        $this->pdo->exec("INSERT INTO invoices VALUES (10,42,'regular','named',1,9)");
+        $this->pdo->exec("INSERT INTO payments VALUES (100,10,NULL,NULL,1,125.50,'2026-08-18','stripe',NULL,'succeeded')");
+        pa_billing_organization_save($this->pdo, 9, [2,3], false);
+    }
+
+    public function testConfiguredReceiptRetriesOnlyFailedRecipientAndKeepsOneFinancialReceipt(): void
+    {
+        $this->configuredBillingFixture();
+        $attempts = [];
+        try {
+            payment_receipt_issue($this->pdo,100,[],true,static function(string $to,string $subject,string $body,array $options) use (&$attempts):array {
+                $attempts[] = compact('to','body','options');
+                return [$to !== 'one@example.test','synthetic failure'];
+            },true);
+            self::fail('The failed accounting recipient must remain retryable.');
+        } catch (RuntimeException $error) {
+            self::assertStringContainsString('synthetic failure',$error->getMessage());
+        }
+        self::assertSame(['one@example.test','two@example.test'],array_column($attempts,'to'));
+        self::assertStringContainsString('Hello Accounting Two',$attempts[1]['body']);
+        self::assertNull($this->pdo->query('SELECT emailed_at FROM payment_receipts')->fetchColumn());
+        $retry = [];
+        $receipt = payment_receipt_issue($this->pdo,100,[],true,static function(string $to,string $subject,string $body,array $options) use (&$retry):array {
+            $retry[] = ['to'=>$to,'key'=>$options['message_key']];return [true,''];
+        },true);
+        self::assertSame([['to'=>'one@example.test','key'=>$attempts[0]['options']['message_key']]],$retry);
+        self::assertNotEmpty($receipt['emailed_at']);
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipts')->fetchColumn());
+        self::assertSame(2,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries WHERE emailed_at IS NOT NULL')->fetchColumn());
+    }
+
+    public function testRemovedBillingRecipientsNeverFallBackToWorkingContact(): void
+    {
+        $this->configuredBillingFixture();
+        $this->pdo->exec('UPDATE clients SET archived=1 WHERE id IN (2,3)');
+        $attempts = [];
+        try {
+            payment_receipt_issue($this->pdo,100,[],true,static function(string $to) use (&$attempts):array {$attempts[]=$to;return [true,''];},true);
+            self::fail('Missing configured accounting recipients must surface an actionable error.');
+        } catch (RuntimeException $error) {
+            self::assertStringContainsString('billing recipients',$error->getMessage());
+        }
+        self::assertSame([],$attempts);
+    }
+
+    public function testPreviouslyEmailedLegacyReceiptIsNotResentAfterPolicyOptIn(): void
+    {
+        $this->configuredBillingFixture();
+        $this->pdo->exec("INSERT INTO payment_receipts(payment_id,invoice_id,receipt_number,public_token,amount,email_to,emailed_at) VALUES(100,10,'R-100','historical',125.50,'working@example.test','2026-08-18 10:00:00')");
+        $attempts=[];
+        payment_receipt_issue($this->pdo,100,[],true,static function(string $to) use (&$attempts):array {$attempts[]=$to;return [true,''];},true);
+        self::assertSame([],$attempts);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries')->fetchColumn());
+    }
+
+    public function testAutoPayPayerGetsReceiptButAccountingNeverGetsManagementLink(): void
+    {
+        $this->configuredBillingFixture();
+        $sent=[];
+        payment_receipt_issue($this->pdo,100,['_autopay_manage_url'=>'https://example.test/payer-management','_autopay_manage_email'=>'working@example.test'],true,
+            static function(string $to,string $subject,string $body) use (&$sent):array {$sent[$to]=$body;return [true,''];},true);
+        self::assertSame(['one@example.test','two@example.test','working@example.test'],array_keys($sent));
+        self::assertStringNotContainsString('payer-management',$sent['one@example.test']);
+        self::assertStringNotContainsString('payer-management',$sent['two@example.test']);
+        self::assertStringContainsString('payer-management',$sent['working@example.test']);
+    }
+
+    public function testInvoiceQueueFansOutOnceAndDoesNotRetargetRemovedRecipients(): void
+    {
+        $this->configuredBillingFixture();
+        $this->pdo->exec('CREATE TABLE invoice_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT,invoice_id INTEGER,notification_type TEXT,delivery_key TEXT,recipient_key TEXT,delivery_status TEXT,attempt_count INTEGER,next_attempt_at TEXT,last_error TEXT,email_to TEXT,claimed_at TEXT,last_attempt_at TEXT,UNIQUE(invoice_id,notification_type,delivery_key,recipient_key))');
+        $first=invoice_notification_enqueue_resolved($this->pdo,10,'on_finalize','finalized');
+        self::assertSame(['queued'=>2,'suppressed'=>0],$first);
+        self::assertSame(['queued'=>0,'suppressed'=>0],invoice_notification_enqueue_resolved($this->pdo,10,'on_finalize','finalized'));
+        self::assertSame(['one@example.test','two@example.test'],$this->pdo->query('SELECT email_to FROM invoice_notifications ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
+        $this->pdo->exec('UPDATE clients SET archived=1 WHERE id IN (2,3)');
+        self::assertSame(['queued'=>0,'suppressed'=>1],invoice_notification_enqueue_resolved($this->pdo,10,'due_7','due:2026-08-19'));
+        self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM invoice_notifications WHERE email_to='working@example.test'")->fetchColumn());
+        self::assertSame(['one@example.test','two@example.test'],$this->pdo->query('SELECT email_to FROM invoice_notifications WHERE delivery_status="pending" ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
+        foreach (['status TEXT','finalized_at TEXT','collection_mode TEXT','total REAL','amount_paid REAL','due_date TEXT','payment_terms_days INTEGER','due_date_source TEXT'] as $column) $this->pdo->exec('ALTER TABLE invoices ADD COLUMN ' . $column);
+        $this->pdo->exec("UPDATE invoices SET status='unpaid',finalized_at='2026-08-18',collection_mode='direct',total=125.50,amount_paid=0");
+        $sent=[];
+        $result=invoice_notification_process($this->pdo,[],static function(string $to) use (&$sent):array {$sent[]=$to;return [true,''];},new DateTimeImmutable('+1 minute'));
+        self::assertSame(2,$result['suppressed']);
+        self::assertSame([],$sent);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM invoice_notifications WHERE delivery_status="pending"')->fetchColumn());
+    }
+
+    public function testConfiguredProjectRecipientsAreRevalidatedAgainstOrganizationMembership(): void
+    {
+        $this->configuredBillingFixture();
+        $this->pdo->exec('ALTER TABLE projects ADD COLUMN organization_id INTEGER');
+        $this->pdo->exec("INSERT INTO projects VALUES (5,'Services',1,9)");
+        $this->pdo->exec("INSERT INTO project_invoices VALUES (20,5,1,77,'unpaid',125.50)");
+        $this->pdo->exec("INSERT INTO project_invoice_recipients VALUES (1,5,2,NULL,NULL,NULL,'client:2',0),(2,5,3,NULL,NULL,NULL,'client:3',1)");
+        self::assertSame(['one@example.test','two@example.test'],array_column(project_invoice_client_recipients($this->pdo,20),'email'));
+        $this->pdo->exec('UPDATE clients SET organization_id=99 WHERE id=2');
+        self::assertSame(['two@example.test'],array_column(project_invoice_client_recipients($this->pdo,20),'email'));
+        $this->pdo->exec('UPDATE clients SET archived=1 WHERE id=3');
+        self::assertSame([],project_invoice_client_recipients($this->pdo,20));
+    }
+
+    public function testCompletedConfiguredReceiptNeverGainsRecipientsAfterPolicyChange(): void
+    {
+        $this->configuredBillingFixture();
+        payment_receipt_issue($this->pdo,100,[],true,static fn():array=>[true,''],true);
+        $this->pdo->exec("INSERT INTO clients VALUES(4,'New Accounting','new@example.test',0,9)");
+        pa_billing_organization_save($this->pdo,9,[2,3,4],false);
+        $sent=[];
+        payment_receipt_issue($this->pdo,100,[],true,static function(string $to) use (&$sent):array {$sent[]=$to;return [true,''];},true);
+        self::assertSame([],$sent);
+        self::assertSame(2,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries')->fetchColumn());
+    }
+
+    public function testPartialReceiptFreezesOriginalRecipientsAndSuppressesRemovedContact(): void
+    {
+        $this->configuredBillingFixture();
+        $snapshotCount=0;
+        try {
+            payment_receipt_issue($this->pdo,100,[],true,function(string $to) use (&$snapshotCount):array {
+                $snapshotCount=(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries')->fetchColumn();
+                return [$to==='two@example.test','synthetic first-recipient failure'];
+            },true);
+            self::fail('First recipient must be retried.');
+        } catch (RuntimeException $error) {
+            self::assertStringContainsString('first-recipient failure',$error->getMessage());
+        }
+        self::assertSame(2,$snapshotCount,'All recipients must be saved before any email is sent.');
+        $this->pdo->exec("INSERT INTO clients VALUES(4,'New Accounting','new@example.test',0,9)");
+        pa_billing_organization_save($this->pdo,9,[3,4],false);
+        $sent=[];
+        $receipt=payment_receipt_issue($this->pdo,100,[],true,static function(string $to) use (&$sent):array {$sent[]=$to;return [true,''];},true);
+        self::assertSame([],$sent,'Neither removed contact nor new contact may receive the historical receipt.');
+        self::assertSame(2,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipt_deliveries WHERE suppressed_at IS NOT NULL')->fetchColumn());
+        self::assertNotEmpty($receipt['emailed_at']);
+    }
 }

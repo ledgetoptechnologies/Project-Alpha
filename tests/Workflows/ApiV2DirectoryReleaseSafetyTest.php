@@ -115,6 +115,13 @@ final class ApiV2DirectoryReleaseSafetyTest extends TestCase
                 }
             }
         }
+        // The link-strategy writer is a non-profile utility reached only through
+        // the ownership-guarded department controller's transaction.
+        $writers[] = 'src/utils/organization_link_strategy.php';
+        $departmentController = (string)file_get_contents($root . '/src/controllers/organization/organization_departments.php');
+        self::assertStringContainsString('api_v2_directory_management_guard', $departmentController);
+        self::assertStringContainsString('api_v2_directory_management_acquire_shared_gate', $departmentController);
+        self::assertStringContainsString('pa_organization_link_strategy_save', $departmentController);
         sort($writers); $declared = array_keys($listed); sort($declared);
         self::assertSame($writers, $declared, 'Every runtime SQL writer must be classified before release.');
         $serviceReferences = [];

@@ -57,19 +57,7 @@ try {
             // Replay the collection policy stored on the committed invoice.
             // The Project default may have changed since the first request.
             if ($existingCollectionMode === 'direct') {
-                $clientStmt = $pdo->prepare('SELECT email FROM clients WHERE id = ?');
-                $clientStmt->execute([(int)$contract['client_id']]);
-                $to = trim((string)$clientStmt->fetchColumn());
-                $deliveryStatus = filter_var($to, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
-                invoice_notification_enqueue(
-                    $pdo,
-                    $existingInvoiceId,
-                    'on_demand_generate',
-                    'generated',
-                    $to,
-                    $deliveryStatus,
-                    $deliveryStatus === 'suppressed' ? 'Missing or invalid client email.' : null
-                );
+                invoice_notification_enqueue_resolved($pdo, $existingInvoiceId, 'on_demand_generate', 'generated');
                 invoice_notification_process($pdo, $appConfig, null, null, 10, $existingInvoiceId);
             }
         }
@@ -220,20 +208,7 @@ try {
         invoice_finalize($pdo, $invoiceId, $appConfig, 'on_demand_send', $contractCreator);
     }
     if ($sendEmail && !$projectMonthlyBilling) {
-        $clientStmt = $pdo->prepare('SELECT email FROM clients WHERE id = ?');
-        $clientStmt->execute([$clientId]);
-        $to = trim((string)$clientStmt->fetchColumn());
-        $deliveryStatus = filter_var($to, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
-        $deliveryError = $deliveryStatus === 'suppressed' ? 'Missing or invalid client email.' : null;
-        invoice_notification_enqueue(
-            $pdo,
-            $invoiceId,
-            'on_demand_generate',
-            'generated',
-            $to,
-            $deliveryStatus,
-            $deliveryError
-        );
+        invoice_notification_enqueue_resolved($pdo, $invoiceId, 'on_demand_generate', 'generated');
         // Try immediately for interactive feedback. A transport/PDF failure stays
         // durable and is retried by the normal invoice delivery worker.
         invoice_notification_process($pdo, $appConfig, null, null, 10, $invoiceId);

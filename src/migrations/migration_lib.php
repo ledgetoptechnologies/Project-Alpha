@@ -305,6 +305,11 @@ function migration_required_tables_for_version(array $requiredTables, int $throu
         'api_v2_project_backfill_attestations' => 102,
         'api_v2_directory_unit_profile_command_receipts' => 104,
         'api_v2_directory_unit_contact_command_receipts' => 104,
+        'organization_billing_preferences' => 116,
+        'organization_billing_recipients' => 116,
+        'invoice_billing_preferences' => 116,
+        'invoice_billing_recipients' => 116,
+        'payment_receipt_deliveries' => 116,
     ];
 
     return array_values(array_filter(
@@ -623,6 +628,8 @@ function migration_schema_health(PDO $pdo, ?int $throughVersion = null): void
         'api_v2_directory_binding_revoke_command_receipts',
         'api_v2_directory_unit_profile_command_receipts','api_v2_directory_unit_contact_command_receipts',
         'project_retention_guards', 'project_changes', 'api_v2_project_lifecycle_command_receipts',
+        'organization_billing_preferences','organization_billing_recipients',
+        'invoice_billing_preferences','invoice_billing_recipients','payment_receipt_deliveries',
         'api_v2_project_authorization_state','api_v2_project_external_bindings','api_v2_project_command_receipts','api_v2_project_backfill_attestations',
     ];
     $requiredTables = migration_required_tables_for_version($requiredTables, $throughVersion);

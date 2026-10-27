@@ -9,6 +9,7 @@ require_once __DIR__ . '/invoice_numbers.php';
 require_once __DIR__ . '/document_pdf.php';
 require_once __DIR__ . '/general_recipient_invoices.php';
 require_once __DIR__ . '/public_links.php';
+require_once __DIR__ . '/billing_recipients.php';
 
 function invoice_notification_timezone(array $appConfig): DateTimeZone
 {
@@ -63,8 +64,9 @@ function invoice_notification_enqueue(
     $email = trim($email);
     $recipientKey = invoice_notification_recipient_key($email);
     $availableAt = $availableAt ?: new DateTimeImmutable('now');
+    $insert = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? 'INSERT OR IGNORE' : 'INSERT IGNORE';
     $stmt = $pdo->prepare(
-        'INSERT IGNORE INTO invoice_notifications
+        $insert . ' INTO invoice_notifications
          (invoice_id,notification_type,delivery_key,recipient_key,delivery_status,
           attempt_count,next_attempt_at,last_error,email_to)
          VALUES (?,?,?,?,?,0,?,?,?)'
@@ -85,13 +87,30 @@ function invoice_notification_enqueue_generated(PDO $pdo, int $invoiceId, array 
         || ($invoice['finalization_source'] ?? '') !== 'recurring_schedule') {
         return false;
     }
-    $email = trim((string)($invoice['email'] ?? ''));
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return invoice_notification_enqueue(
-            $pdo, $invoiceId, 'on_generate', 'generated', $email, 'suppressed', 'Missing or invalid client email.'
-        );
+    $stats = invoice_notification_enqueue_resolved($pdo, $invoiceId, 'on_generate', 'generated');
+    return $stats['queued'] + $stats['suppressed'] > 0;
+}
+
+/** Queue each approved recipient independently, never a comma-separated address. */
+function invoice_notification_enqueue_resolved(PDO $pdo, int $invoiceId, string $type, string $deliveryKey, ?DateTimeImmutable $availableAt = null): array
+{
+    $resolution = pa_billing_resolve($pdo, 'invoice', $invoiceId);
+    $stats = ['queued' => 0, 'suppressed' => 0];
+    $recipients = $resolution['recipients'];
+    if (!$recipients) {
+        if (invoice_notification_enqueue($pdo, $invoiceId, $type, $deliveryKey, '', 'suppressed', $resolution['reason'] ?: 'No valid billing recipients. Review invoice billing recipients.', $availableAt)) {
+            $stats['suppressed']++;
+        }
+        return $stats;
     }
-    return invoice_notification_enqueue($pdo, $invoiceId, 'on_generate', 'generated', $email);
+    foreach ($recipients as $recipient) {
+        $email = trim((string)$recipient['email']);
+        $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
+        if (invoice_notification_enqueue($pdo, $invoiceId, $type, $deliveryKey, $email, $status, $status === 'suppressed' ? 'Missing or invalid billing email.' : null, $availableAt)) {
+            $stats[$status === 'pending' ? 'queued' : 'suppressed']++;
+        }
+    }
+    return $stats;
 }
 
 /**
@@ -127,12 +146,9 @@ function invoice_notification_schedule_reminders(
         }
         $type = $stage['type'];
         $key = $stage['key'];
-        $email = trim((string)($row['email'] ?? ''));
-        $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
-        $reason = $status === 'suppressed' ? 'Missing or invalid client email.' : null;
-        if (invoice_notification_enqueue($pdo, (int)$row['id'], $type, $key, $email, $status, $reason, $today)) {
-            $stats[$status === 'pending' ? 'queued' : 'suppressed']++;
-        }
+        $queued = invoice_notification_enqueue_resolved($pdo, (int)$row['id'], $type, $key, $today);
+        $stats['queued'] += $queued['queued'];
+        $stats['suppressed'] += $queued['suppressed'];
     }
     return $stats;
 }
@@ -179,7 +195,15 @@ function invoice_notification_process(
 
         $type = (string)$row['notification_type'];
         $status = strtolower((string)$row['invoice_status']);
-        $currentEmail = trim((string)$row['current_email']);
+        $resolution = pa_billing_resolve($pdo, 'invoice', (int)$row['invoice_id']);
+        $currentRecipient = null;
+        foreach ($resolution['recipients'] as $recipient) {
+            if (invoice_notification_recipient_key((string)$recipient['email']) === (string)$row['recipient_key']) {
+                $currentRecipient = $recipient;
+                break;
+            }
+        }
+        $currentEmail = trim((string)($currentRecipient['email'] ?? ''));
         $balance = max(0.0, (float)$row['total'] - (float)$row['amount_paid']);
         require_once __DIR__ . '/autopay_status.php';
         $autoPayNotice = pa_autopay_pending_notice($pdo, (int)$row['invoice_id']);
@@ -191,7 +215,7 @@ function invoice_notification_process(
             $reason = 'Invoice is no longer eligible for client delivery.';
         } elseif (!filter_var($currentEmail, FILTER_VALIDATE_EMAIL)
             || invoice_notification_recipient_key($currentEmail) !== (string)$row['recipient_key']) {
-            $reason = 'Client email is missing or changed; this delivery was suppressed.';
+            $reason = $resolution['reason'] ?: 'Billing recipient is missing, changed, or removed; this delivery was suppressed.';
         } elseif ($type === 'on_generate' && empty($appConfig['invoice_auto_email_on_generate'])) {
             $reason = 'Automatic generated-invoice email is disabled.';
         } elseif ($type === 'due_7' && empty($appConfig['invoice_auto_send_due_7days'])) {
@@ -254,7 +278,7 @@ function invoice_notification_process(
                 $subject = 'Invoice ' . $invoiceLabel . ' is ready';
                 $intro = 'Invoice <strong>' . htmlspecialchars($invoiceLabel) . '</strong> is ready.';
             }
-            $body = '<p>Hello ' . htmlspecialchars((string)($row['client_name'] ?: 'there')) . ',</p>'
+            $body = '<p>Hello ' . htmlspecialchars((string)(($currentRecipient['name'] ?? '') ?: 'there')) . ',</p>'
                 . '<p>' . $intro . '</p>'
                 . '<p>Outstanding balance: <strong>$' . number_format($balance, 2) . '</strong></p>'
                 . ($terms !== '' ? '<p>Payment terms: ' . htmlspecialchars($terms) . '</p>' : '')

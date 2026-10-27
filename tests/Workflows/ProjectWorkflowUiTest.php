@@ -165,7 +165,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('PA uses the overall organization folder until the first department is added.', (string)$view);
         self::assertStringContainsString('When a first department is created, PA switches this organization to department links only', (string)$view);
         self::assertStringContainsString('$existingDepartmentCount === 0', (string)$handler);
-        self::assertStringContainsString('link_strategy = "department_links_only"', (string)$handler);
+        self::assertStringContainsString('pa_organization_first_department_link_strategy($pdo, $organizationId, portal_projection_source_version())', (string)$handler);
         self::assertStringContainsString('removeResolverOrganizationLinks($organizationId)', (string)$handler);
         self::assertStringContainsString('autoGenerateForDepartment($departmentId)', (string)$handler);
         self::assertStringContainsString('function removeResolverOrganizationLinks', (string)$resolver);

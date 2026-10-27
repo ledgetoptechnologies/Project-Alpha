@@ -1193,6 +1193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'organization-update-notes',
         'organization/organization-remove-client',
         'organization/organization-departments',
+        'organization/organization-billing-save',
         'organization/organizations_upload',
         'organization/organizations-upload',
 
@@ -1724,6 +1725,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_once __DIR__ . '/../src/controllers/organization/organization_departments.php';
         exit;
     }
+    if ($page === 'organization/organization-billing-save') {
+        require_once __DIR__ . '/../src/controllers/organization/organization_billing_save.php';
+        exit;
+    }
     if ($page === 'organization/organizations_upload' || $page === 'organization/organizations-upload') {
         require_once __DIR__ . '/../src/controllers/organization/organizations_upload.php';
         exit;
@@ -1893,6 +1898,10 @@ if ($page === 'logout-confirm') {
 }
 if ($page === 'invoice-autopay-preview') {
     require __DIR__ . '/../src/controllers/invoice/autopay_preview.php';
+    exit;
+}
+if ($page === 'invoice-billing-preview') {
+    require __DIR__ . '/../src/controllers/invoice/billing_preview.php';
     exit;
 }
 

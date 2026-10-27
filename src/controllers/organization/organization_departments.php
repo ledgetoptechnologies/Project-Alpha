@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../services/LinkResolverService.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
+require_once __DIR__ . '/../../utils/organization_link_strategy.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -19,11 +20,12 @@ $redirect = '/?page=organization/organization-view&id=' . max(0, $organizationId
 function organization_department_created_link_transition(PDO $pdo, int $organizationId, int $departmentId): void
 {
     try {
-        $pdo->prepare('UPDATE organizations SET link_strategy = "department_links_only", updated_at = NOW() WHERE id = ?')
-            ->execute([$organizationId]);
-
         $run = static function () use ($pdo, $organizationId, $departmentId): void {
             try {
+                // The feature can be disabled after the department transaction.
+                if (!pa_link_resolver_enabled($pdo)) {
+                    return;
+                }
                 $service = new LinkResolverService($pdo);
                 $service->autoGenerateForDepartment($departmentId);
                 $service->removeResolverOrganizationLinks($organizationId);
@@ -65,8 +67,7 @@ try {
         if (!in_array($strategy, ['department_links_only', 'overall_folder', 'shared_folder'], true)) {
             $strategy = 'overall_folder';
         }
-        $stmt = $pdo->prepare('UPDATE organizations SET link_strategy = ?, source_version = ?, updated_at = NOW() WHERE id = ?');
-        $stmt->execute([$strategy, portal_projection_source_version(), $organizationId]);
+        pa_organization_link_strategy_save($pdo, $organizationId, $strategy, portal_projection_source_version());
         $flag = 'link_strategy_saved=1';
     } elseif ($action === 'save_department') {
         $departmentId = (int)($_POST['department_id'] ?? 0);
@@ -122,7 +123,8 @@ try {
             $stmt->execute([$organizationId, $name, $folderName !== '' ? $folderName : null, $aliasesJson, $resolverMode, $notes !== '' ? $notes : null, portal_projection_source_version()]);
             $departmentId = (int)$pdo->lastInsertId();
             api_v2_directory_record($pdo, 'unit', $departmentId);
-            if ($existingDepartmentCount === 0) {
+            if ($existingDepartmentCount === 0
+                && pa_organization_first_department_link_strategy($pdo, $organizationId, portal_projection_source_version())) {
                 $createdDepartmentTransition = [$organizationId, $departmentId];
             }
             $flag = 'department_created=1';

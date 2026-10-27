@@ -71,6 +71,7 @@ if ($selectedProjectId > 0) {
     <div id="generalRecipientServiceLocation">
       <?php $documentServiceLocationId = 0; require __DIR__ . '/../../components/document_service_location_fields.php'; ?>
     </div>
+    <?php require __DIR__ . '/../../components/invoice_billing_recipients.php'; ?>
 
     <div id="customFieldsContainerInv">
     <?php

@@ -85,6 +85,11 @@ function payment_receipt_issue(
     $existing = $pdo->prepare('SELECT * FROM payment_receipts WHERE payment_id=?');
     $existing->execute([$paymentId]);
     $receipt = $existing->fetch(PDO::FETCH_ASSOC);
+    // A duplicate callback must never redistribute a completed historical receipt.
+    if ($receipt && !empty($receipt['emailed_at'])) return $receipt;
+    $billing = !empty($payment['invoice_id'])
+        ? pa_billing_resolve($pdo, 'invoice', (int)$payment['invoice_id'])
+        : ['configured' => false, 'recipients' => [], 'reason' => null];
 
     if (!$receipt) {
         $token = bin2hex(random_bytes(32));
@@ -98,14 +103,68 @@ function payment_receipt_issue(
             $number,
             $token,
             (float)$payment['amount'],
-            filter_var((string)$payment['email'], FILTER_VALIDATE_EMAIL) ? $payment['email'] : null,
+            empty($billing['configured']) && filter_var((string)$payment['email'], FILTER_VALIDATE_EMAIL) ? $payment['email'] : null,
         ]);
         $existing->execute([$paymentId]);
         $receipt = $existing->fetch(PDO::FETCH_ASSOC);
     }
 
-    if (!$sendEmail || !$receipt || !empty($receipt['emailed_at']) || empty($receipt['email_to'])) {
+    if (!$sendEmail || !$receipt) {
         return $receipt ?: null;
+    }
+    $appConfig = payment_receipt_autopay_management($pdo, $paymentId, $appConfig);
+
+    $configuredReceipt = !empty($billing['configured']);
+    if (!$configuredReceipt && pa_billing_table_exists($pdo, 'payment_receipt_deliveries')) {
+        $deliveryCount = $pdo->prepare('SELECT COUNT(*) FROM payment_receipt_deliveries WHERE receipt_id=?');
+        $deliveryCount->execute([(int)$receipt['id']]);
+        $configuredReceipt = (int)$deliveryCount->fetchColumn() > 0;
+    }
+    $deliveries = [];
+    if ($configuredReceipt) {
+        $recipients = $billing['recipients'];
+        // Each bank withdrawal still needs its payer receipt. This is distinct
+        // from copying the working contact on ordinary billing emails.
+        $payerEmail = trim((string)($appConfig['_autopay_manage_email'] ?? ''));
+        if (!empty($appConfig['_autopay_manage_url']) && filter_var($payerEmail, FILTER_VALIDATE_EMAIL)) {
+            $recipients[] = ['name' => (string)$payment['client_name'], 'email' => $payerEmail];
+            $recipients = pa_billing_unique_recipients($recipients);
+        }
+        // Snapshot every initial destination before transport. Serialize snapshot
+        // creation on the receipt; retries may only remove recipients, never add.
+        pa_billing_atomic($pdo, static function () use ($pdo, $receipt, $recipients, &$deliveries): void {
+            $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? '' : ' FOR UPDATE';
+            $s = $pdo->prepare('SELECT emailed_at FROM payment_receipts WHERE id=?' . $lock);
+            $s->execute([(int)$receipt['id']]);
+            if ($s->fetchColumn()) return;
+            $lookup = $pdo->prepare('SELECT * FROM payment_receipt_deliveries WHERE receipt_id=? ORDER BY id');
+            $lookup->execute([(int)$receipt['id']]);
+            $deliveries = $lookup->fetchAll(PDO::FETCH_ASSOC);
+            if ($deliveries) return;
+            $insert = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? 'INSERT OR IGNORE' : 'INSERT IGNORE';
+            $s = $pdo->prepare($insert . ' INTO payment_receipt_deliveries (receipt_id,recipient_key,email_to,recipient_name) VALUES (?,?,?,?)');
+            foreach ($recipients as $recipient) $s->execute([(int)$receipt['id'], hash('sha256', strtolower(trim((string)$recipient['email']))), trim((string)$recipient['email']), (string)$recipient['name']]);
+            $lookup->execute([(int)$receipt['id']]);
+            $deliveries = $lookup->fetchAll(PDO::FETCH_ASSOC);
+        });
+        if (!$deliveries) {
+            if ($throwOnEmailFailure) throw new RuntimeException('Payment receipt email delivery failed: ' . ($billing['reason'] ?: 'Review billing recipients.'));
+            return $receipt;
+        }
+        $eligible = [];
+        foreach ($recipients as $recipient) $eligible[hash('sha256', strtolower(trim((string)$recipient['email'])))] = true;
+        $recipients = [];
+        foreach ($deliveries as $delivery) {
+            if (!empty($delivery['emailed_at']) || !empty($delivery['suppressed_at'])) continue;
+            if (!isset($eligible[$delivery['recipient_key']])) {
+                $pdo->prepare('UPDATE payment_receipt_deliveries SET suppressed_at=NOW() WHERE id=? AND emailed_at IS NULL')->execute([(int)$delivery['id']]);
+                continue;
+            }
+            $recipients[] = ['name' => (string)$delivery['recipient_name'], 'email' => (string)$delivery['email_to'], 'delivery_id' => (int)$delivery['id']];
+        }
+    } else {
+        if (!empty($receipt['emailed_at']) || empty($receipt['email_to'])) return $receipt;
+        $recipients = [['name' => (string)$payment['client_name'], 'email' => (string)$receipt['email_to']]];
     }
 
     $url = '';
@@ -117,28 +176,43 @@ function payment_receipt_issue(
         ? ' for service job ' . (string)$payment['job_code']
         : '';
     $subject = 'Payment receipt ' . $receipt['receipt_number'];
-    $body = '<p>Hello ' . htmlspecialchars((string)($payment['client_name'] ?: 'there')) . ',</p>'
-        . '<p>We received your payment of <strong>$' . number_format((float)$payment['amount'], 2) . '</strong>'
+    $body = '<p>We received your payment of <strong>$' . number_format((float)$payment['amount'], 2) . '</strong>'
         . htmlspecialchars($invoiceLabel . $serviceLabel) . '.</p>'
         . '<p>Receipt number: <strong>' . htmlspecialchars((string)$receipt['receipt_number']) . '</strong></p>'
         . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View and print your Project Alpha receipt</a></p>' : '');
 
     $sender ??= [EmailService::class, 'sendEmail'];
-    $appConfig=payment_receipt_autopay_management($pdo,$paymentId,$appConfig);
-    if(!empty($appConfig['_autopay_manage_url']) && strcasecmp((string)$receipt['email_to'],(string)($appConfig['_autopay_manage_email']??$receipt['email_to']))===0)$body.='<p><a href="'.htmlspecialchars($appConfig['_autopay_manage_url'],ENT_QUOTES,'UTF-8').'">Manage or revoke AutoPay</a> (email verification required).</p>';
-    [$ok, $error] = $sender((string)$receipt['email_to'], $subject, $body, [
-        'document_type' => 'notification',
-        'document_id' => $paymentId,
-        'message_key' => 'payment-receipt:' . $paymentId . ':'
-            . hash('sha256', strtolower((string)$receipt['email_to'])),
-    ]);
-    if ($ok) {
+    $failures = [];
+    foreach ($recipients as $recipient) {
+        $email = trim((string)$recipient['email']);
+        $recipientKey = hash('sha256', strtolower($email));
+        $recipientBody = '<p>Hello ' . htmlspecialchars((string)(($recipient['name'] ?? '') ?: 'there')) . ',</p>' . $body;
+        if (!empty($appConfig['_autopay_manage_url']) && !empty($appConfig['_autopay_manage_email'])
+            && strcasecmp($email, (string)$appConfig['_autopay_manage_email']) === 0) {
+            $recipientBody .= '<p><a href="' . htmlspecialchars($appConfig['_autopay_manage_url'], ENT_QUOTES, 'UTF-8') . '">Manage or revoke AutoPay</a> (email verification required).</p>';
+        }
+        try {
+            [$ok, $error] = $sender($email, $subject, $recipientBody, [
+                'document_type' => 'notification', 'document_id' => $paymentId,
+                'message_key' => 'payment-receipt:' . $paymentId . ':' . $recipientKey,
+            ]);
+        } catch (Throwable $error) {
+            $ok = false;
+            $error = $error->getMessage();
+        }
+        if ($ok) {
+            if (isset($recipient['delivery_id'])) $pdo->prepare('UPDATE payment_receipt_deliveries SET emailed_at=NOW() WHERE id=?')->execute([(int)$recipient['delivery_id']]);
+        } else {
+            $failures[] = (string)$error;
+        }
+    }
+    if (!$failures) {
         $pdo->prepare('UPDATE payment_receipts SET emailed_at=NOW() WHERE id=?')->execute([(int)$receipt['id']]);
         $receipt['emailed_at'] = date('Y-m-d H:i:s');
     } else {
-        @error_log('[payment_receipts] Receipt email failed for payment ' . $paymentId . ': ' . $error);
+        @error_log('[payment_receipts] Receipt email failed for payment ' . $paymentId);
         if ($throwOnEmailFailure) {
-            throw new RuntimeException('Payment receipt email delivery failed: ' . $error);
+            throw new RuntimeException('Payment receipt email delivery failed: ' . implode('; ', $failures));
         }
     }
 

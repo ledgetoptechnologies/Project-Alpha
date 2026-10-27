@@ -111,6 +111,20 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
     Status: <?php echo htmlspecialchars($inv['status']); ?>
   </div>
   <div class="no-print document-actions">
+    <?php if (!$isGeneralRecipientInvoice):
+      require_once __DIR__ . '/../../../utils/billing_recipients.php';
+      $billingResolution = pa_billing_resolve($pdo, 'invoice', $id);
+      $billingSourceLabels = ['invoice'=>'This invoice', 'project'=>'Project recipients', 'organization'=>'Organization billing default', 'legacy'=>'Existing working-contact delivery'];
+    ?>
+    <aside class="no-print" style="flex-basis:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;overflow-wrap:anywhere">
+      <strong>Billing email delivery</strong>
+      <div>Working contact: <?= htmlspecialchars((string)$inv['client_name'], ENT_QUOTES, 'UTF-8') ?></div>
+      <div>Delivery from: <?= htmlspecialchars((string)($billingSourceLabels[$billingResolution['source']] ?? $billingResolution['source']), ENT_QUOTES, 'UTF-8') ?></div>
+      <div>Sends to: <?php if (!$billingResolution['recipients']): ?>No deliverable recipients<?php else: ?><?= htmlspecialchars(implode('; ', array_map(static fn($recipient)=>(string)$recipient['name'] . ' <' . (string)$recipient['email'] . '>', $billingResolution['recipients'])), ENT_QUOTES, 'UTF-8') ?><?php endif; ?></div>
+      <?php if (!empty($billingResolution['reason'])): ?><p role="alert" style="margin:6px 0 0;color:#92400e"><?= htmlspecialchars((string)$billingResolution['reason'], ENT_QUOTES, 'UTF-8') ?></p><?php endif; ?>
+      <?php if (strtolower((string)$inv['status']) === 'draft'): ?><small>Review these recipients before finalizing. Billing preferences do not change the contract signer.</small><?php endif; ?>
+    </aside>
+    <?php endif; ?>
     <?php
       $autopayDocument = $inv;
       $autopayType = 'invoice';
