@@ -481,6 +481,7 @@ $selectedStateTaxRateValue = $selectedRateFile && $selectedRateFile['state_tax_r
         if (!form || form.dataset.taxChunkReady === '1') return;
         form.dataset.taxChunkReady = '1';
         var threshold = 80 * 1024 * 1024;
+        var maxChunkedFileSize = 400 * 1024 * 1024;
         var chunkSize = 8 * 1024 * 1024;
         var progress = form.querySelector('[data-tax-import-progress]');
         var fields = form.querySelector('[data-tax-import-chunk-fields]');
@@ -518,6 +519,9 @@ $selectedStateTaxRateValue = $selectedRateFile && $selectedRateFile['state_tax_r
         }
 
         async function uploadLargeFile(input, file) {
+          if (file.size > maxChunkedFileSize) {
+            throw new Error('Tax import files must be 400 MB or smaller.');
+          }
           var field = input.getAttribute('data-tax-import-file');
           var token = randomToken();
           var total = Math.ceil(file.size / chunkSize);
@@ -591,6 +595,7 @@ $selectedStateTaxRateValue = $selectedRateFile && $selectedRateFile['state_tax_r
       <strong>📋 How it works:</strong>
       <ul style="margin:8px 0 0 16px;padding:0;color:#1e40af">
         <li>FIPS, rate, and boundary files are stored as reusable import sources.</li>
+        <li>Each uploaded source file must be 400 MB or smaller.</li>
         <li>Select the state before uploading; PA only replaces imported rows for that state.</li>
         <li>If you upload only one updated file, PA keeps the other previously imported tables for that state.</li>
         <li>Rate imports replace current imported jurisdiction rows for the selected state and mirror county totals into the normal tax rate list.</li>
