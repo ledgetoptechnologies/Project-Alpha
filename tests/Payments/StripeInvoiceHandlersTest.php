@@ -68,7 +68,7 @@ final class StripeInvoiceHandlersTest extends TestCase
         if ($this->organizationId) $this->pdo->prepare('DELETE FROM organizations WHERE id=?')->execute([$this->organizationId]);
     }
 
-    public static function paths(): array { return [['intent'], ['checkout'], ['reconcile']]; }
+    public static function paths(): array { return [['intent'], ['domain'], ['checkout'], ['reconcile']]; }
 
     #[DataProvider('paths')]
     public function testDeclinedAttemptSettlesInPlaceAndLaterEventsDoNotDoubleCredit(string $path): void
@@ -238,6 +238,8 @@ final class StripeInvoiceHandlersTest extends TestCase
     public static function eventOrders(): array
     {
         return [
+            [['domain', 'intent', 'checkout', 'reconcile', 'domain']],
+            [['intent', 'domain', 'intent']],
             [['intent', 'checkout', 'reconcile', 'intent']],
             [['checkout', 'intent', 'reconcile', 'checkout']],
             [['reconcile', 'checkout', 'intent', 'reconcile']],
@@ -285,7 +287,7 @@ final class StripeInvoiceHandlersTest extends TestCase
 
     public static function invalidMetadata(): iterable
     {
-        foreach (['intent', 'checkout', 'reconcile'] as $path) {
+        foreach (['intent', 'domain', 'checkout', 'reconcile'] as $path) {
             foreach (['0', '', 'not-money', '-527.50', '527.501', '527.51'] as $value) {
                 yield "$path $value" => [$path, $value];
             }
@@ -304,6 +306,7 @@ final class StripeInvoiceHandlersTest extends TestCase
         } else {
             try {
                 if ($path === 'intent') handlePaymentIntentSucceeded($connection, $intent);
+                elseif ($path === 'domain') stripe_settle_payment_intent($connection, $intent, $GLOBALS['appConfig']);
                 else handleCheckoutSessionCompleted($connection, ['id' => 'cs_synthetic_invalid', 'payment_status' => 'paid', 'amount_total' => 52750, 'metadata' => $intent['metadata']]);
                 self::fail('Invalid metadata must hold the event.');
             } catch (InvalidArgumentException $e) { self::assertNotEmpty($e->getMessage()); }
@@ -375,6 +378,7 @@ final class StripeInvoiceHandlersTest extends TestCase
 
     private function deliver(string $path, bool $expectSuccess = true): ?array
     {
+        if ($path === 'domain') { stripe_settle_payment_intent($this->pdo, $this->intent, $GLOBALS['appConfig']); return null; }
         if ($path === 'intent') { handlePaymentIntentSucceeded($this->pdo, $this->intent); return null; }
         if ($path === 'checkout') { handleCheckoutSessionCompleted($this->pdo, $this->session); return null; }
         $result = stripe_reconcile_payment_intents($this->pdo, new StripeInvoiceFixtureService([$this->intent]), $GLOBALS['appConfig'], 0);

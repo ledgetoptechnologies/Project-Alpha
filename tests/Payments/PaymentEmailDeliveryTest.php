@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/src/utils/payment_receipts.php';
+require_once dirname(__DIR__, 2) . '/src/utils/stripe_payment_notifications.php';
 
 use PHPUnit\Framework\TestCase;
 
@@ -168,26 +169,39 @@ final class PaymentEmailDeliveryTest extends TestCase
         )->fetchColumn());
     }
 
-    public function testWebhookAndReconciliationRetryExistingPaymentDeliveries(): void
+    public function testSettlementDeliveryRetriesAdminWithoutResendingSuccessfulReceipt(): void
     {
-        $root = dirname(__DIR__, 2);
-        foreach ([
-            'src/controllers/webhook/stripe_checkout_completed.php',
-            'src/controllers/webhook/stripe_payment_succeeded.php',
-            'src/utils/stripe_reconciliation_import.php',
-        ] as $path) {
-            $source = (string)file_get_contents($root . '/' . $path);
-            self::assertStringContainsString('existingPaymentId', $source, $path);
-            self::assertStringContainsString('payment_receipt_issue(', $source, $path);
-            self::assertStringContainsString('$existingPaymentId', $source, $path);
-            self::assertStringContainsString('false,', $source, $path);
-            self::assertStringContainsString('true', $source, $path);
+        $this->pdo->exec("ALTER TABLE invoices ADD COLUMN created_by INTEGER");
+        $this->pdo->exec("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, role TEXT, is_disabled INTEGER, deleted_at TEXT)");
+        $this->pdo->exec("CREATE TABLE user_notification_preferences (user_id INTEGER, notify_processor_invoice_paid INTEGER)");
+        $this->pdo->exec("INSERT INTO users VALUES (1,'owner@example.test','owner',0,NULL)");
+        $this->pdo->exec("INSERT INTO clients VALUES (1,'Client Contact','client@example.test',0)");
+        $this->pdo->exec("INSERT INTO invoices VALUES (10,42,'regular','named',1,1)");
+        $this->pdo->exec("INSERT INTO payments VALUES (100,10,NULL,NULL,1,125.50,'2026-08-18','stripe',NULL,'succeeded')");
+        $attempts = [];
+        $sender = static function (string $to, string $subject, string $body, array $options) use (&$attempts): array {
+            $attempts[] = ['to' => $to, 'key' => $options['message_key']];
+            return [$to !== 'owner@example.test', 'synthetic admin failure'];
+        };
+        try {
+            stripe_invoice_deliver_payment_emails($this->pdo, ['payment_receipts_enabled' => 1], 10, 100, 125.50, 'paid', false, $sender);
+            self::fail('Failed admin delivery must remain retryable.');
+        } catch (RuntimeException $error) {
+            self::assertStringStartsWith('Payment email delivery failed:', $error->getMessage());
         }
-
-        $projectBilling = (string)file_get_contents($root . '/src/utils/project_invoice_billing.php');
-        self::assertStringContainsString('project_payment_receipt_email_issue', $projectBilling);
-        self::assertStringContainsString("(\$projectPayment['status'] ?? '') === 'succeeded'", $projectBilling);
-        self::assertStringContainsString("'project-payment:' . \$projectPaymentId", $projectBilling);
+        self::assertSame(['owner@example.test', 'client@example.test'], array_column($attempts, 'to'));
+        self::assertSame('invoice-paid-processor:10:' . hash('sha256', 'owner@example.test:payment:100'), $attempts[0]['key']);
+        self::assertSame('2026-08-18 12:00:00', $this->pdo->query('SELECT emailed_at FROM payment_receipts WHERE payment_id=100')->fetchColumn());
+        $retry = [];
+        stripe_invoice_deliver_payment_emails(
+            $this->pdo, ['payment_receipts_enabled' => 1], 10, 100, 125.50, 'paid', false,
+            static function (string $to, string $subject, string $body, array $options) use (&$retry): array {
+                $retry[] = ['to' => $to, 'key' => $options['message_key']];
+                return [true, 'sent'];
+            }
+        );
+        self::assertSame([$attempts[0]], $retry);
+        self::assertSame(1, (int)$this->pdo->query('SELECT COUNT(*) FROM payment_receipts')->fetchColumn());
     }
 
     public function testCustomerReceiptAttemptIsNotBlockedByAdminDeliveryFailure(): void
@@ -224,18 +238,5 @@ final class PaymentEmailDeliveryTest extends TestCase
             $this->pdo->query('SELECT emailed_at FROM payment_receipts WHERE payment_id=100')->fetchColumn()
         );
 
-        $root = dirname(__DIR__, 2);
-        foreach ([
-            'src/controllers/webhook/stripe_checkout_completed.php',
-            'src/controllers/webhook/stripe_payment_succeeded.php',
-            'src/utils/stripe_reconciliation_import.php',
-            'src/utils/project_invoice_billing.php',
-        ] as $path) {
-            self::assertStringContainsString(
-                'payment_email_attempt_all(',
-                (string)file_get_contents($root . '/' . $path),
-                $path
-            );
-        }
     }
 }

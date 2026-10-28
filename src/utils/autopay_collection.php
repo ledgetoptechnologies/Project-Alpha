@@ -216,8 +216,9 @@ function pa_autopay_handle_event(PDO $pdo,array $event,array $config,bool $signa
     if($type==='payment_intent.succeeded'){
         if(($intent['status']??'')!=='succeeded' || ($intent['amount_received']??null)!==(int)$row['amount_cents'])throw new DomainException('Collection settlement evidence incomplete.');
         // Reuse the canonical accounting and receipt paths, including pending refunds/disputes.
-        require_once __DIR__.'/../controllers/webhook/stripe_payment_succeeded.php';
-        handlePaymentIntentSucceeded($pdo,$intent);
+        // Preserve legacy accounting configuration; $config above gates collection identity.
+        require_once __DIR__.'/stripe_payment_settlement.php';
+        stripe_settle_payment_intent($pdo,$intent,$GLOBALS['appConfig'] ?? []);
         $pdo->prepare('UPDATE autopay_collections SET state="succeeded",stripe_payment_intent_id=?,next_attempt_at=NULL,lease_token=NULL,lease_until=NULL,last_event_created=GREATEST(last_event_created,?) WHERE id=?')->execute([$intent['id'],(int)($event['created']??0),$row['id']]);
     }else{
         $state=match($type){'payment_intent.payment_failed','payment_intent.canceled'=>'failed','payment_intent.requires_action'=>'requires_action','payment_intent.processing'=>'processing',default=>null};

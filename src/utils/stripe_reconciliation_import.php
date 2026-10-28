@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/stripe_payment_notifications.php';
 
 require_once __DIR__ . '/../services/StripeService.php';
 require_once __DIR__ . '/../services/PaymentProcessorImportService.php';
@@ -10,7 +11,7 @@ require_once __DIR__ . '/stripe_invoice_payment_state.php';
 require_once __DIR__ . '/public_links.php';
 require_once __DIR__ . '/invoice_lifecycle.php';
 require_once __DIR__ . '/notifications.php';
-require_once __DIR__ . '/payment_receipts.php';
+
 require_once __DIR__ . '/autopay_reconciliation.php';
 
 function stripe_reconcile_payment_intents(
@@ -113,14 +114,9 @@ function stripe_reconcile_payment_intents(
                     stripe_update_payment_processor_fields($pdo, $existingPaymentId, $processorTx, $appConfig);
                     $pdo->commit();
                     if ($existing) {
-                        payment_email_attempt_all(
-                            static fn() => notify_admin_invoice_paid(
-                                $pdo, $appConfig, $invoiceId, (float)$existing['amount'],
-                                (string)$existing['invoice_status'], false, true, null, 'payment:' . $existingPaymentId
-                            ),
-                            static fn() => payment_receipt_issue(
-                                $pdo, $existingPaymentId, $appConfig, true, null, true
-                            )
+                        stripe_invoice_deliver_payment_emails(
+                            $pdo, $appConfig, $invoiceId, $existingPaymentId,
+                            (float)$existing['amount'], (string)$existing['invoice_status'], false
                         );
                     }
                     $result['duplicates']++;
@@ -182,14 +178,9 @@ function stripe_reconcile_payment_intents(
             $pdo->commit();
             $result['imported']++;
             $result['reconciled']++;
-            payment_email_attempt_all(
-                static fn() => notify_admin_invoice_paid(
-                    $pdo, $appConfig, $invoiceId, $paymentAmount, $newStatus,
-                    true, true, null, 'payment:' . $paymentId
-                ),
-                static fn() => payment_receipt_issue(
-                    $pdo, $paymentId, $appConfig, true, null, true
-                )
+            stripe_invoice_deliver_payment_emails(
+                $pdo, $appConfig, $invoiceId, $paymentId,
+                $paymentAmount, $newStatus, true
             );
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {

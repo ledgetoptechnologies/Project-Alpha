@@ -65,7 +65,7 @@ final class ProcessorImportTest extends TestCase
         $cron = $this->read('src/cron/stripe_reconciliation.php');
         $importHelper = $this->read('src/utils/stripe_reconciliation_import.php');
         $stripe = $this->read('src/services/StripeService.php');
-        $webhook = $this->read('src/controllers/webhook/stripe_payment_succeeded.php');
+        $webhook = $this->read('src/utils/stripe_payment_settlement.php');
 
         self::assertStringContainsString('stripe_reconcile_payment_intents', $cron);
         self::assertStringContainsString('PaymentProcessorImportService::importStandalone', $importHelper);
@@ -84,7 +84,7 @@ final class ProcessorImportTest extends TestCase
     public function testStripeNetIncomeCaptureAndBackfillAreWired(): void
     {
         $checkoutWebhook = $this->read('src/controllers/webhook/stripe_checkout_completed.php');
-        $intentWebhook = $this->read('src/controllers/webhook/stripe_payment_succeeded.php');
+        $intentWebhook = $this->read('src/utils/stripe_payment_settlement.php');
         $cron = $this->read('src/cron/stripe_reconciliation.php');
         $helper = $this->read('src/utils/stripe_payment_accounting.php');
         $checkout = $this->read('src/controllers/stripe/stripe_checkout.php');

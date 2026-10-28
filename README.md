@@ -207,6 +207,20 @@ The production images use PHP 8.5. Composer currently targets PHP 8.3.31 for dep
 
 All HTTP requests enter through `public/index.php`. Application source is under `src/`, the immutable fresh-install schema is `database/baseline.sql`, and sequential forward migrations live under `database/migrations/`.
 
+### Payment and invoice notification boundaries
+
+| Module | Responsibility |
+|---|---|
+| `src/utils/invoice_notification_queue.php` | Shared queue claims, stale-claim recovery, retries, delivery state, and reminder stages for ordinary and project invoices |
+| `src/utils/invoice_notifications.php` and `project_invoice_notifications.php` | Document-specific eligibility, recipients, rendering, and delivery orchestration |
+| `src/utils/stripe_payment_settlement.php` | PaymentIntent accounting used by verified webhook and AutoPay recovery paths |
+| `src/utils/stripe_payment_notifications.php` | Post-commit administrator notices and payer receipts, with stable delivery keys and retry behavior |
+| `src/controllers/webhook/stripe_payment_succeeded.php` | Compatibility adapter retaining the existing webhook handler entry point |
+
+Keep provider verification at the entry points and payment transactions in the settlement layer. Invoke payment email delivery after the accounting commit. Queue helpers accept only the two supported invoice queue types; recipient policy stays in the document-specific workers. AutoPay outboxes retain their separate authorization, lease-token, and receipt rules.
+
+Checkout and reconciliation retain their distinct invoice lookup, repair, and transaction rules. Share common operations through these modules rather than copying them or routing background work through an HTTP controller. Existing adapters preserve legacy configuration and function signatures; changing those contracts requires separate behavioral tests.
+
 ## Scheduled Operations
 
 The cron image runs recurring invoice generation, backups, contract expiration, public-link expiration, audit schedules, invoice reminders, Stripe reconciliation, and merchant-rate synchronization. AutoPay is an unavailable beta foundation and is not scheduled or exposed.

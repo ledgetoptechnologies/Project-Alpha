@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/invoice_notification_queue.php';
+
 require_once __DIR__ . '/../services/EmailService.php';
 require_once __DIR__ . '/invoice_content_links.php';
 require_once __DIR__ . '/invoice_due_dates.php';
@@ -119,20 +121,12 @@ function invoice_notification_schedule_reminders(
         if (!$due) {
             continue;
         }
-        $days = (int)$today->diff($due)->format('%r%a');
-        $type = null;
-        $key = null;
-        if (!empty($appConfig['invoice_auto_send_due_7days']) && $days > 0 && $days <= 7) {
-            $type = 'due_7';
-            $key = 'due:' . $due->format('Y-m-d');
-        } elseif (!empty($appConfig['invoice_auto_send_overdue_weekly']) && $days < 0) {
-            $bucket = intdiv(abs($days) - 1, 7);
-            $type = 'overdue_weekly';
-            $key = 'due:' . $due->format('Y-m-d') . ':week:' . $bucket;
-        }
-        if ($type === null) {
+        $stage = invoice_notification_reminder_stage($today, $due, $appConfig);
+        if ($stage === null) {
             continue;
         }
+        $type = $stage['type'];
+        $key = $stage['key'];
         $email = trim((string)($row['email'] ?? ''));
         $status = filter_var($email, FILTER_VALIDATE_EMAIL) ? 'pending' : 'suppressed';
         $reason = $status === 'suppressed' ? 'Missing or invalid client email.' : null;
@@ -145,11 +139,7 @@ function invoice_notification_schedule_reminders(
 
 function invoice_notification_suppress(PDO $pdo, int $id, string $reason): void
 {
-    $pdo->prepare(
-        'UPDATE invoice_notifications
-         SET delivery_status="suppressed",claimed_at=NULL,next_attempt_at=NULL,last_error=?
-         WHERE id=?'
-    )->execute([substr($reason, 0, 1000), $id]);
+    invoice_notification_queue_suppress($pdo, 'invoice', $id, $reason);
 }
 
 /**
@@ -166,32 +156,10 @@ function invoice_notification_process(
 ): array {
     $now = $now ?: new DateTimeImmutable('now', invoice_notification_timezone($appConfig));
     $stats = ['claimed' => 0, 'sent' => 0, 'retry' => 0, 'suppressed' => 0];
-    $sql = 'SELECT id FROM invoice_notifications
-            WHERE (delivery_status IN ("pending","retry") AND (next_attempt_at IS NULL OR next_attempt_at<=?))
-               OR (delivery_status="processing" AND claimed_at<?)';
-    $params = [$now->format('Y-m-d H:i:s'), $now->modify('-10 minutes')->format('Y-m-d H:i:s')];
-    if ($onlyInvoiceId !== null) {
-        $sql = 'SELECT id FROM invoice_notifications
-                WHERE invoice_id=? AND ((delivery_status IN ("pending","retry") AND (next_attempt_at IS NULL OR next_attempt_at<=?))
-                   OR (delivery_status="processing" AND claimed_at<?))';
-        array_unshift($params, $onlyInvoiceId);
-    }
-    $sql .= ' ORDER BY id ASC LIMIT ' . max(1, min(500, $limit));
-    $ids = $pdo->prepare($sql);
-    $ids->execute($params);
-
-    foreach ($ids->fetchAll(PDO::FETCH_COLUMN) as $idValue) {
+    $ids = invoice_notification_queue_candidates($pdo, 'invoice', $now, $limit, $onlyInvoiceId);
+    foreach ($ids as $idValue) {
         $id = (int)$idValue;
-        $claim = $pdo->prepare(
-            'UPDATE invoice_notifications SET delivery_status="processing",claimed_at=?,last_attempt_at=?,attempt_count=attempt_count+1
-             WHERE id=? AND ((delivery_status IN ("pending","retry") AND (next_attempt_at IS NULL OR next_attempt_at<=?))
-               OR (delivery_status="processing" AND claimed_at<?))'
-        );
-        $claim->execute([
-            $now->format('Y-m-d H:i:s'), $now->format('Y-m-d H:i:s'), $id,
-            $now->format('Y-m-d H:i:s'), $now->modify('-10 minutes')->format('Y-m-d H:i:s'),
-        ]);
-        if ($claim->rowCount() !== 1) {
+        if (!invoice_notification_queue_claim($pdo, 'invoice', $id, $now)) {
             continue;
         }
         $stats['claimed']++;
@@ -238,16 +206,16 @@ function invoice_notification_process(
 
         $due = !empty($row['due_date']) ? (string)$row['due_date'] : '';
         $dueDate = $due !== '' ? DateTimeImmutable::createFromFormat('!Y-m-d', $due) : false;
-        $todayDate = $now->setTime(0, 0);
-        $daysUntilDue = $dueDate ? (int)$todayDate->diff($dueDate)->format('%r%a') : 0;
+        $stage = $dueDate ? invoice_notification_reminder_stage($now->setTime(0, 0), $dueDate, [
+            'invoice_auto_send_due_7days' => true,
+            'invoice_auto_send_overdue_weekly' => true,
+        ], $due) : null;
         if ($reason === null && $type === 'due_7'
-            && ((string)$row['delivery_key'] !== 'due:' . $due || $daysUntilDue < 1 || $daysUntilDue > 7)) {
+            && ($stage === null || $stage['type'] !== 'due_7' || (string)$row['delivery_key'] !== $stage['key'])) {
             $reason = 'Invoice due date changed before reminder delivery.';
         }
         if ($reason === null && $type === 'overdue_weekly') {
-            $expectedKey = $daysUntilDue < 0
-                ? 'due:' . $due . ':week:' . intdiv(abs($daysUntilDue) - 1, 7)
-                : '';
+            $expectedKey = $stage !== null && $stage['type'] === 'overdue_weekly' ? $stage['key'] : '';
             if ((string)$row['delivery_key'] !== $expectedKey) {
                 $reason = 'Invoice due date or overdue stage changed before reminder delivery.';
             }
@@ -307,22 +275,12 @@ function invoice_notification_process(
             if (!$ok) {
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }
-            $pdo->prepare(
-                'UPDATE invoice_notifications
-                 SET delivery_status="sent",sent_at=?,claimed_at=NULL,next_attempt_at=NULL,last_error=NULL,
-                     email_to=?,email_subject=?,email_body=? WHERE id=?'
-            )->execute([$now->format('Y-m-d H:i:s'), $currentEmail, $subject, $body, $id]);
+            invoice_notification_queue_sent($pdo, 'invoice', $id, $now, $currentEmail, $subject, $body);
             $pdo->prepare('UPDATE invoices SET sent_at=COALESCE(sent_at,?) WHERE id=?')
                 ->execute([$now->format('Y-m-d H:i:s'), (int)$row['invoice_id']]);
             $stats['sent']++;
         } catch (Throwable $error) {
-            $attempt = max(1, (int)$row['attempt_count']);
-            $delayMinutes = min(1440, 5 * (2 ** min(8, $attempt - 1)));
-            $next = $now->modify('+' . $delayMinutes . ' minutes')->format('Y-m-d H:i:s');
-            $pdo->prepare(
-                'UPDATE invoice_notifications
-                 SET delivery_status="retry",claimed_at=NULL,next_attempt_at=?,last_error=? WHERE id=?'
-            )->execute([$next, substr($error->getMessage(), 0, 1000), $id]);
+            invoice_notification_queue_retry($pdo, 'invoice', $id, $now, (int)$row['attempt_count'], $error->getMessage());
             @error_log('[invoice_notifications] Delivery ' . $id . ' failed: ' . $error->getMessage());
             $stats['retry']++;
         }
