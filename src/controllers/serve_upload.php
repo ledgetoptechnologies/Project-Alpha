@@ -38,6 +38,26 @@ if (!$isPublicAsset && empty($_SESSION['user'])) {
   exit;
 }
 
+if ($uploadCategory === 'organizations') {
+  $segments = explode('/', str_replace('\\', '/', $fname));
+  if (count($segments) !== 2 || $segments[1] === '') {
+    http_response_code(404);
+    exit;
+  }
+  require_once __DIR__ . '/../config/db.php';
+  require_once __DIR__ . '/../utils/acl.php';
+  $actorId = (int)($_SESSION['user']['id'] ?? 0);
+  $organization = $pdo->prepare('SELECT id FROM organizations WHERE tax_exempt_file = ? LIMIT 1');
+  $organization->execute([$segments[1]]);
+  $organizationId = (int)($organization->fetchColumn() ?: 0);
+  if ($actorId <= 0 || $organizationId <= 0
+      || !user_can($pdo, $actorId, 'organizations.view', 0)
+      || !can_access_record($pdo, 'organizations', $organizationId, $actorId)) {
+    http_response_code(404);
+    exit;
+  }
+}
+
 $bases = [
   __DIR__ . '/../uploads', // src/uploads for contract files
   '/var/www/config/uploads', // fallback for Docker environments

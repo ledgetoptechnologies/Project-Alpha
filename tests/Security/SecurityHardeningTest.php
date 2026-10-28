@@ -217,6 +217,8 @@ final class SecurityHardeningTest extends TestCase
         foreach (['worker-documents', 'contractor-invoices', 'projects'] as $privateStore) {
             self::assertStringContainsString("'{$privateStore}'", $upload);
         }
+        self::assertStringContainsString('WHERE tax_exempt_file = ?', $upload);
+        self::assertStringContainsString("can_access_record(\$pdo, 'organizations', \$organizationId, \$actorId)", $upload);
         self::assertStringContainsString('two_factor_warning_needed', $front);
         self::assertStringNotContainsString('two_factor_enforce_required($pdo, $page)', $front);
         self::assertStringContainsString('Development auth bypass', $this->read('src/views/partials/header.php'));
