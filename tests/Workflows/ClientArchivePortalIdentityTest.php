@@ -384,6 +384,226 @@ SQL);
         self::assertLessThan(strpos($restore, 'commit()'), strpos($restore, 'queueWorkspaceIds'));
     }
 
+    public function testProtectedNonePolicyArchivesAcrossRestrictiveForeignKeyAndRestoresWithoutEnrollment(): void
+    {
+        $this->createContactPolicyFixture();
+        $publicId=str_repeat('c',32);
+        $this->insertClient(90,$publicId,'Contact Only','contact-only@example.test',null,'consumer');
+        $before=$this->insertContactPolicy(90,null,null);
+        try {
+            $this->pdo->exec('DELETE FROM clients WHERE id=90');
+            self::fail('The real restrictive contact-policy foreign key must reject direct client deletion.');
+        } catch (\PDOException $error) {
+            self::assertStringContainsString('FOREIGN KEY',$error->getMessage());
+        }
+        $this->archiveClient(90);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_contact_identity_policy')->fetchColumn());
+        $snapshot=$this->pdo->query("SELECT * FROM archived_entities WHERE entity_type='portal_contact_identity_policy'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(90,(int)$snapshot['client_id']);
+        self::assertSame((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),(int)$snapshot['entity_id']);
+        self::assertSame($before,json_decode($snapshot['payload'],true,512,JSON_THROW_ON_ERROR));
+        $restored=$this->restoreClient((int)$snapshot['entity_id'],[['root_type'=>'standalone_client','root_public_id'=>$publicId]]);
+        self::assertSame(90,$restored);
+        self::assertSame($before,$this->contactPolicy($restored));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principal_clients')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_entities')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_clients')->fetchColumn());
+    }
+
+    public function testBoundPolicyRestoresOriginalLoginRatherThanChangedContactEmail(): void
+    {
+        $this->createContactPolicyFixture();
+        $publicId=str_repeat('d',32);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>$publicId]];
+        $this->insertClient(91,$publicId,'Bound Contact','original-login@example.test',null,'consumer');
+        $this->reconcile($scope);
+        $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=91')->fetchColumn();
+        $this->pdo->prepare('INSERT INTO portal_identity_bindings(portal_principal_id,issuer,subject_hash,enabled,bound_at) VALUES (?,"https://idp.example.test","bound-policy-subject",1,CURRENT_TIMESTAMP)')->execute([$principal]);
+        $before=$this->insertContactPolicy(91,$principal,'original-login@example.test');
+        $this->pdo->exec("UPDATE clients SET email='new-contact-address@example.test' WHERE id=91");
+        $this->archiveClient(91);
+        self::assertSame(0,(int)$this->pdo->query('SELECT enabled FROM portal_principals')->fetchColumn());
+        $snapshot=$this->pdo->query('SELECT payload FROM archived_entities')->fetchColumn();
+        self::assertSame($before,json_decode($snapshot,true,512,JSON_THROW_ON_ERROR),'The original policy and immutable command/hash metadata must be retained.');
+        $restored=$this->restoreClient((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),$scope);
+        self::assertSame($before,$this->contactPolicy($restored));
+        $eligibility=$this->pdo->query('SELECT * FROM portal_client_login_eligibility WHERE client_id=91')->fetch(PDO::FETCH_ASSOC);
+        self::assertSame($principal,(int)$eligibility['portal_principal_id']);
+        self::assertSame('original-login@example.test',$eligibility['canonical_email']);
+        self::assertSame('eligible',$eligibility['eligibility_status']);
+        self::assertSame('new-contact-address@example.test',$this->pdo->query('SELECT email FROM clients WHERE id=91')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT enabled FROM portal_principals')->fetchColumn());
+        self::assertSame('original-login@example.test',$this->pdo->query('SELECT email_hint FROM portal_principals')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT enabled FROM portal_identity_bindings')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principal_clients WHERE client_id=91')->fetchColumn());
+    }
+
+    public function testArchiveRollbackRestoresLivePolicyAndDoesNotLeaveArchivePayload(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(92,str_repeat('e',32),'Rollback Contact','rollback@example.test',null,'consumer');
+        $before=$this->insertContactPolicy(92,null,null);
+        $client=$this->pdo->query('SELECT * FROM clients WHERE id=92')->fetch(PDO::FETCH_ASSOC);
+        $this->pdo->beginTransaction();
+        $this->archive->archive($this->pdo,$client,7);
+        $this->pdo->exec('DELETE FROM clients WHERE id=92');
+        self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_entities')->fetchColumn());
+        $this->pdo->rollBack();
+        self::assertSame($before,$this->contactPolicy(92));
+        self::assertSame($client,$this->pdo->query('SELECT * FROM clients WHERE id=92')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_entities')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_clients')->fetchColumn());
+    }
+
+    public function testProtectedBoundPolicyDoesNotBypassSecurityRevocationDuringArchive(): void
+    {
+        $this->createContactPolicyFixture();
+        $publicId=str_repeat('3',32);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>$publicId]];
+        $this->insertClient(95,$publicId,'Protected Revoked Contact','protected-login@example.test',null,'consumer');
+        $this->reconcile($scope);
+        $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=95')->fetchColumn();
+        $this->pdo->prepare('INSERT INTO portal_identity_bindings(portal_principal_id,issuer,subject_hash,enabled,bound_at) VALUES (?,"https://idp.example.test","revoked-policy-subject",1,CURRENT_TIMESTAMP)')->execute([$principal]);
+        $before=$this->insertContactPolicy(95,$principal,'protected-login@example.test');
+        $this->archiveClient(95);
+        $this->pdo->prepare('UPDATE portal_principals SET authorization_version=authorization_version+1 WHERE id=?')->execute([$principal]);
+        $restored=$this->restoreClient((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),$scope);
+        self::assertSame($before,$this->contactPolicy($restored));
+        $eligibility=$this->pdo->query('SELECT * FROM portal_client_login_eligibility WHERE client_id=95')->fetch(PDO::FETCH_ASSOC);
+        self::assertSame('revoked',$eligibility['manual_state']);
+        self::assertSame('revoked',$eligibility['eligibility_status']);
+        self::assertSame('protected-login@example.test',$eligibility['canonical_email']);
+        self::assertSame(0,(int)$this->pdo->query('SELECT enabled FROM portal_principals')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT enabled FROM portal_identity_bindings')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principal_clients')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_entitlements WHERE active=1')->fetchColumn());
+    }
+
+    public function testRestoreRollbackRetainsExactPolicySnapshotAndArchiveRow(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(93,str_repeat('f',32),'Restore Rollback','restore-rollback@example.test',null,'consumer');
+        $this->insertContactPolicy(93,null,null);
+        $this->archiveClient(93);
+        $before=$this->pdo->query('SELECT * FROM archived_entities')->fetch(PDO::FETCH_ASSOC);
+        $archive=$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC);
+        $this->pdo->beginTransaction();
+        $this->archive->consumeAndRestore($this->pdo,(int)$archive['id'],7);
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_entities')->fetchColumn());
+        $this->pdo->rollBack();
+        self::assertSame($before,$this->pdo->query('SELECT * FROM archived_entities')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($archive,$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_contact_identity_policy')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+    }
+
+    public function testReusedNumericClientIdDoesNotStealRestoredPolicy(): void
+    {
+        $this->createContactPolicyFixture();
+        $originalPublicId=str_repeat('1',32);
+        $this->insertClient(94,$originalPublicId,'Original Contact','original@example.test',null,'consumer');
+        $original=$this->insertContactPolicy(94,null,null);
+        $this->archiveClient(94);
+        $archiveId=(int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn();
+        $this->insertClient(94,str_repeat('2',32),'New Unrelated Contact','unrelated@example.test',null,'consumer');
+        $unrelated=$this->insertContactPolicy(94,null,null,'22222222-2222-4222-8222-222222222222');
+        $restored=$this->restoreClient($archiveId,[['root_type'=>'standalone_client','root_public_id'=>$originalPublicId]]);
+        self::assertNotSame(94,$restored);
+        self::assertSame($unrelated,$this->contactPolicy(94));
+        $original['client_id']=$restored;
+        self::assertSame($original,$this->contactPolicy($restored));
+        self::assertSame($originalPublicId,$this->pdo->query('SELECT public_id FROM clients WHERE id=' . $restored)->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM archived_entities')->fetchColumn());
+        self::assertSame([], $this->pdo->query('PRAGMA foreign_key_check')->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    public function testPolicySnapshotCannotRestoreWithoutPolicySchema(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(96,str_repeat('4',32),'Schema Loss','schema-loss@example.test',null,'consumer');
+        $this->insertContactPolicy(96,null,null);
+        $this->archiveClient(96);
+        $this->pdo->exec('DROP TABLE portal_client_contact_identity_policy');
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+    }
+
+    public function testMalformedPolicySnapshotCannotRestoreOrConsumeArchive(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(97,str_repeat('5',32),'Invalid Policy','invalid-policy@example.test',null,'consumer');
+        $this->insertContactPolicy(97,null,null);
+        $this->archiveClient(97);
+        $this->pdo->exec("UPDATE archived_entities SET payload='{}'");
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+    }
+
+    public function testDuplicatePolicySnapshotsCannotRestoreOrConsumeArchive(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(98,str_repeat('6',32),'Ambiguous Policy','ambiguous-policy@example.test',null,'consumer');
+        $this->insertContactPolicy(98,null,null);
+        $this->archiveClient(98);
+        $this->pdo->exec('INSERT INTO archived_entities(client_id,entity_type,entity_id,payload) SELECT client_id,entity_type,entity_id,payload FROM archived_entities');
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+    }
+
+    private function assertPolicyRestoreRefusedWithoutConsumingArchive(): void
+    {
+        $archive=$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC);
+        $snapshots=$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+        $this->pdo->beginTransaction();
+        try {
+            $this->archive->consumeAndRestore($this->pdo,(int)$archive['id'],7);
+            self::fail('An unavailable or ambiguous protected policy must not restore a client without its protection.');
+        } catch (\DomainException $error) {
+            self::assertStringContainsString('policy',$error->getMessage());
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame($archive,$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC));
+        self::assertSame($snapshots,$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+    }
+
+    private function createContactPolicyFixture(): void
+    {
+        $this->pdo->exec(<<<'SQL'
+CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY);
+INSERT INTO api_v2_applications VALUES(1);
+CREATE TABLE portal_client_contact_identity_policy(
+ client_id INTEGER PRIMARY KEY,portal_principal_id INTEGER NULL,login_email TEXT NULL,
+ application_pk INTEGER NOT NULL,history_epoch TEXT NOT NULL,command_id TEXT NOT NULL,
+ request_sha256 TEXT NOT NULL,created_at TEXT NOT NULL,
+ FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE RESTRICT,
+ FOREIGN KEY(portal_principal_id) REFERENCES portal_principals(id) ON DELETE RESTRICT,
+ FOREIGN KEY(application_pk) REFERENCES api_v2_applications(id) ON DELETE RESTRICT
+);
+CREATE TABLE archived_entities(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NULL,organization_id INTEGER NULL,
+ entity_type TEXT NOT NULL,entity_id INTEGER NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),
+ archived_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+SQL);
+    }
+
+    private function insertContactPolicy(int $clientId,?int $principalId,?string $loginEmail,string $commandId='11111111-1111-4111-8111-111111111111'): array
+    {
+        $this->pdo->prepare('INSERT INTO portal_client_contact_identity_policy(client_id,portal_principal_id,login_email,application_pk,history_epoch,command_id,request_sha256,created_at) VALUES (?,?,?,1,?,?,?,?)')
+            ->execute([$clientId,$principalId,$loginEmail,'33333333-3333-4333-8333-333333333333',$commandId,hash('sha256','synthetic-contact-policy-command'),'2026-10-27 12:34:56.123456']);
+        return $this->contactPolicy($clientId);
+    }
+
+    private function contactPolicy(int $clientId): array
+    {
+        $s=$this->pdo->prepare('SELECT * FROM portal_client_contact_identity_policy WHERE client_id=?');$s->execute([$clientId]);
+        return $s->fetch(PDO::FETCH_ASSOC);
+    }
+
     private function insertClient(int $id, string $publicId, string $name, string $email, ?int $organizationId, string $type): void
     {
         $statement = $this->pdo->prepare(

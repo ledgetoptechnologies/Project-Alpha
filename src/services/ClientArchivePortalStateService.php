@@ -26,6 +26,9 @@ final class ClientArchivePortalStateService
         if ($clientId < 1 || preg_match('/^[a-f0-9]{32}$/', $publicId) !== 1) {
             throw new DomainException('Client archive requires a stable public identity.');
         }
+        // Preserve the explicit contact/login separation before removing the
+        // live client. Its restrictive FK must remain enabled for other writers.
+        $contactPolicy = PortalContactIdentityPolicy::forClient($pdo, $clientId);
 
         $suffix = $this->lockSuffix($pdo);
         $eligibility = $pdo->prepare(
@@ -155,6 +158,15 @@ final class ClientArchivePortalStateService
             json_encode($entitlementIds, JSON_THROW_ON_ERROR),
             json_encode($affectedWorkspaceIds, JSON_THROW_ON_ERROR),
         ]);
+        if ($contactPolicy !== false) {
+            $archiveId = (int)$pdo->lastInsertId();
+            $pdo->prepare('INSERT INTO archived_entities (client_id,entity_type,entity_id,payload) VALUES (?,?,?,?)')
+                ->execute([$clientId, 'portal_contact_identity_policy', $archiveId,
+                    json_encode($contactPolicy, JSON_THROW_ON_ERROR)]);
+            $deletePolicy = $pdo->prepare('DELETE FROM portal_client_contact_identity_policy WHERE client_id=?');
+            $deletePolicy->execute([$clientId]);
+            if ($deletePolicy->rowCount() !== 1) throw new DomainException('Client login policy changed during archive.');
+        }
         return $affectedWorkspaceIds;
     }
 
@@ -210,6 +222,7 @@ final class ClientArchivePortalStateService
         $pdo->prepare('INSERT INTO clients (' . implode(',', $columns) . ') VALUES (' . $marks . ')')
             ->execute($values);
         $clientId = $useOriginalId ? $originalId : (int)$pdo->lastInsertId();
+        $contactPolicy = $this->restoreContactPolicy($pdo, $archive, $clientId);
 
         $storedManualState = $this->manualState($archive['portal_manual_state'] ?? null);
         $principalId = (int)($archive['portal_principal_id'] ?? 0);
@@ -238,10 +251,15 @@ final class ClientArchivePortalStateService
                     && ($wasDisabled !== 1 || $principal['revoked_at'] !== null)
                     && $this->entitlementsUnchangedSinceArchive($pdo, $archive, $principalId, $publicId);
             }
+            if ($contactPolicy !== null && (!$stableIdentity || (int)($contactPolicy['portal_principal_id'] ?? 0) !== $principalId
+                || $this->canonicalEmail($contactPolicy['login_email'] ?? null) !== $this->canonicalEmail($archive['portal_canonical_email'] ?? null))) {
+                $recoverySafe = false;
+            }
             if ($effectiveManualState === 'automatic' && !$recoverySafe) {
                 $effectiveManualState = 'revoked';
             }
             $revoked = $effectiveManualState === 'revoked';
+            $restoreProtectedAuthority = $contactPolicy !== null && !$revoked && $recoverySafe && $principalId > 0;
             $sourceVersion = PortalSourceVersion::from([
                 'clientPublicId' => $stableIdentity ? $publicId : null,
                 'principalId' => $principal !== null ? $principalId : null,
@@ -253,10 +271,22 @@ final class ClientArchivePortalStateService
                   canonical_email,source_version,last_reconciled_at,created_by,updated_by)
                  VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?,?)'
             )->execute([$clientId, $principal !== null ? $principalId : null,
-                $effectiveManualState, $revoked ? 'revoked' : 'review_required',
-                $revoked ? 'none' : 'missing_email',
+                $effectiveManualState, $revoked ? 'revoked' : ($restoreProtectedAuthority ? 'eligible' : 'review_required'),
+                $revoked || $restoreProtectedAuthority ? 'none' : 'missing_email',
                 $this->canonicalEmail($archive['portal_canonical_email'] ?? null),
                 $sourceVersion, $this->actor($actorId), $this->actor($actorId)]);
+
+            // Protected contacts bypass automatic association repair. Recover
+            // only their exact previously held login, under the same version
+            // fence as legacy restoration; never use the edited contact email.
+            if ($restoreProtectedAuthority) {
+                if ($wasDisabled === 1) {
+                    $pdo->prepare('UPDATE portal_principals SET enabled=1,revoked_at=NULL,updated_by=? WHERE id=? AND authorization_version=? AND enabled=0 AND revoked_at IS NOT NULL')
+                        ->execute([$this->actor($actorId), $principalId, $storedVersion]);
+                }
+                $pdo->prepare('INSERT INTO portal_principal_clients(portal_principal_id,client_id,created_by) VALUES (?,?,?)')
+                    ->execute([$principalId, $clientId, $this->actor($actorId)]);
+            }
 
             if (!$revoked && $principalId > 0 && $wasDisabled === 1) {
                 $bindingIds = $this->integerIds($archive['portal_identity_binding_ids_json'] ?? null);
@@ -285,6 +315,39 @@ final class ClientArchivePortalStateService
             }
         }
         return $clientId;
+    }
+
+    /** Restore policy before any provisioning hook can infer login authority
+     * from the contact email. Snapshot identity is the archive row, not a name
+     * or a possibly reused client ID. All writes share the restore transaction. */
+    private function restoreContactPolicy(PDO $pdo, array $archive, int $clientId): ?array
+    {
+        $snapshotTable = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
+            ? (bool)$pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='archived_entities'")->fetchColumn()
+            : (bool)$pdo->query("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='archived_entities'")->fetchColumn();
+        if (!$snapshotTable) return null;
+        $statement = $pdo->prepare('SELECT id,payload FROM archived_entities
+            WHERE entity_type=? AND entity_id=? AND client_id=?' . $this->lockSuffix($pdo));
+        $statement->execute(['portal_contact_identity_policy', (int)$archive['id'], (int)$archive['client_id']]);
+        $snapshots = $statement->fetchAll(PDO::FETCH_ASSOC);
+        if ($snapshots === []) return null;
+        if (!PortalContactIdentityPolicy::available($pdo)) throw new DomainException('Client login policy schema is unavailable.');
+        if (count($snapshots) !== 1) throw new DomainException('Archived client login policy is ambiguous.');
+        try { $policy = json_decode((string)$snapshots[0]['payload'], true, 32, JSON_THROW_ON_ERROR); }
+        catch (\JsonException $error) { throw new DomainException('Archived client login policy is invalid.', 0, $error); }
+        $fields = ['client_id','portal_principal_id','login_email','application_pk','history_epoch','command_id','request_sha256','created_at'];
+        if (!is_array($policy) || array_diff($fields, array_keys($policy)) !== []
+            || count($policy) !== count($fields) || (int)$policy['client_id'] !== (int)$archive['client_id']) {
+            throw new DomainException('Archived client login policy is invalid.');
+        }
+        $pdo->prepare('INSERT INTO portal_client_contact_identity_policy
+            (client_id,portal_principal_id,login_email,application_pk,history_epoch,command_id,request_sha256,created_at)
+            VALUES (?,?,?,?,?,?,?,?)')->execute([$clientId, $policy['portal_principal_id'], $policy['login_email'],
+                $policy['application_pk'], $policy['history_epoch'], $policy['command_id'], $policy['request_sha256'], $policy['created_at']]);
+        $consume = $pdo->prepare('DELETE FROM archived_entities WHERE id=? AND entity_type=?');
+        $consume->execute([(int)$snapshots[0]['id'], 'portal_contact_identity_policy']);
+        if ($consume->rowCount() !== 1) throw new DomainException('Archived client login policy changed during restore.');
+        return $policy;
     }
 
     /** @return list<string> */
