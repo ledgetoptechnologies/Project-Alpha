@@ -23,3 +23,25 @@ function upload_financial_file_accessible(PDO $pdo, string $category, string $fi
     $record->execute(array_merge([$filePath], $scopeParams));
     return $record->fetchColumn() !== false;
 }
+
+function upload_contract_file_accessible(PDO $pdo, string $category, string $relativePath, int $actorId): bool
+{
+    if ($actorId <= 0 || !user_can($pdo, $actorId, 'contracts.view', 0)) {
+        return false;
+    }
+    if ($category === 'signed_contracts') {
+        $query = 'SELECT c.id FROM contracts c WHERE c.signed_pdf_path = ?';
+    } elseif ($category === 'contract_amendments') {
+        $query = 'SELECT c.id FROM contract_amendments a JOIN contracts c ON c.id = a.contract_id WHERE a.signed_document_path = ?';
+    } else {
+        return false;
+    }
+    $params = ['/?page=serve-upload&file=' . rawurlencode($relativePath)];
+    if (!acl_user_has_org_wide_scope($pdo, $actorId, 0)) {
+        $query .= ' AND c.created_by = ?';
+        $params[] = $actorId;
+    }
+    $record = $pdo->prepare($query . ' LIMIT 1');
+    $record->execute($params);
+    return $record->fetchColumn() !== false;
+}

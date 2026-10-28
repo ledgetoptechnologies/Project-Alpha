@@ -1,16 +1,16 @@
 <?php
 // src/controllers/serve_upload.php
-// Securely serve files stored in config/uploads (preferred) or src/uploads (fallback)
+// Serve configured root-level image assets and record-authorized uploads.
 //
 // Access policy:
 // - Root-level image files (logos) are publicly accessible (needed for login page branding)
-// - Everything else (PDFs, files in subdirectories like signed_contracts/) requires an
-//   authenticated session — these contain client PII and contract data.
+// - Recognized private stores require a session and their owning record's read access.
+// - Unrecognized paths and stores with dedicated download routes are denied.
 
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 
 $fnameRaw = isset($_GET['file']) ? (string)$_GET['file'] : '';
-// sanitize and allow a single subdirectory (e.g. "signed_contracts/filename.pdf" or "organizations/filename.pdf")
+// Normalize request input before applying the store policy.
 $fnameRaw = str_replace(chr(0), '', $fnameRaw);
 $fname = ltrim($fnameRaw, '/\\');
 if ($fname === '' || strpos($fname, '..') !== false) { http_response_code(404); exit; }
@@ -30,6 +30,10 @@ $inSubdir = strpos($fname, '/') !== false || strpos($fname, '\\') !== false;
 // Public access is ONLY allowed for root-level images (logos).
 // PDFs and anything inside a subdirectory require authentication.
 $isPublicAsset = $isImage && !$inSubdir;
+if (!$isPublicAsset && !in_array($uploadCategory, ['organizations', 'receipts', 'forms', 'signed_contracts', 'contract_amendments'], true)) {
+  http_response_code(404);
+  exit;
+}
 // The front controller is the single authority for development auth bypass and
 // creates a real session there. Never interpret environment flags in this
 // publicly routed file handler: staging must still require a session.
@@ -69,6 +73,15 @@ if (in_array($uploadCategory, ['receipts', 'forms'], true)) {
   }
 }
 
+if (in_array($uploadCategory, ['signed_contracts', 'contract_amendments'], true)) {
+  require_once __DIR__ . '/../config/db.php';
+  require_once __DIR__ . '/../utils/upload_access.php';
+  if (!upload_contract_file_accessible($pdo, $uploadCategory, str_replace('\\', '/', $fname), (int)($_SESSION['user']['id'] ?? 0))) {
+    http_response_code(404);
+    exit;
+  }
+}
+
 $bases = [
   __DIR__ . '/../uploads', // src/uploads for contract files
   '/var/www/config/uploads', // fallback for Docker environments
@@ -79,7 +92,7 @@ foreach ($bases as $b) {
   if ($candidate !== false && is_file($candidate)) { $path = $candidate; $base = realpath($b); break; }
 }
 if ($path === false) { http_response_code(404); exit; }
-if (strpos($path, $base) !== 0) { http_response_code(404); exit; }
+if (!str_starts_with($path, rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)) { http_response_code(404); exit; }
 
 $mime = 'application/octet-stream';
 if ($ext === 'pdf') $mime = 'application/pdf';

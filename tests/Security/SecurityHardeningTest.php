@@ -221,6 +221,9 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString("can_access_record(\$pdo, 'organizations', \$organizationId, \$actorId)", $upload);
         self::assertStringContainsString("['receipts', 'forms']", $upload);
         self::assertStringContainsString('upload_financial_file_accessible', $upload);
+        self::assertStringContainsString('upload_contract_file_accessible', $upload);
+        self::assertStringContainsString("!in_array(\$uploadCategory, ['organizations', 'receipts', 'forms', 'signed_contracts', 'contract_amendments'], true)", $upload);
+        self::assertStringContainsString('rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR', $upload);
         self::assertStringContainsString('two_factor_warning_needed', $front);
         self::assertStringNotContainsString('two_factor_enforce_required($pdo, $page)', $front);
         self::assertStringContainsString('Development auth bypass', $this->read('src/views/partials/header.php'));
