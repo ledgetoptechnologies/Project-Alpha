@@ -1542,8 +1542,6 @@ CREATE TABLE IF NOT EXISTS payment_receipts (
     invoice_id INT NULL,
     receipt_number VARCHAR(50) NOT NULL,
     public_token VARCHAR(64) NOT NULL,
-    expires_at DATETIME NOT NULL,
-    revoked TINYINT(1) NOT NULL DEFAULT 0,
     amount DECIMAL(12,2) NOT NULL,
     email_to VARCHAR(255) NULL,
     emailed_at TIMESTAMP NULL,
@@ -1551,7 +1549,6 @@ CREATE TABLE IF NOT EXISTS payment_receipts (
     UNIQUE KEY uq_payment_receipt_payment (payment_id),
     UNIQUE KEY uq_payment_receipt_number (receipt_number),
     UNIQUE KEY uq_payment_receipt_token (public_token),
-    INDEX idx_payment_receipt_access (public_token,revoked,expires_at),
     CONSTRAINT fk_payment_receipt_payment FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
     CONSTRAINT fk_payment_receipt_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
