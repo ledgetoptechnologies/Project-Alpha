@@ -138,9 +138,9 @@ final class ExternalOpsConfigService
             $parts = parse_url($webhookUrl);
             $scheme = strtolower((string)($parts['scheme'] ?? ''));
             $host = strtolower((string)($parts['host'] ?? ''));
-            $localHost = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
-            if (!filter_var($webhookUrl, FILTER_VALIDATE_URL) || ($scheme !== 'https' && !$localHost)) {
-                throw new DomainException('The webhook URL must be a valid HTTPS URL (HTTP is allowed only for localhost).');
+            if (!filter_var($webhookUrl, FILTER_VALIDATE_URL) || $scheme !== 'https'
+                || $host === '' || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) {
+                throw new DomainException('The webhook URL must be a valid HTTPS URL without credentials or a fragment.');
             }
         }
 

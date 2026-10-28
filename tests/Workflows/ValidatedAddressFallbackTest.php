@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Workflows;
 
 use App\Services\ManagedDeliveryIntentSender;
+use App\Services\ExternalOpsOutboxSender;
 use App\Services\PortalProjectionOutboxSender;
 use App\Services\ValidatedAddressTransportFixture as Transport;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -29,7 +30,7 @@ final class ValidatedAddressFallbackTest extends TestCase
             ['ip' => '8.8.8.8'],
             ['ip' => '1.1.1.1'],
         ];
-        foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender()] as $sender) {
+        foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender(), new ExternalOpsOutboxSender()] as $sender) {
             Transport::$opened = Transport::$sent = 0;
             $headers = ['Content-Type: application/json', 'Authorization: synthetic-test-only'];
             $body = '{"deliveryId":"immutable-test-id"}';
@@ -61,7 +62,7 @@ final class ValidatedAddressFallbackTest extends TestCase
             ['https://1.1.1.1/events', [], '1.1.1.1:443:1.1.1.1'],
         ] as [$url, $answers, $expected]) {
             Transport::$dns = $answers;
-            foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender()] as $sender) {
+            foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender(), new ExternalOpsOutboxSender()] as $sender) {
                 Transport::$opened = Transport::$sent = 0;
                 self::assertSame(200, $sender->curlTransport($url, [], '{}', 5)['status']);
                 self::assertSame([$expected], Transport::$options[CURLOPT_RESOLVE]);
@@ -74,7 +75,7 @@ final class ValidatedAddressFallbackTest extends TestCase
     {
         foreach (['127.0.0.1', '10.0.0.1', '::ffff:127.0.0.1', '64:ff9b::10.0.0.1'] as $unsafe) {
             Transport::$dns = [['ipv6' => '2606:4700:4700::1111'], ['ip' => '1.1.1.1'], ['ip' => $unsafe]];
-            foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender()] as $sender) {
+            foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender(), new ExternalOpsOutboxSender()] as $sender) {
                 Transport::$opened = Transport::$sent = 0;
                 try {
                     $sender->curlTransport('https://receiver.example/events', [], '{}', 5);
@@ -92,7 +93,7 @@ final class ValidatedAddressFallbackTest extends TestCase
     {
         Transport::$dns = [['ipv6' => '2606:4700:4700::1111'], ['ip' => '1.1.1.1']];
         Transport::$fail = true;
-        foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender()] as $sender) {
+        foreach ([new PortalProjectionOutboxSender(), new ManagedDeliveryIntentSender(), new ExternalOpsOutboxSender()] as $sender) {
             Transport::$opened = Transport::$sent = 0;
             $result = $sender->curlTransport('https://receiver.example/events', [], '{"unchanged":true}', 5);
             self::assertSame(1, Transport::$sent);
@@ -100,6 +101,22 @@ final class ValidatedAddressFallbackTest extends TestCase
             self::assertSame('{"unchanged":true}', Transport::$options[CURLOPT_POSTFIELDS]);
             self::assertSame(0, $result['status']);
             self::assertSame('synthetic connection failure', $result['error']);
+        }
+    }
+
+    public function testOrdinaryExternalOpsRejectsUnsafeUrlBeforeConnection(): void
+    {
+        Transport::$dns = [['ip' => '1.1.1.1']];
+        foreach (['http://receiver.example/events', 'https://user:pass@receiver.example/events',
+            'https://receiver.example/events#fragment', 'https://127.0.0.1/events'] as $url) {
+            Transport::$opened = Transport::$sent = 0;
+            try {
+                (new ExternalOpsOutboxSender())->curlTransport($url, [], '{}', 5);
+                self::fail('Unsafe URL was accepted: ' . $url);
+            } catch (RuntimeException) {
+                self::assertSame(0, Transport::$opened, $url);
+                self::assertSame(0, Transport::$sent, $url);
+            }
         }
     }
 }

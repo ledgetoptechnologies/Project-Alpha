@@ -107,20 +107,93 @@ final class ExternalOpsOutboxSender
     /** @return array{status:int,body:string,error:string} */
     public function curlTransport(string $url, array $headers, string $body, int $timeout): array
     {
+        $parts = parse_url($url);
+        if (!filter_var($url, FILTER_VALIDATE_URL) || strtolower((string)($parts['scheme'] ?? '')) !== 'https'
+            || empty($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) {
+            throw new RuntimeException('invalid_external_ops_destination');
+        }
+        $host = trim(strtolower((string)$parts['host']), '[]');
+        $port = (int)($parts['port'] ?? 443);
+        $addresses = $this->publicAddresses($host);
+        if ($addresses === []) throw new RuntimeException('dns_no_public_address');
+        $resolve = $host . ':' . $port . ':' . implode(',', array_map(
+            static fn(string $ip): string => str_contains($ip, ':') ? '[' . $ip . ']' : $ip,
+            $addresses
+        ));
+        $responseBody = '';
         $handle = curl_init($url);
+        if ($handle === false) throw new RuntimeException('external_ops_curl_unavailable');
         curl_setopt_array($handle, [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_RETURNTRANSFER => false,
             CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
             CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0,
+            CURLOPT_PROXY => '',
+            CURLOPT_NOPROXY => '*',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_RESOLVE => [$resolve],
+            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$responseBody): int {
+                $remaining = 4096 - strlen($responseBody);
+                if ($remaining > 0) $responseBody .= substr($chunk, 0, $remaining);
+                return strlen($chunk);
+            },
         ]);
+        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS')) {
+            curl_setopt($handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+        }
         $response = curl_exec($handle);
-        return [
+        $result = [
             'status' => (int)curl_getinfo($handle, CURLINFO_HTTP_CODE),
-            'body' => $response === false ? '' : (string)$response,
+            'body' => $responseBody,
             'error' => (string)curl_error($handle),
         ];
+        curl_close($handle);
+        return $result;
+    }
+
+    /** @return list<string> */
+    private function publicAddresses(string $host): array
+    {
+        $addresses = [];
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            $addresses[] = $host;
+        } else {
+            foreach ((array)@dns_get_record($host, DNS_A | DNS_AAAA) as $record) {
+                $ip = (string)($record['ip'] ?? $record['ipv6'] ?? '');
+                if ($ip !== '') $addresses[] = $ip;
+            }
+        }
+        if ($addresses === []) return [];
+        foreach ($addresses as $ip) if (!self::isPublicAddress($ip)) return [];
+        return array_values(array_unique($addresses));
+    }
+
+    private static function isPublicAddress(string $ip): bool
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) return false;
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+            return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+        }
+        $packed = @inet_pton($ip);
+        if ($packed === false || strlen($packed) !== 16) return false;
+        if (substr($packed, 0, 10) === str_repeat("\0", 10) && substr($packed, 10, 2) === "\xff\xff") return false;
+        $embedded = null;
+        if (substr($packed, 0, 12) === str_repeat("\0", 12)) $embedded = substr($packed, 12, 4);
+        elseif (substr($packed, 0, 12) === "\x00\x64\xff\x9b" . str_repeat("\0", 8)) $embedded = substr($packed, 12, 4);
+        elseif (substr($packed, 0, 6) === "\x00\x64\xff\x9b\x00\x01") return false;
+        elseif (substr($packed, 0, 8) === str_repeat("\0", 8) && substr($packed, 8, 4) === "\xff\xff\x00\x00") $embedded = substr($packed, 12, 4);
+        elseif (in_array(substr($packed, 8, 4), ["\x00\x00\x5e\xfe", "\x02\x00\x5e\xfe"], true)) $embedded = substr($packed, 12, 4);
+        elseif (substr($packed, 0, 2) === "\x20\x02") $embedded = substr($packed, 2, 4);
+        elseif (substr($packed, 0, 4) === "\x20\x01\x00\x00") return false;
+        if ($embedded !== null) {
+            $v4 = inet_ntop($embedded);
+            if ($v4 === false || filter_var($v4, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) return false;
+        }
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
     }
 }
