@@ -200,6 +200,13 @@ final class SecurityHardeningTest extends TestCase
 
         $front = $this->read('public/index.php');
         self::assertStringContainsString('AUTH_DISABLED ignored because APP_ENV is production or not explicitly development/test', $front);
+        $upload = $this->read('src/controllers/serve_upload.php');
+        self::assertStringContainsString("empty(\$_SESSION['user'])", $upload);
+        self::assertStringNotContainsString("getenv('AUTH_DISABLED')", $upload);
+        self::assertStringNotContainsString("getenv('APP_AUTH_DISABLED')", $upload);
+        foreach (['worker-documents', 'contractor-invoices', 'projects'] as $privateStore) {
+            self::assertStringContainsString("'{$privateStore}'", $upload);
+        }
         self::assertStringContainsString('two_factor_warning_needed', $front);
         self::assertStringNotContainsString('two_factor_enforce_required($pdo, $page)', $front);
         self::assertStringContainsString('Development auth bypass', $this->read('src/views/partials/header.php'));

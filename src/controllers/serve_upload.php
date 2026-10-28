@@ -15,6 +15,14 @@ $fnameRaw = str_replace(chr(0), '', $fnameRaw);
 $fname = ltrim($fnameRaw, '/\\');
 if ($fname === '' || strpos($fname, '..') !== false) { http_response_code(404); exit; }
 
+// These stores have dedicated download routes that check the owning record.
+// A known storage filename must not bypass those checks through this route.
+$uploadCategory = strtolower(strtok(str_replace('\\', '/', $fname), '/'));
+if (in_array($uploadCategory, ['worker-documents', 'contractor-invoices', 'projects'], true)) {
+  http_response_code(404);
+  exit;
+}
+
 $ext = strtolower(pathinfo($fname, PATHINFO_EXTENSION));
 $isImage = in_array($ext, ['png','jpg','jpeg','webp','gif','svg'], true);
 $inSubdir = strpos($fname, '/') !== false || strpos($fname, '\\') !== false;
@@ -22,13 +30,10 @@ $inSubdir = strpos($fname, '/') !== false || strpos($fname, '\\') !== false;
 // Public access is ONLY allowed for root-level images (logos).
 // PDFs and anything inside a subdirectory require authentication.
 $isPublicAsset = $isImage && !$inSubdir;
-$authDisabled = filter_var(getenv('AUTH_DISABLED') ?: getenv('APP_AUTH_DISABLED') ?: '', FILTER_VALIDATE_BOOLEAN);
-$appEnv = strtolower(trim((string)(getenv('APP_ENV') ?: 'production')));
-if ($authDisabled && in_array($appEnv, ['production', 'prod'], true)) {
-    error_log('[security] AUTH_DISABLED ignored for serve-upload because APP_ENV is production');
-    $authDisabled = false;
-}
-if (!$isPublicAsset && !$authDisabled && empty($_SESSION['user'])) {
+// The front controller is the single authority for development auth bypass and
+// creates a real session there. Never interpret environment flags in this
+// publicly routed file handler: staging must still require a session.
+if (!$isPublicAsset && empty($_SESSION['user'])) {
   http_response_code(403);
   exit;
 }
