@@ -110,6 +110,9 @@ final class SessionSecurityPolicyTest extends TestCase
         $totpSetup = (string)file_get_contents($root . '/src/controllers/auth/two_factor_setup.php');
 
         self::assertStringContainsString('revokeUserSessions($pdo, $uid, session_id())', $selfPassword);
+        $legacySettings = (string)file_get_contents(dirname(__DIR__, 2) . '/src/controllers/settings_handler.php');
+        self::assertStringContainsString("require __DIR__ . '/auth/account_update.php'", $legacySettings);
+        self::assertStringNotContainsString('UPDATE users SET password_hash=? WHERE id=?', $legacySettings);
         self::assertStringContainsString('SessionPolicy::rotateAuthenticatedId()', $selfPassword);
         self::assertStringContainsString('revokeUserSessions($pdo, $uid)', $tokenReset);
         self::assertStringContainsString('auth_version = auth_version + ?', $adminAccount);
