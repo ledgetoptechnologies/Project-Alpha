@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../utils/StripeFeeCalculator.php';
 require_once __DIR__ . '/../../utils/payment_methods.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/stripe_success_policy.php';
 
 header('Content-Type: text/html; charset=UTF-8');
 
@@ -40,7 +41,12 @@ try {
         throw new Exception('Link not found');
     }
 
-    if (in_array((string)$linkRow['document_type'], ['invoice', 'project_invoice'], true) && empty($linkRow['expire_when_paid'])) {
+    if (!pa_stripe_success_link_valid($linkRow, time())) {
+        throw new Exception('Link has expired');
+    }
+
+    if (in_array((string)$linkRow['document_type'], ['invoice', 'project_invoice'], true)
+        && empty($linkRow['expire_when_paid']) && empty($linkRow['expires_at'])) {
         try {
             $pdo->exec("ALTER TABLE public_links ADD COLUMN expire_when_paid TINYINT(1) NOT NULL DEFAULT 0");
         } catch (Throwable $e) {
@@ -49,15 +55,16 @@ try {
             $pdo->exec("ALTER TABLE public_links MODIFY COLUMN expires_at DATETIME NULL");
             $up = $pdo->prepare('UPDATE public_links SET expire_when_paid=1, expires_at=NULL WHERE token=? AND revoked=0 AND expires_at IS NULL AND document_type IN ("invoice","project_invoice")');
             $up->execute([$token]);
-            $linkRow['expire_when_paid'] = 1;
-            $linkRow['expires_at'] = null;
+            $reloaded = $pdo->prepare('SELECT document_type, document_id, expires_at, revoked, expire_when_paid FROM public_links WHERE token=? LIMIT 1');
+            $reloaded->execute([$token]);
+            $linkRow = $reloaded->fetch(PDO::FETCH_ASSOC) ?: throw new Exception('Link not found');
         } catch (Throwable $e) {
             // Keep validating against the existing expiration if the schema cannot be adjusted here.
         }
     }
     
-    // Check if revoked
-    if ((int)($linkRow['revoked'] ?? 0) === 1) {
+    // Recheck the persisted link state after any migration attempt.
+    if (!pa_stripe_success_link_valid($linkRow, time())) {
         throw new Exception('Link has expired');
     }
     

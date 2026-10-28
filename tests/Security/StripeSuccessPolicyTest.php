@@ -18,6 +18,15 @@ final class StripeSuccessPolicyTest extends TestCase
         $link['revoked'] = 1;
         self::assertFalse(pa_stripe_success_link_valid($link, strtotime('2029-01-01')));
         self::assertFalse(pa_stripe_success_link_valid(null, time()));
+        self::assertFalse(pa_stripe_success_link_valid([
+            'document_type' => 'invoice', 'revoked' => 0,
+            'expire_when_paid' => 0, 'expires_at' => '2020-01-01 00:00:00',
+        ], strtotime('2029-01-01')));
+        $checkout = (string)file_get_contents(dirname(__DIR__, 2) . '/src/controllers/stripe/stripe_checkout.php');
+        self::assertLessThan(
+            strpos($checkout, 'ALTER TABLE public_links'),
+            strpos($checkout, 'pa_stripe_success_link_valid($linkRow, time())')
+        );
     }
 
     public function testPaidSessionMustMatchTokenInvoiceAndChargedAmount(): void

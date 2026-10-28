@@ -153,6 +153,10 @@ document.getElementById('csvUploadForm').addEventListener('submit', async functi
   }
 });
 
+function escapeCsvPreviewHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+}
+
 function buildMappingTable(headers, suggested, previewRows) {
   const expenseFields = {
     'expense_date': 'Expense Date',
@@ -169,10 +173,10 @@ function buildMappingTable(headers, suggested, previewRows) {
     let options = '<option value="">— Skip —</option>';
     headers.forEach((h, i) => {
       const selected = i === suggestedIdx ? ' selected' : '';
-      options += `<option value="${i}"${selected}>${h}</option>`;
+      options += `<option value="${i}"${selected}>${escapeCsvPreviewHtml(h)}</option>`;
     });
     const preview = previewRows[0] && previewRows[0][suggestedIdx] ? previewRows[0][suggestedIdx] : '—';
-    html += `<tr><td>${label}</td><td><select class="input-sm" id="map_${field}">${options}</select></td><td class="muted text-sm">${preview}</td></tr>`;
+    html += `<tr><td>${label}</td><td><select class="input-sm" id="map_${field}">${options}</select></td><td class="muted text-sm">${escapeCsvPreviewHtml(preview)}</td></tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('mappingTable').innerHTML = html;
@@ -213,7 +217,7 @@ async function runImport(dryRun) {
 
     if (data.errors && data.errors.length > 0) {
       html += '<div class="card-tight" style="margin-top:12px"><strong>Skipped rows:</strong><ul class="muted text-sm" style="margin-top:8px">';
-      data.errors.forEach(e => { html += `<li>${e}</li>`; });
+      data.errors.forEach(e => { html += `<li>${escapeCsvPreviewHtml(e)}</li>`; });
       html += '</ul></div>';
     }
 
