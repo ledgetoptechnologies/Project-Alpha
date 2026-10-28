@@ -227,6 +227,11 @@ final class SecurityHardeningTest extends TestCase
         $recovery = $this->read('bin/admin-recovery.php');
         self::assertStringNotContainsString('admin_sync.php', $migrator);
         self::assertStringNotContainsString('ADMIN_PASSWORD', $compose);
+        self::assertStringContainsString('${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}', $compose);
+        self::assertStringContainsString('${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD before deployment}', $compose);
+        self::assertStringNotContainsString('MYSQL_PASSWORD: changeme_secure_pass', $compose);
+        self::assertStringNotContainsString('MYSQL_ROOT_PASSWORD: changeme_root_pass', $compose);
+        self::assertStringContainsString('Migration failed: MYSQL_PASSWORD must be a deployment-specific value.', $migrator);
         self::assertStringContainsString('recover_admin_account', $recovery);
 
         $front = $this->read('public/index.php');

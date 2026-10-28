@@ -16,6 +16,16 @@ if [ -z "$ROOT_PASSWORD" ]; then
   echo "Migration failed: MYSQL_ROOT_PASSWORD is required by the one-shot migrator." >&2
   exit 1
 fi
+case "$ROOT_PASSWORD" in
+  changeme_root_pass|rootpass|change-me-use-a-different-long-random-password)
+    echo "Migration failed: MYSQL_ROOT_PASSWORD is an example value." >&2
+    exit 1 ;;
+esac
+case "${MYSQL_PASSWORD:-}" in
+  ''|changeme_secure_pass|change-me-use-a-long-random-password)
+    echo "Migration failed: MYSQL_PASSWORD must be a deployment-specific value." >&2
+    exit 1 ;;
+esac
 
 echo "Waiting for the database migration connection..."
 for attempt in $(seq 1 60); do

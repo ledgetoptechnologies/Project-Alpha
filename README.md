@@ -111,16 +111,18 @@ Current boundaries include:
    cd Project-Alpha
    ```
 
-2. In `docker-compose.yml`, replace both database `changeme` passwords:
+2. Create private deployment-specific database passwords before starting Compose:
 
-   - `MYSQL_PASSWORD`
-   - `MYSQL_ROOT_PASSWORD`
+   ```bash
+   umask 077
+   printf 'MYSQL_PASSWORD=%s\nMYSQL_ROOT_PASSWORD=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+   ```
 
-   The canonical Compose file is self-contained; no separate `.env` file is
-   required. Application startup initializes its persistent runtime configuration
-   in the named config volume. `config/.env.example` is an optional reference for
-   custom overrides, not an installation step. Published `latest`, `cron-latest`,
-   and `db-latest` image tags remain defined in Compose.
+   Compose requires both values. Do not copy the example passwords in
+   `config/.env.example`; startup rejects known example values. Keep `.env`
+   private and out of source control. Application startup initializes its
+   persistent runtime configuration in the named config volume. Published
+   `latest`, `cron-latest`, and `db-latest` image tags remain defined in Compose.
 
 3. Pull and start the stack:
 
