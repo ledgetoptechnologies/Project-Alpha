@@ -14,6 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Generate isolated CI database passwords
+        run: |
+          echo "MYSQL_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
       - name: Validate canonical Compose configuration
         run: docker compose config >/tmp/compose.yml
 
