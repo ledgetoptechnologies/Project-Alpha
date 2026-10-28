@@ -723,20 +723,21 @@ if (!empty($_SESSION['user'])) {
 
 // A recovery that explicitly reset TOTP must finish enrollment after the
 // temporary password has been replaced and before any other application use.
+require_once __DIR__ . '/../src/utils/auth_gate_checks.php';
 if (!empty($_SESSION['user']) && !in_array($page, $publicPages, true)) {
     $allowedForTotpReenroll = ['2fa-setup', '2fa-setup-action', 'logout', 'logout-confirm', 'session-status'];
     if (!in_array($page, $allowedForTotpReenroll, true)) {
         try {
-            $totpStmt = $pdo->prepare('SELECT force_password_reset, totp_reenroll_required FROM users WHERE id = ?');
-            $totpStmt->execute([(int)$_SESSION['user']['id']]);
-            $recoveryState = $totpStmt->fetch(PDO::FETCH_ASSOC);
-            if ((int)($recoveryState['force_password_reset'] ?? 0) === 0
-                && (int)($recoveryState['totp_reenroll_required'] ?? 0) === 1) {
+            $userId = (int)$_SESSION['user']['id'];
+            if (!pa_auth_recovery_flag($pdo, $userId, 'force_password_reset')
+                && pa_auth_recovery_flag($pdo, $userId, 'totp_reenroll_required')) {
                 header('Location: /?page=2fa-setup&required=1&recovery=1');
                 exit;
             }
         } catch (Throwable $e) {
-            error_log('[security] TOTP reenrollment gate failed: ' . $e->getMessage());
+            error_log('[security] TOTP reenrollment gate failed: ' . get_class($e));
+            http_response_code(503);
+            exit('Authentication state unavailable');
         }
     }
 }
@@ -747,13 +748,15 @@ if (!empty($_SESSION['user']) && !in_array($page, $publicPages, true)) {
     if (!in_array($page, $allowedForForceReset, true)) {
         try {
             require_once __DIR__ . '/../src/config/db.php';
-            $fpStmt = $pdo->prepare('SELECT force_password_reset FROM users WHERE id = ?');
-            $fpStmt->execute([(int)$_SESSION['user']['id']]);
-            if ((int)$fpStmt->fetchColumn() === 1) {
+            if (pa_auth_recovery_flag($pdo, (int)$_SESSION['user']['id'], 'force_password_reset')) {
                 header('Location: /?page=account&force=1');
                 exit;
             }
-        } catch (Throwable $e) { /* allow through if check fails */ }
+        } catch (Throwable $e) {
+            error_log('[security] Password recovery gate failed: ' . get_class($e));
+            http_response_code(503);
+            exit('Authentication state unavailable');
+        }
     }
 }
 
@@ -845,6 +848,8 @@ try {
     acl_middleware($pdo, $page);
 } catch (Throwable $e) {
     @error_log('[acl] middleware failed: ' . $e->getMessage());
+    http_response_code(503);
+    exit('Authorization unavailable');
 }
 
 if ($page === 'settings/dropbox-oauth') {
