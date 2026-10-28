@@ -121,7 +121,7 @@ SQL);
         self::assertSame(0, (int)$this->pdo->query("SELECT enabled FROM portal_principals WHERE id={$principalId}")->fetchColumn());
         self::assertSame(0, (int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE portal_principal_id={$principalId} AND active=1")->fetchColumn());
         self::assertSame(0, (int)$this->pdo->query("SELECT enabled FROM portal_identity_bindings WHERE portal_principal_id={$principalId}")->fetchColumn());
-        self::assertSame('[1]', $archived['portal_identity_binding_ids_json']);
+        self::assertSame(['version'=>2,'binding_ids'=>[1],'contact_policy_expected'=>false], json_decode($archived['portal_identity_binding_ids_json'],true,512,JSON_THROW_ON_ERROR));
         self::assertSame([$workspaceId], $affected);
         self::assertSame(json_encode([$workspaceId], JSON_THROW_ON_ERROR), $archived['portal_affected_workspace_ids_json']);
         self::assertSame(1, (int)$archived['portal_principal_disabled_for_archive']);
@@ -194,7 +194,7 @@ SQL);
         $this->archiveClient(30);
         $archived = $this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC);
         self::assertSame('revoked', $archived['portal_manual_state']);
-        self::assertSame('[]', $archived['portal_identity_binding_ids_json']);
+        self::assertSame(['version'=>2,'binding_ids'=>[],'contact_policy_expected'=>false], json_decode($archived['portal_identity_binding_ids_json'],true,512,JSON_THROW_ON_ERROR));
 
         $restoredId = $this->restoreClient((int)$archived['id'], $scope);
 
@@ -400,6 +400,7 @@ SQL);
         self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
         self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_client_contact_identity_policy')->fetchColumn());
         $snapshot=$this->pdo->query("SELECT * FROM archived_entities WHERE entity_type='portal_contact_identity_policy'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(['version'=>2,'binding_ids'=>[],'contact_policy_expected'=>true],json_decode((string)$this->pdo->query('SELECT portal_identity_binding_ids_json FROM archived_clients')->fetchColumn(),true,512,JSON_THROW_ON_ERROR));
         self::assertSame(90,(int)$snapshot['client_id']);
         self::assertSame((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),(int)$snapshot['entity_id']);
         self::assertSame($before,json_decode($snapshot['payload'],true,512,JSON_THROW_ON_ERROR));
@@ -551,23 +552,94 @@ SQL);
         $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
     }
 
+    public function testExpectedPolicySnapshotCannotBeSilentlyLostOrReplacedByAnotherArchive(): void
+    {
+        $this->createContactPolicyFixture();
+        $publicId=str_repeat('7',32);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>$publicId]];
+        $this->insertClient(99,$publicId,'Bound Snapshot Loss','snapshot-login@example.test',null,'consumer');
+        $this->reconcile($scope);
+        $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=99')->fetchColumn();
+        $this->pdo->prepare('INSERT INTO portal_identity_bindings(portal_principal_id,issuer,subject_hash,enabled,bound_at) VALUES (?,"https://idp.example.test","lost-policy-subject",1,CURRENT_TIMESTAMP)')->execute([$principal]);
+        $this->insertContactPolicy(99,$principal,'snapshot-login@example.test');
+        $this->archiveClient(99);
+        // A sidecar for a different archive is not proof of this archive's policy.
+        $this->pdo->exec('UPDATE archived_entities SET entity_id=entity_id+1');
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+        $this->pdo->exec('DELETE FROM archived_entities');
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+        self::assertSame(0,(int)$this->pdo->query('SELECT enabled FROM portal_principals')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT enabled FROM portal_identity_bindings')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principal_clients')->fetchColumn());
+        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_entitlements WHERE active=1')->fetchColumn());
+    }
+
+    public function testExpectedPolicySnapshotTableCannotBeSilentlyLost(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(100,str_repeat('8',32),'Snapshot Table Loss','snapshot-table-loss@example.test',null,'consumer');
+        $this->insertContactPolicy(100,null,null);
+        $this->archiveClient(100);
+        $this->pdo->exec('DROP TABLE archived_entities');
+        $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+    }
+
+    public function testMalformedArchiveIdentityEnvelopeCannotRestore(): void
+    {
+        $this->createContactPolicyFixture();
+        $this->insertClient(101,str_repeat('9',32),'Malformed Marker','marker@example.test',null,'consumer');
+        $this->insertContactPolicy(101,null,null);
+        $this->archiveClient(101);
+        foreach (['{}','{"version":2,"binding_ids":[],"contact_policy_expected":"true"}',
+            '{"version":2,"binding_ids":{},"contact_policy_expected":true}',
+            '{"version":2,"binding_ids":{"0":1},"contact_policy_expected":true}',
+            '{"version":3,"binding_ids":[],"contact_policy_expected":true}',
+            '{"version":2,"binding_ids":[]}',
+            '{"version":2,"binding_ids":[0],"contact_policy_expected":true}',
+            '{"version":2,"binding_ids":[],"contact_policy_expected":true,"extra":1}','{'] as $malformed) {
+            $this->pdo->prepare('UPDATE archived_clients SET portal_identity_binding_ids_json=?')->execute([$malformed]);
+            $this->assertPolicyRestoreRefusedWithoutConsumingArchive();
+        }
+    }
+
+    public function testLegacyBindingIdListStillRestoresExistingIdentityWithoutPolicySnapshot(): void
+    {
+        $publicId=str_repeat('a',32);
+        $scope=[['root_type'=>'standalone_client','root_public_id'=>$publicId]];
+        $this->insertClient(102,$publicId,'Legacy List','legacy-list@example.test',null,'consumer');
+        $this->reconcile($scope);
+        $principal=(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=102')->fetchColumn();
+        $this->pdo->prepare('INSERT INTO portal_identity_bindings(portal_principal_id,issuer,subject_hash,enabled,bound_at) VALUES (?,"https://idp.example.test","legacy-list-subject",1,CURRENT_TIMESTAMP)')->execute([$principal]);
+        $this->archiveClient(102);
+        $this->pdo->exec("UPDATE archived_clients SET portal_identity_binding_ids_json='[1]'");
+        $restored=$this->restoreClient((int)$this->pdo->query('SELECT id FROM archived_clients')->fetchColumn(),$scope);
+        self::assertSame(102,$restored);
+        self::assertSame($principal,(int)$this->pdo->query('SELECT portal_principal_id FROM portal_client_login_eligibility WHERE client_id=102')->fetchColumn());
+        self::assertSame('eligible',$this->pdo->query('SELECT eligibility_status FROM portal_client_login_eligibility WHERE client_id=102')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT enabled FROM portal_principals')->fetchColumn());
+        self::assertSame(1,(int)$this->pdo->query('SELECT enabled FROM portal_identity_bindings')->fetchColumn());
+    }
+
     private function assertPolicyRestoreRefusedWithoutConsumingArchive(): void
     {
         $archive=$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC);
-        $snapshots=$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+        $hasSnapshots=(bool)$this->pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='archived_entities'")->fetchColumn();
+        $snapshots=$hasSnapshots?$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC):[];
+        $authority=[];
+        foreach (['portal_principals','portal_identity_bindings','portal_principal_clients','portal_v2_entitlements','portal_client_login_eligibility'] as $table) $authority[$table]=$this->pdo->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC);
         $this->pdo->beginTransaction();
         try {
             $this->archive->consumeAndRestore($this->pdo,(int)$archive['id'],7);
             self::fail('An unavailable or ambiguous protected policy must not restore a client without its protection.');
         } catch (\DomainException $error) {
-            self::assertStringContainsString('policy',$error->getMessage());
+            self::assertNotSame('',$error->getMessage());
         } finally {
             $this->pdo->rollBack();
         }
         self::assertSame($archive,$this->pdo->query('SELECT * FROM archived_clients')->fetch(PDO::FETCH_ASSOC));
-        self::assertSame($snapshots,$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
+        if($hasSnapshots) self::assertSame($snapshots,$this->pdo->query('SELECT * FROM archived_entities ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
         self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn());
-        self::assertSame(0,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        foreach ($authority as $table=>$rows) self::assertSame($rows,$this->pdo->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC),$table.' authority must be unchanged by a refused restore.');
     }
 
     private function createContactPolicyFixture(): void

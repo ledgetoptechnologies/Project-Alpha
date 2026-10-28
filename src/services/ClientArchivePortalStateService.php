@@ -153,7 +153,8 @@ final class ClientArchivePortalStateService
             $client['postal_code'] ?? null, $client['country'] ?? null,
             $client['created_at'] ?? null, $principalId > 0 ? $principalId : null,
             $manualState, $this->canonicalEmail($portal['canonical_email'] ?? null),
-            json_encode($bindingIds, JSON_THROW_ON_ERROR), $recoveryVersion,
+            json_encode(['version' => 2, 'binding_ids' => $bindingIds,
+                'contact_policy_expected' => $contactPolicy !== false], JSON_THROW_ON_ERROR), $recoveryVersion,
             $principalDisabledForArchive, $principalWasPresent,
             json_encode($entitlementIds, JSON_THROW_ON_ERROR),
             json_encode($affectedWorkspaceIds, JSON_THROW_ON_ERROR),
@@ -199,6 +200,7 @@ final class ClientArchivePortalStateService
     /** @param array<string,mixed> $archive */
     private function restoreLockedRow(PDO $pdo, array $archive, int $actorId): int
     {
+        $identityState = $this->archiveIdentityState($archive['portal_identity_binding_ids_json'] ?? null);
         $originalId = (int)($archive['client_id'] ?? 0);
         $publicId = strtolower(trim((string)($archive['public_id'] ?? '')));
         $stableIdentity = preg_match('/^[a-f0-9]{32}$/', $publicId) === 1;
@@ -289,7 +291,7 @@ final class ClientArchivePortalStateService
             }
 
             if (!$revoked && $principalId > 0 && $wasDisabled === 1) {
-                $bindingIds = $this->integerIds($archive['portal_identity_binding_ids_json'] ?? null);
+                $bindingIds = $identityState['binding_ids'];
                 if ($bindingIds !== []) {
                     $marks = implode(',', array_fill(0, count($bindingIds), '?'));
                     $pdo->prepare(
@@ -322,15 +324,22 @@ final class ClientArchivePortalStateService
      * or a possibly reused client ID. All writes share the restore transaction. */
     private function restoreContactPolicy(PDO $pdo, array $archive, int $clientId): ?array
     {
+        $expected = $this->archiveIdentityState($archive['portal_identity_binding_ids_json'] ?? null)['contact_policy_expected'];
         $snapshotTable = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
             ? (bool)$pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='archived_entities'")->fetchColumn()
             : (bool)$pdo->query("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='archived_entities'")->fetchColumn();
-        if (!$snapshotTable) return null;
+        if (!$snapshotTable) {
+            if ($expected) throw new DomainException('Expected archived client login policy is missing.');
+            return null;
+        }
         $statement = $pdo->prepare('SELECT id,payload FROM archived_entities
             WHERE entity_type=? AND entity_id=? AND client_id=?' . $this->lockSuffix($pdo));
         $statement->execute(['portal_contact_identity_policy', (int)$archive['id'], (int)$archive['client_id']]);
         $snapshots = $statement->fetchAll(PDO::FETCH_ASSOC);
-        if ($snapshots === []) return null;
+        if ($snapshots === []) {
+            if ($expected) throw new DomainException('Expected archived client login policy is missing.');
+            return null;
+        }
         if (!PortalContactIdentityPolicy::available($pdo)) throw new DomainException('Client login policy schema is unavailable.');
         if (count($snapshots) !== 1) throw new DomainException('Archived client login policy is ambiguous.');
         try { $policy = json_decode((string)$snapshots[0]['payload'], true, 32, JSON_THROW_ON_ERROR); }
@@ -399,6 +408,29 @@ final class ClientArchivePortalStateService
     { return $pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':''; }
     private function requireTransaction(PDO $pdo): void
     { if(!$pdo->inTransaction())throw new DomainException('Client archive identity preservation requires a transaction.'); }
+
+    /** The archive row carries presence independently of the consumable policy snapshot.
+     * Legacy rows used a bare binding-ID list and did not record policy presence.
+     * @return array{binding_ids:list<int>,contact_policy_expected:bool} */
+    private function archiveIdentityState(mixed $value): array
+    {
+        if ($value === null || $value === '') return ['binding_ids' => [], 'contact_policy_expected' => false];
+        try { $state = json_decode((string)$value, false, 32, JSON_THROW_ON_ERROR); }
+        catch (\JsonException $error) { throw new DomainException('Archived client identity state is invalid.', 0, $error); }
+        if (is_array($state) && array_is_list($state)) {
+            return ['binding_ids' => $this->integerIds($value), 'contact_policy_expected' => false];
+        }
+        $state = $state instanceof \stdClass ? get_object_vars($state) : $state;
+        if (!is_array($state) || count($state) !== 3 || ($state['version'] ?? null) !== 2
+            || !isset($state['binding_ids']) || !is_array($state['binding_ids']) || !array_is_list($state['binding_ids'])
+            || !array_key_exists('contact_policy_expected', $state) || !is_bool($state['contact_policy_expected'])) {
+            throw new DomainException('Archived client identity state is invalid.');
+        }
+        foreach ($state['binding_ids'] as $id) {
+            if (!is_int($id) || $id <= 0) throw new DomainException('Archived client identity state is invalid.');
+        }
+        return ['binding_ids' => $state['binding_ids'], 'contact_policy_expected' => $state['contact_policy_expected']];
+    }
 
     /** @return list<int> */
     private function integerIds(mixed $value): array

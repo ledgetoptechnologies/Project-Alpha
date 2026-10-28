@@ -53,6 +53,24 @@ final class ClientArchivePolicyHttpMySqlTest extends TestCase
             self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM archived_clients')->fetchColumn());
             self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
             self::assertSame(1,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            // A lost snapshot must not fall through to ordinary email-based enrollment.
+            $archive=$this->request($base.'/?page=client/clients-delete',$admin['id'],['csrf'=>$admin['csrf'],'id'=>$restored['id']]);
+            self::assertStringContainsString('archived=1',$archive['headers']['location']);
+            $archiveRow=$pdo->query('SELECT * FROM archived_clients')->fetch();
+            self::assertTrue(json_decode($archiveRow['portal_identity_binding_ids_json'],true,512,JSON_THROW_ON_ERROR)['contact_policy_expected']);
+            $pdo->prepare("DELETE FROM archived_entities WHERE entity_type='portal_contact_identity_policy' AND entity_id=? AND client_id=?")
+                ->execute([$archiveRow['id'],$restored['id']]);
+            $authorityTables=['portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings'];
+            $authority=[];
+            foreach($authorityTables as$table)$authority[$table]=$pdo->query('SELECT * FROM '.$table)->fetchAll();
+            $restore=$this->request($base.'/?page=client/clients-restore',$admin['id'],['csrf'=>$admin['csrf'],'id'=>$archiveRow['id']]);
+            self::assertSame(302,$restore['status']);
+            self::assertStringNotContainsString('restored=1',$restore['headers']['location']);
+            self::assertSame($archiveRow,$pdo->query('SELECT * FROM archived_clients')->fetch());
+            self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM clients WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            foreach($authorityTables as$table)self::assertSame($authority[$table],$pdo->query('SELECT * FROM '.$table)->fetchAll(),$table);
+            self::assertSame($unrelated,$pdo->query('SELECT * FROM clients WHERE id=91001')->fetch());
+            self::assertSame(0,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
         });
     }
     private function session(PDO $pdo, int $userId, string $role, array $previews = []): array

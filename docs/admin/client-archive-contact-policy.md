@@ -28,21 +28,35 @@ Intervening revocation or mismatched identity fails closed. Missing policy schem
 malformed or ambiguous snapshots reject restore and retain the archive through
 rollback. No new portal identity or entitlement is created by this fix.
 
+Independent review of the first patch (`ac75fd5f`) found that a missing snapshot
+could be mistaken for a legacy archive. The successor records policy presence
+independently in the archive row: `portal_identity_binding_ids_json` now holds
+`{"version":2,"binding_ids":[],"contact_policy_expected":true}` (or `false`
+when no policy existed). A required snapshot or its table being missing rejects
+restore before provisioning, as does a malformed envelope. Existing bare ID
+lists remain readable for legitimate legacy archives. No schema migration is
+needed; this format must ship with its updated reader. The initial patch was
+not deployed and must not be released independently.
+
 ## Validation
 
-- Focused archive/restore suite: 19 tests, 165 assertions, all passing, including
+- Focused archive/restore suite: 23 tests, 294 assertions, all passing, including
   real SQLite restrictive FKs, protected NONE, frozen bound login, version
   revocation, archive/restore rollback, numeric ID collision, and missing,
-  malformed or duplicate snapshots.
-- Full PHP suite: 1,510 tests, 12,068 assertions, no failures/errors. One existing
+  malformed or duplicate snapshots, required snapshot loss, malformed state
+  envelopes and nested JSON objects, and legacy list compatibility.
+- Full PHP suite: 1,514 tests, 12,197 assertions, no failures/errors. One existing
   oversized-float warning, seven existing deprecations and 67 skips remain.
-- Disposable MySQL HTTP regression: 1 test, 20 assertions, all passing. Use
+- Disposable MySQL HTTP regression: 1 test, 32 assertions, all passing. Use
   `scripts/run-client-archive-policy-http-mysql.mjs`. It creates a random fresh
   database/container, applies the baseline plus 115 migrations, proves that a
   direct client delete is blocked by the real FK, then exercises the actual
   authenticated archive and restore controllers. It verifies the archived policy,
   source directory tombstone/restoration, stable public ID, numeric ID collision
-  and continued protected NONE without creating a portal principal.
+  and continued protected NONE without creating a portal principal. Removing the
+  exact required snapshot and posting restore must refuse and retain the archive,
+  leave directory state tombstoned, and leave principal, binding and entitlement
+  rows unchanged.
 
 ```powershell
 $env:ARCHIVE_HTTP_TEST_IMAGE = 'your-local-pa-test-image'
@@ -65,6 +79,10 @@ eligibility and workspace events, and the receiver's exact source-qualified card
 Restore must not regrant authority revoked after archive. Exercise a reused local
 integer ID and prove the unrelated client's profile and policy are unchanged.
 Repeat with both PA sources, keeping their identities and ledgers distinct.
+On isolated staging only, remove an exact policy snapshot after archive, then
+attempt restore through the canonical HTTP/UI path. Verify refusal and rollback
+without principal or entitlement changes. Never run this fault injection in
+production. Also verify legitimate legacy archives without policies still restore.
 
 The owner explicitly authorized recoverable cleanup of the two previously
 identified production acceptance fixtures. Their exact source/public identities
