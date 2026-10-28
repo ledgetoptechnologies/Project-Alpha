@@ -61,9 +61,11 @@ final class SecurityHardeningTest extends TestCase
         $orgA = $this->insertOrganization("Security Org A {$suffix}");
         $orgB = $this->insertOrganization("Security Org B {$suffix}");
         $userId = $this->insertUser("security-client-{$suffix}@example.invalid");
+        $otherUserId = $this->insertUser("security-other-client-{$suffix}@example.invalid");
 
         $sameOrgClient = $this->insertClient('Same Org Client', $orgA, $userId);
         $otherOrgClient = $this->insertClient('Other Org Client', $orgB, $userId);
+        $otherMemberClient = $this->insertClient('Other Member Client', $orgA, $otherUserId);
 
         $_SESSION['user'] = [
             'id' => $userId,
@@ -73,6 +75,25 @@ final class SecurityHardeningTest extends TestCase
 
         self::assertTrue(can_access_record($pdo, 'clients', $sameOrgClient, $userId));
         self::assertTrue(can_access_record($pdo, 'clients', $otherOrgClient, $userId));
+        self::assertFalse(can_access_record($pdo, 'clients', $otherMemberClient, $userId));
+    }
+
+    public function testDocumentCreatePathsRequireAccessToSelectedClient(): void
+    {
+        foreach ([
+            'src/controllers/quote/quotes_create.php',
+            'src/controllers/contract/contracts_create.php',
+            'src/controllers/contract/long_term_contracts_create.php',
+            'src/controllers/contract/on_demand_contracts_create.php',
+            'src/controllers/invoice/invoices_create.php',
+        ] as $path) {
+            $source = $this->read($path);
+            $accessCheck = strpos($source, "can_access_record(\$pdo, 'clients', \$client_id");
+            $projectCheck = strpos($source, 'pa_project_is_active_for_client($pdo');
+            self::assertNotFalse($accessCheck, $path);
+            self::assertNotFalse($projectCheck, $path);
+            self::assertLessThan($projectCheck, $accessCheck, $path);
+        }
     }
 
     public function testPasswordResetFailuresIncrementAndLockSharedCounter(): void
