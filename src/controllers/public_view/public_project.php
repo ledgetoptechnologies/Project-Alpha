@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
     $code = (string)($_POST['access_code'] ?? '');
     $hash = (string)($project['public_project_password_hash'] ?? '');
     if ($hash !== '' && password_verify($code, $hash)) {
-        pa_project_public_mark_unlocked($token);
+        pa_project_public_mark_unlocked($token, $hash);
         header('Location: /?page=public-project&token=' . rawurlencode($token));
         exit;
     }

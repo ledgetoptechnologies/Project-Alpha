@@ -165,7 +165,7 @@ function pa_project_public_session_key(string $token): string
 
 function pa_project_public_requires_password(array $project): bool
 {
-    return !empty($project['public_project_require_password']) && trim((string)($project['public_project_password_hash'] ?? '')) !== '';
+    return !empty($project['public_project_require_password']);
 }
 
 function pa_project_public_is_unlocked(array $project, string $token): bool
@@ -173,12 +173,17 @@ function pa_project_public_is_unlocked(array $project, string $token): bool
     if (!pa_project_public_requires_password($project)) {
         return true;
     }
-    return !empty($_SESSION[pa_project_public_session_key($token)]);
+    $hash = trim((string)($project['public_project_password_hash'] ?? ''));
+    if ($hash === '' || (password_get_info($hash)['algo'] ?? null) === null) {
+        return false;
+    }
+    $unlockedFor = $_SESSION[pa_project_public_session_key($token)] ?? null;
+    return is_string($unlockedFor) && hash_equals(hash('sha256', $hash), $unlockedFor);
 }
 
-function pa_project_public_mark_unlocked(string $token): void
+function pa_project_public_mark_unlocked(string $token, string $passwordHash): void
 {
-    $_SESSION[pa_project_public_session_key($token)] = 1;
+    $_SESSION[pa_project_public_session_key($token)] = hash('sha256', $passwordHash);
 }
 
 function pa_project_public_badge_html(array $project, array $appConfig): string

@@ -62,4 +62,30 @@ final class PublicProjectDocumentReadOnlyTest extends TestCase
         $pdo->exec('UPDATE projects SET public_project_enabled=0 WHERE id=1');
         self::assertNull(pa_project_public_resolve($pdo, $token));
     }
+
+    public function testRequiredAccessCodeFailsClosedAndRotationInvalidatesUnlock(): void
+    {
+        $originalSession = $_SESSION ?? null;
+        $_SESSION = [];
+        try {
+            $token = str_repeat('c', 48);
+            $project = ['public_project_require_password'=>1, 'public_project_password_hash'=>null];
+            self::assertTrue(pa_project_public_requires_password($project));
+            self::assertFalse(pa_project_public_is_unlocked($project, $token));
+            $_SESSION[pa_project_public_session_key($token)] = 1;
+            self::assertFalse(pa_project_public_is_unlocked($project, $token));
+
+            $firstHash = password_hash('first-code', PASSWORD_DEFAULT);
+            $project['public_project_password_hash'] = $firstHash;
+            pa_project_public_mark_unlocked($token, $firstHash);
+            self::assertTrue(pa_project_public_is_unlocked($project, $token));
+            $project['public_project_password_hash'] = password_hash('new-code', PASSWORD_DEFAULT);
+            self::assertFalse(pa_project_public_is_unlocked($project, $token));
+            $project['public_project_password_hash'] = '';
+            self::assertFalse(pa_project_public_is_unlocked($project, $token));
+        } finally {
+            if ($originalSession === null) unset($_SESSION);
+            else $_SESSION = $originalSession;
+        }
+    }
 }
