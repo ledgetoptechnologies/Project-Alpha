@@ -192,71 +192,47 @@ function pa_project_public_badge_html(array $project, array $appConfig): string
     return '<a class="badge" href="' . htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '" target="_blank" rel="noopener" style="background:#dcfce7;color:#166534;text-decoration:none">Public project link live</a>';
 }
 
-function pa_project_public_document_url(PDO $pdo, string $type, int $id, array $appConfig): ?string
+function pa_project_public_document_url(string $token, string $type, int $id, array $appConfig): ?string
 {
-    if (!in_array($type, ['quote', 'contract', 'invoice', 'project_invoice'], true) || $id <= 0) {
+    if (!preg_match('/^[A-Fa-f0-9]{32,64}$/', $token)
+        || !in_array($type, ['quote', 'contract', 'invoice', 'project_invoice'], true) || $id <= 0) {
         return null;
+    }
+    return pa_project_public_base_url($appConfig) . '/?page=public-project-doc&token=' . rawurlencode($token)
+        . '&type=' . rawurlencode($type) . '&id=' . $id;
+}
+
+function pa_project_public_document_eligible(PDO $pdo, array $project, string $type, int $id): bool
+{
+    if ($id <= 0 || !in_array($type, ['quote', 'contract', 'invoice', 'project_invoice'], true)) {
+        return false;
+    }
+    $invoiceType = in_array($type, ['invoice', 'project_invoice'], true);
+    if (empty($project[$invoiceType ? 'public_project_can_view_invoices' : 'public_project_can_view_documents'])) {
+        return false;
     }
     $table = [
-        'quote' => 'quotes',
-        'contract' => 'contracts',
-        'invoice' => 'invoices',
-        'project_invoice' => 'project_invoices',
+        'quote' => 'quotes', 'contract' => 'contracts',
+        'invoice' => 'invoices', 'project_invoice' => 'project_invoices',
     ][$type];
-    $extraSelect = $type === 'invoice'
-        ? ', finalized_at, collection_mode'
+    $extra = $type === 'invoice' ? ', finalized_at, collection_mode'
         : ($type === 'project_invoice' ? ', finalized_at' : '');
-    try {
-        $docStmt = $pdo->prepare("SELECT status{$extraSelect} FROM {$table} WHERE id = ? LIMIT 1");
-        $docStmt->execute([$id]);
-        $doc = $docStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$doc) {
-            return null;
-        }
-        $status = strtolower((string)($doc['status'] ?? ''));
-        $collectionMode = trim((string)($doc['collection_mode'] ?? ''));
-        if ($collectionMode === '') {
-            $collectionMode = 'direct';
-        }
-        if ($type === 'quote' && $status === 'rejected') {
-            return null;
-        }
-        if ($type === 'contract' && in_array($status, ['denied', 'cancelled', 'void'], true)) {
-            return null;
-        }
-        if ($type === 'invoice' && ($status === 'draft' || $status === 'void' || empty($doc['finalized_at']) || $collectionMode !== 'direct')) {
-            return null;
-        }
-        if ($type === 'project_invoice' && ($status === 'draft' || $status === 'void' || empty($doc['finalized_at']))) {
-            return null;
-        }
-    } catch (Throwable $e) {
-        return null;
+    $stmt = $pdo->prepare("SELECT status{$extra} FROM {$table} WHERE id=? AND project_id=? LIMIT 1");
+    $stmt->execute([$id, (int)$project['id']]);
+    $doc = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$doc) {
+        return false;
     }
-
-    pa_public_link_ensure_schema($pdo);
-
-    $stmt = $pdo->prepare('
-        SELECT token
-        FROM public_links
-        WHERE document_type = ? AND document_id = ? AND revoked = 0
-          AND (expires_at IS NULL OR expires_at > NOW())
-        ORDER BY id DESC
-        LIMIT 1
-    ');
-    $stmt->execute([$type, $id]);
-    $token = (string)($stmt->fetchColumn() ?: '');
-    if ($token === '') {
-        $token = bin2hex(random_bytes(24));
-        $expireWhenPaid = in_array($type, ['invoice', 'project_invoice'], true) ? 1 : 0;
-        $ins = $pdo->prepare('
-            INSERT INTO public_links (document_type, document_id, token, expires_at, expire_when_paid, revoked)
-            VALUES (?, ?, ?, NULL, ?, 0)
-        ');
-        $ins->execute([$type, $id, $token, $expireWhenPaid]);
+    $status = strtolower((string)($doc['status'] ?? ''));
+    if ($type === 'quote') return $status !== 'rejected';
+    if ($type === 'contract') return !in_array($status, ['denied', 'cancelled', 'void'], true);
+    if ($type === 'invoice' && !in_array($status, ['sent', 'unpaid', 'partial', 'overdue'], true)) return false;
+    if (in_array($status, ['draft', 'void'], true) || empty($doc['finalized_at'])) return false;
+    if ($type === 'invoice') {
+        $collectionMode = trim((string)($doc['collection_mode'] ?? '')) ?: 'direct';
+        return $collectionMode === 'direct';
     }
-
-    return pa_project_public_base_url($appConfig) . '/?page=public-doc&type=' . rawurlencode($type) . '&token=' . rawurlencode($token);
+    return true;
 }
 
 function pa_project_public_log_event(PDO $pdo, int $projectId, string $eventType, ?string $message = null, ?int $fileId = null, ?string $clientLabel = null): void

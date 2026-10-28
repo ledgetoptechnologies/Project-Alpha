@@ -145,9 +145,9 @@ if (!empty($project['public_project_can_view_invoices'])) {
 $notice = !empty($_GET['sent']) ? 'Your update request was sent.' : (!empty($_GET['uploaded']) ? 'Your file was uploaded.' : '');
 $error = (string)($_GET['error'] ?? '');
 
-$renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array $row, string $label): void {
+$renderDocRow = static function (array $appConfig, string $token, string $type, array $row, string $label): void {
     $id = (int)$row['id'];
-    $url = pa_project_public_document_url($pdo, $type, $id, $appConfig);
+    $url = pa_project_public_document_url($token, $type, $id, $appConfig);
     $documentNumber = $type === 'invoice'
         ? pa_invoice_label_from_row($row)
         : ($type === 'project_invoice'
@@ -161,7 +161,7 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
       </div>
       <div class="pp-row-actions">
         <span class="pp-money">$<?php echo number_format((float)($row['total'] ?? 0), 2); ?></span>
-        <?php if ($url): ?><a class="pp-btn pp-btn-small" href="<?php echo htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>" target="_blank" rel="noopener">Open</a><?php endif; ?>
+        <?php if ($url): ?><a class="pp-btn pp-btn-small" href="<?php echo htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>" target="_blank" rel="noopener">View PDF</a><?php endif; ?>
       </div>
     </div>
     <?php
@@ -191,8 +191,8 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
           <section class="pp-panel">
             <h2>Project Docs</h2>
             <div class="pp-list">
-              <?php foreach ($quotes as $quote): $renderDocRow($pdo, $appConfig ?? [], 'quote', $quote, 'Quote'); endforeach; ?>
-              <?php foreach ($contracts as $contract): $renderDocRow($pdo, $appConfig ?? [], 'contract', $contract, 'Contract'); endforeach; ?>
+              <?php foreach ($quotes as $quote): $renderDocRow($appConfig ?? [], $token, 'quote', $quote, 'Quote'); endforeach; ?>
+              <?php foreach ($contracts as $contract): $renderDocRow($appConfig ?? [], $token, 'contract', $contract, 'Contract'); endforeach; ?>
               <?php if (empty($quotes) && empty($contracts)): ?><div class="pp-empty">No project quotes or contracts are available.</div><?php endif; ?>
             </div>
           </section>
@@ -222,8 +222,8 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
           <section class="pp-panel">
             <h2>Invoices</h2>
             <div class="pp-list">
-              <?php foreach ($projectInvoices as $projectInvoice): $renderDocRow($pdo, $appConfig ?? [], 'project_invoice', $projectInvoice + ['doc_number' => 'PI-' . (int)$projectInvoice['id']], 'Project Invoice'); endforeach; ?>
-              <?php foreach ($invoices as $invoice): $renderDocRow($pdo, $appConfig ?? [], 'invoice', $invoice, 'Invoice'); endforeach; ?>
+              <?php foreach ($projectInvoices as $projectInvoice): $renderDocRow($appConfig ?? [], $token, 'project_invoice', $projectInvoice + ['doc_number' => 'PI-' . (int)$projectInvoice['id']], 'Project Invoice'); endforeach; ?>
+              <?php foreach ($invoices as $invoice): $renderDocRow($appConfig ?? [], $token, 'invoice', $invoice, 'Invoice'); endforeach; ?>
               <?php if (empty($projectInvoices) && empty($invoices)): ?><div class="pp-empty">No project invoices are available.</div><?php endif; ?>
             </div>
           </section>

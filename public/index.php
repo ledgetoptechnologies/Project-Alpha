@@ -564,7 +564,7 @@ if ($page === 'logout') {
 
 // Allow unauthenticated access only to explicit public pages
 // NOTE: serve-upload enforces granular access itself (public images/logos only; PDFs & subdirs require auth)
-$publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
+$publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-doc', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
 
 // Toggle to disable auth checks in development/testing
 $authDisabled = filter_var(getenv('AUTH_DISABLED') ?: getenv('APP_AUTH_DISABLED') ?: '', FILTER_VALIDATE_BOOLEAN);
@@ -1930,6 +1930,10 @@ if ($page === 'public-project') {
 }
 if ($page === 'public-project-file') {
     require_once __DIR__ . '/../src/controllers/public_view/public_project_file.php';
+    exit;
+}
+if ($page === 'public-project-doc') {
+    require_once __DIR__ . '/../src/controllers/public_view/public_project_doc.php';
     exit;
 }
 if ($page === 'legal/tos-accept') {
