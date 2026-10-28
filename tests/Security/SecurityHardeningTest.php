@@ -225,6 +225,12 @@ final class SecurityHardeningTest extends TestCase
         self::assertStringContainsString("!in_array(\$uploadCategory, ['organizations', 'receipts', 'forms', 'signed_contracts', 'contract_amendments'], true)", $upload);
         self::assertStringContainsString('rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR', $upload);
         self::assertStringContainsString("can_access_record(\$pdo,'clients',\$clientId,\$userId)", $this->read('src/controllers/financial/mileage_unbilled.php'));
+        $chart = $this->read('src/controllers/financial/financial_api.php');
+        self::assertStringContainsString("can_access_record(\$pdo, 'clients', \$clientId, \$actorId)", $chart);
+        self::assertStringContainsString("finance_scope_clause(\$pdo, 'i', \$actorId, request_client_org_id(), 'created_by')", $chart);
+        $dashboard = $this->read('src/views/pages/financial/financial-dashboard.php');
+        self::assertStringContainsString("finance_scope_clause(\$pdo, 'i', \$userId, 0, 'created_by')", $dashboard);
+        self::assertSame(3, substr_count($dashboard, '$incomeScopeWhere'));
         self::assertStringContainsString('two_factor_warning_needed', $front);
         self::assertStringNotContainsString('two_factor_enforce_required($pdo, $page)', $front);
         self::assertStringContainsString('Development auth bypass', $this->read('src/views/partials/header.php'));

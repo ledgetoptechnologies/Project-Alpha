@@ -16,8 +16,9 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = $defaultStartDate;
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $defaultEndDate;
 
 $incomeExpr = payment_accounting_net_income_expr('p');
-$incomeStmt = $pdo->prepare("SELECT COALESCE(SUM({$incomeExpr}),0) as total FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ?");
-$incomeStmt->execute([$orgId, $orgId, $start, $end]);
+[$incomeScopeWhere, $incomeScopeParams] = finance_scope_clause($pdo, 'i', $userId, 0, 'created_by');
+$incomeStmt = $pdo->prepare("SELECT COALESCE(SUM({$incomeExpr}),0) as total FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ? AND {$incomeScopeWhere}");
+$incomeStmt->execute(array_merge([$orgId, $orgId, $start, $end], $incomeScopeParams));
 $totalIncome = (float)$incomeStmt->fetchColumn();
 
 [$expenseScopeWhere, $expenseScopeParams] = finance_scope_clause($pdo, 'e', $userId, $orgId, 'created_by');
@@ -93,10 +94,10 @@ $statusSummary = $statusStmt->fetchAll(PDO::FETCH_ASSOC);
 $incomeTrendStmt = $pdo->prepare("
     SELECT DATE_FORMAT(p.payment_date, '%Y-%m') as period, COALESCE(SUM({$incomeExpr}),0) as total
     FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id
-    WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ?
+    WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ? AND {$incomeScopeWhere}
     GROUP BY period
 ");
-$incomeTrendStmt->execute([$orgId, $orgId, $start, $end]);
+$incomeTrendStmt->execute(array_merge([$orgId, $orgId, $start, $end], $incomeScopeParams));
 $incomeByMonth = [];
 foreach ($incomeTrendStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     $incomeByMonth[$row['period']] = (float)$row['total'];
