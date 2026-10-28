@@ -229,7 +229,7 @@ $moduleRoutes = [
 ];
 require_once __DIR__ . '/../src/utils/portal_integration_security.php';
 $portalIntegrationMatch = [];
-if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints|draft-quotes)/?$#D', $requestPath, $portalIntegrationMatch) === 1) {
+if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints|draft-quotes)$#D', $requestPath, $portalIntegrationMatch) === 1) {
     $isPricingIntegration = $portalIntegrationMatch[2] === 'pricing-hints';
     $integrationFlag = $isPricingIntegration
         ? 'APP_PORTAL_PRICING_PREVIEW_ENABLED'
@@ -438,6 +438,12 @@ require_once __DIR__ . '/../src/config/bootstrap.php';
 // (e.g. api-clients-search); 'api-keys' is a UI page, not an API endpoint.
 // Slash-prefixed 'settings/' routes are AJAX/JSON handlers.
 $isServerOnlyIntegration = in_array($page, ['api-integration-pricing-hints','api-integration-draft-quotes'], true);
+if ($isServerOnlyIntegration) {
+    $routeKey = portal_integration_route_key($requestPath, $page);
+    if ($routeKey === null || !hash_equals($routeKey, (string)($_GET['_integration_key'] ?? ''))) {
+        portal_integration_failure(404, 'NOT_FOUND');
+    }
+}
 if ($isServerOnlyIntegration && trim((string)($_SERVER['HTTP_ORIGIN'] ?? '')) !== '') {
     require_once __DIR__.'/../src/utils/api_response.php';
     try{(new App\Services\PortalIntegrationAuditService())->recordCommand($pdo,(string)($_GET['_integration_key']??''),0,$page==='api-integration-pricing-hints'?App\Services\PortalIntegrationContract::PRICING_SCOPE:App\Services\PortalIntegrationContract::DRAFT_SCOPE,'denied',api_request_id(),'BROWSER_ORIGIN_DENIED');}
