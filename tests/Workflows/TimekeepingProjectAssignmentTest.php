@@ -29,6 +29,17 @@ final class TimekeepingProjectAssignmentTest extends TestCase
         $service = new TimekeepingService($pdo, new AuditRecorder($pdo));
         $resolve = new ReflectionMethod($service, 'resolveBillingContext');
 
+        [$untrustedInput, $trustedServiceContext] = (new ReflectionMethod($service, 'withServiceContext'))
+            ->invoke($service, 11, ['client_id'=>7, '_service_context'=>true], false);
+        self::assertFalse($trustedServiceContext);
+        self::assertArrayNotHasKey('_service_context', $untrustedInput);
+        try {
+            $resolve->invoke($service, 11, ['client_id'=>7, 'job_id'=>3, '_service_context'=>true], false);
+            self::fail('Request-supplied service context authorized a direct client.');
+        } catch (DomainException $error) {
+            self::assertSame('Client and invoice details are available only to timekeeping managers.', $error->getMessage());
+        }
+
         try {
             $resolve->invoke($service, 11, ['job_id'=>3, 'project_id'=>5], false);
             self::fail('A projectless Job bypassed project assignment.');

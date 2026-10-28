@@ -189,8 +189,8 @@ final class TimekeepingService
         $id = Uuid::v4();
         $this->pdo->beginTransaction();
         try {
-            $input = $this->withServiceContext($userId, $input, $manageAll);
-            $context = $this->resolveBillingContext($userId, $input, $manageAll);
+            [$input, $serviceContext] = $this->withServiceContext($userId, $input, $manageAll);
+            $context = $this->resolveBillingContext($userId, $input, $manageAll, $serviceContext);
             $projectId = $context['project_id'];
             [$workTypeId,$assignmentId] = $this->resolveWorkSelection($userId, $input, $context['job_id']);
             $input['work_type_id'] = $workTypeId;
@@ -341,8 +341,8 @@ final class TimekeepingService
         $endUtc = $end->setTimezone(new DateTimeZone('UTC'));
         $this->pdo->beginTransaction();
         try {
-            $input = $this->withServiceContext($userId, $input, $manageAll);
-            $context = $this->resolveBillingContext($userId, $input, $manageAll);
+            [$input, $serviceContext] = $this->withServiceContext($userId, $input, $manageAll);
+            $context = $this->resolveBillingContext($userId, $input, $manageAll, $serviceContext);
             $projectId = $context['project_id'];
             [$workTypeId,$assignmentId] = $this->resolveWorkSelection($userId, $input, $context['job_id']);
             $input['work_type_id'] = $workTypeId;
@@ -632,7 +632,7 @@ final class TimekeepingService
         return WorkforceSettings::load($this->pdo);
     }
 
-    private function resolveBillingContext(int $userId, array $input, bool $manageAll): array
+    private function resolveBillingContext(int $userId, array $input, bool $manageAll, bool $serviceContext = false): array
     {
         $clientId = !empty($input['client_id']) ? (int)$input['client_id'] : null;
         $projectId = !empty($input['project_id']) ? (int)$input['project_id'] : null;
@@ -640,7 +640,7 @@ final class TimekeepingService
         $jobId = !empty($input['job_id']) ? (int)$input['job_id'] : null;
         $jobProjectId = null;
 
-        if (!$manageAll && ($invoiceId || ($clientId && empty($input['_service_context'])))) {
+        if (!$manageAll && ($invoiceId || ($clientId && !$serviceContext))) {
             throw new DomainException('Client and invoice details are available only to timekeeping managers.');
         }
 
@@ -730,12 +730,14 @@ final class TimekeepingService
         return [$workTypeId,$assignmentId];
     }
 
+    /** @return array{0:array,1:bool} The boolean is server-derived authorization context. */
     private function withServiceContext(int $userId, array $input, bool $manageAll): array
     {
+        unset($input['_service_context']);
         $serviceItemId = (int)($input['service_item_id'] ?? 0);
         $componentId = (int)($input['catalog_work_component_id'] ?? 0);
         if ($serviceItemId <= 0 && $componentId <= 0) {
-            return $input;
+            return [$input, false];
         }
         $organizationId = function_exists('request_client_org_id') ? \request_client_org_id() : null;
         $context = $this->unscheduledServices()->prepare(
@@ -747,9 +749,8 @@ final class TimekeepingService
         foreach ($context as $key => $value) {
             $input[$key] = $value;
         }
-        $input['_service_context'] = true;
         $input['billable'] = $context['billing_treatment'] === 'ready' ? '1' : '0';
-        return $input;
+        return [$input, true];
     }
 
     private function unscheduledServices(): UnscheduledServiceJobService
