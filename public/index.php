@@ -1853,7 +1853,7 @@ if ($page === 'settings/backup-download') {
     exit;
 }
 
-// Stripe charge endpoint (supports both GET and POST)
+// Stripe charge endpoint enforces POST, CSRF, and billing permission itself.
 if ($page === 'stripe-charge') {
     require_once __DIR__ . '/../src/controllers/stripe/stripe_charge.php';
     exit;

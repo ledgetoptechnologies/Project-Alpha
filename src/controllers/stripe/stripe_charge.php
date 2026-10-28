@@ -3,6 +3,12 @@
 // Creates a Stripe Checkout session for admin to process card payment
 // Used when merchant wants to charge a card manually (e.g., customer on phone)
 
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    exit('Checkout creation requires POST.');
+}
+
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/StripeService.php';
@@ -13,8 +19,21 @@ require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/payment_methods.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
 
-$invoiceId = (int)($_POST['invoice_id'] ?? $_GET['invoice_id'] ?? 0);
-$returnUrl = $_POST['return_url'] ?? $_GET['return_url'] ?? '';
+if (!csrf_validate()) {
+    http_response_code(403);
+    exit('Invalid request token.');
+}
+$actorId = (int)($_SESSION['user']['id'] ?? 0);
+if ($actorId <= 0 || !user_can($pdo, $actorId, 'billing.manage', 0)) {
+    http_response_code(403);
+    exit('Permission denied.');
+}
+
+$invoiceId = (int)($_POST['invoice_id'] ?? 0);
+$returnUrl = (string)($_POST['return_url'] ?? '');
+if (!str_starts_with($returnUrl, '/?page=') || str_contains($returnUrl, "\r") || str_contains($returnUrl, "\n")) {
+    $returnUrl = '';
+}
 
 if ($invoiceId <= 0) {
     header('Location: /?page=home&error=' . urlencode('Invalid invoice'));
@@ -22,10 +41,6 @@ if ($invoiceId <= 0) {
 }
 
 try {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_validate()) {
-        throw new Exception('Invalid request. Please refresh and try again.');
-    }
-
     if (!can_access_record($pdo, 'invoices', $invoiceId, (int)($_SESSION['user']['id'] ?? 0))) {
         throw new Exception('Permission denied');
     }

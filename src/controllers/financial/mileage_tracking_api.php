@@ -10,7 +10,9 @@ function mt_json(array $data,int $status=200):never{
 $actor=new SessionMileageActorAdapter((int)($_SESSION['user']['id']??0),request_client_org_id()?:null);$userId=$actor->userId();$orgId=$actor->organizationId()??0;
 if($userId<=0)mt_json(['error'=>'Authentication required.'],401);if(!user_can($pdo,$userId,'financial.manage',0))mt_json(['error'=>'Permission denied.'],403);if(empty($appConfig['mileage_tracking_enabled']))mt_json(['error'=>'GPS mileage tracking is not enabled.'],403);
 $action=(string)($_GET['action']??'status');$body=json_decode((string)file_get_contents('php://input'),true);if(!is_array($body))$body=$_POST;
-if($_SERVER['REQUEST_METHOD']!=='GET'){$token=(string)($_SERVER['HTTP_X_CSRF_TOKEN']??($body['_token']??''));if(!csrf_sf_is_valid('mileage_tracking',$token))mt_json(['error'=>'Invalid request token.'],400);}
+$method=strtoupper((string)($_SERVER['REQUEST_METHOD']??'GET'));
+if(!mileage_tracking_method_allowed($method,$action)){header('Allow: GET, POST');mt_json(['error'=>'Tracking changes require POST.'],405);}
+if($method==='POST'){$token=(string)($_SERVER['HTTP_X_CSRF_TOKEN']??($body['_token']??''));if(!csrf_sf_is_valid('mileage_tracking',$token))mt_json(['error'=>'Invalid request token.'],400);}
 function mt_session(PDO $pdo,int $id,int $userId,bool $lock=false):array{$s=$pdo->prepare('SELECT * FROM mileage_tracking_sessions WHERE id=? AND user_id=?'.($lock?' FOR UPDATE':''));$s->execute([$id,$userId]);$row=$s->fetch(PDO::FETCH_ASSOC);if(!$row)throw new RuntimeException('Tracking session not found.');return $row;}
 try{
  if($action==='status'){$s=$pdo->prepare('SELECT * FROM mileage_tracking_sessions WHERE user_id=? AND status IN ("active","draft_review") ORDER BY id DESC LIMIT 1');$s->execute([$userId]);mt_json(['session'=>$s->fetch(PDO::FETCH_ASSOC)?:null]);}
