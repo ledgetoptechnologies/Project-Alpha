@@ -108,6 +108,9 @@ function api_v2_directory_organization_profile_command_write(PDO $pdo, string $p
         $stateStatement = $pdo->prepare('SELECT CAST(revision AS CHAR) revision,projection_sha256,present FROM api_v2_directory_resource_state WHERE resource_type=\'organization\' AND public_id=?' . $lock); $stateStatement->execute([$publicId]); $state = $stateStatement->fetch(PDO::FETCH_ASSOC);
         if (!$live || !$state || (int)$state['present'] !== 1 || !hash_equals((string)$state['projection_sha256'], api_v2_directory_projection_hash('organization', $live))) { $pdo->rollBack(); return ['status'=>409]; }
         if ((string)$state['revision'] !== $command['expectedRevision']) { $pdo->rollBack(); return ['status'=>409]; }
+        $binding=$pdo->prepare("SELECT external_id FROM api_v2_directory_external_bindings WHERE application_pk=? AND resource_type='organization' AND public_id=? AND status='active' AND resource_revision=? AND resource_projection_sha256=?".$lock);
+        $binding->execute([(int)$identity['application_pk'],$publicId,$command['expectedRevision'],$state['projection_sha256']]);
+        if ($binding->fetchColumn()===false) { $pdo->rollBack(); return ['status'=>409]; }
         $profile = $command['profile'];
         $profileFields = ['name'=>$profile['name'], 'general_email'=>$profile['generalEmail'], 'general_phone'=>$profile['generalPhone'], 'address_line1'=>$profile['addressLine1'], 'address_line2'=>$profile['addressLine2'], 'city'=>$profile['city'], 'state'=>$profile['state'], 'postal_code'=>$profile['postalCode'], 'country'=>$profile['country']];
         $hasProfileChange = false;

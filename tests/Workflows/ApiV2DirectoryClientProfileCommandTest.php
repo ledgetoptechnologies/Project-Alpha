@@ -22,7 +22,28 @@ final class ApiV2DirectoryClientProfileCommandTest extends TestCase
         require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
         $pdo = new PDO('sqlite::memory:'); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
         $pdo->exec("CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,revoked_at TEXT); CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY,application_id TEXT); CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT); CREATE TABLE api_v2_directory_authorization_state(application_pk INTEGER PRIMARY KEY,authorization_generation INTEGER); CREATE TABLE api_v2_directory_resource_state(resource_type TEXT,public_id TEXT,revision INTEGER,projection_sha256 TEXT,present INTEGER,PRIMARY KEY(resource_type,public_id)); CREATE TABLE api_v2_directory_resource_changes(resource_type TEXT,public_id TEXT,revision INTEGER,action TEXT,PRIMARY KEY(resource_type,public_id,revision)); CREATE TABLE api_v2_directory_client_profile_command_receipts(application_pk INTEGER,history_epoch TEXT,command_id TEXT,request_sha256 TEXT,public_id TEXT,expected_revision INTEGER,expected_authorization_generation INTEGER,result_revision INTEGER,result_projection_sha256 TEXT,PRIMARY KEY(application_pk,history_epoch,command_id)); CREATE TABLE organizations(id INTEGER PRIMARY KEY,public_id TEXT); CREATE TABLE clients(id INTEGER PRIMARY KEY,public_id TEXT,name TEXT,email TEXT,phone TEXT,client_type TEXT,organization_id INTEGER,notes TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,stripe_customer_id TEXT,stripe_payment_method_id TEXT,auto_pay_enabled INTEGER,source_version TEXT); CREATE TABLE projects(id INTEGER PRIMARY KEY,client_id INTEGER); CREATE TABLE organization_department_contacts(department_id INTEGER,client_id INTEGER); CREATE TABLE addresses(id INTEGER PRIMARY KEY,label TEXT,address_line1 TEXT,address_line2 TEXT,city TEXT,state TEXT,postal_code TEXT,country TEXT,google_place_id TEXT,source TEXT,created_by INTEGER,archived INTEGER DEFAULT 0); CREATE TABLE address_assignments(id INTEGER PRIMARY KEY,address_id INTEGER,entity_type TEXT,entity_id INTEGER,purpose TEXT,is_default INTEGER,UNIQUE(entity_type,entity_id,purpose,address_id)); CREATE TABLE portal_principal_clients(portal_principal_id INTEGER,client_id INTEGER,PRIMARY KEY(portal_principal_id,client_id)); CREATE TABLE portal_integration_profiles(id INTEGER PRIMARY KEY,enabled INTEGER,service_assignment_projection_enabled INTEGER,delivery_enabled INTEGER); CREATE TABLE portal_integration_profile_workspaces(profile_id INTEGER,workspace_id INTEGER,active INTEGER); CREATE TABLE portal_v2_workspaces(id INTEGER PRIMARY KEY,root_type TEXT,root_public_id TEXT,active INTEGER); CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT); INSERT INTO api_keys VALUES(7,3,NULL); INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000'); INSERT INTO api_v2_directory_authorization_state VALUES(3,0); INSERT INTO organizations VALUES(10,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'); INSERT INTO clients VALUES(9,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Example','old@example.test','old','consumer',10,'private note','','','','','','','customer-private','payment-private',1,'v-old'); INSERT INTO addresses VALUES(4,'Private label','old','','','','','','place-hidden','google',NULL,0); INSERT INTO address_assignments VALUES(1,4,'client',9,'billing',1); INSERT INTO portal_principal_clients VALUES(77,9); INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0')");
-        $pdo->beginTransaction(); \api_v2_directory_record($pdo, 'client', 9); $pdo->commit(); return $pdo;
+        $pdo->exec("CREATE TABLE api_v2_directory_external_bindings(application_pk INTEGER, resource_type TEXT, external_id TEXT, public_id TEXT, resource_revision INTEGER, resource_projection_sha256 TEXT, status TEXT, PRIMARY KEY(application_pk,resource_type,external_id))");
+        $pdo->beginTransaction(); \api_v2_directory_record($pdo, 'client', 9); $pdo->commit();
+        $pdo->exec("INSERT INTO api_v2_directory_external_bindings SELECT 3,'client','client/example',public_id,revision,projection_sha256,'active' FROM api_v2_directory_resource_state WHERE resource_type='client'");
+        return $pdo;
+    }
+
+    public function testProfileWriteRequiresCurrentBindingForCallingApplication(): void
+    {
+        $command = \api_v2_directory_client_profile_command_parse(json_encode($this->command(), JSON_THROW_ON_ERROR));
+        foreach ([
+            'DELETE FROM api_v2_directory_external_bindings',
+            "UPDATE api_v2_directory_external_bindings SET status='tombstoned'",
+            'UPDATE api_v2_directory_external_bindings SET application_pk=4',
+            'UPDATE api_v2_directory_external_bindings SET resource_revision=2',
+            "UPDATE api_v2_directory_external_bindings SET resource_projection_sha256='wrong'",
+        ] as $change) {
+            $pdo = $this->database();
+            $pdo->exec($change);
+            self::assertSame(['status'=>409], \api_v2_directory_client_profile_command_write($pdo, str_repeat('a',32), $command, 7, $this->headers(), 'denied'), $change);
+            self::assertSame('Example', $pdo->query('SELECT name FROM clients')->fetchColumn(), $change);
+            self::assertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_client_profile_command_receipts')->fetchColumn(), $change);
+        }
     }
 
     public function testParseRejectsNonProfileFieldsAndValidatesDatabaseLimits(): void
@@ -70,6 +91,9 @@ final class ApiV2DirectoryClientProfileCommandTest extends TestCase
         self::assertSame(200,\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$first,7,$this->headers(),'first')['status']);
         $nextEpoch='923e4567-e89b-42d3-a456-426614174000';$pdo->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$nextEpoch]);$headers=array_replace($this->headers(),['epoch'=>$nextEpoch]);
         self::assertSame(409,\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$first,7,$headers,'stale-old-epoch')['status']);
+        // A later command requires the application to refresh its binding to
+        // the resource's new revision before issuing another profile write.
+        $pdo->exec("UPDATE api_v2_directory_external_bindings SET resource_revision=2,resource_projection_sha256=(SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client')");
         $next=$this->command();$next['expectedRevision']='2';$next['profile']['name']='Second Epoch Client';$next=\api_v2_directory_client_profile_command_parse(json_encode($next,JSON_THROW_ON_ERROR));
         $result=\api_v2_directory_client_profile_command_write($pdo,str_repeat('a',32),$next,7,$headers,'second');self::assertSame(200,$result['status']);self::assertFalse($result['payload']['replayed']);self::assertSame('3',$result['payload']['result']['resource']['revision']);
         self::assertSame(2,(int)$pdo->query('SELECT COUNT(DISTINCT history_epoch) FROM api_v2_directory_client_profile_command_receipts')->fetchColumn());

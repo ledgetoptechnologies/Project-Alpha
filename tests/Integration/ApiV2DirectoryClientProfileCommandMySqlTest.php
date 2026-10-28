@@ -49,6 +49,7 @@ final class ApiV2DirectoryClientProfileCommandMySqlTest extends TestCase
         self::assertSame(200,\api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$command,7,$this->headers(),'first')['status']);
         $nextEpoch='923e4567-e89b-42d3-a456-426614174000';$this->first->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$nextEpoch]);$headers=array_replace($this->headers(),['epoch'=>$nextEpoch]);
         self::assertSame(409,\api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$command,7,$headers,'stale-old-epoch')['status']);
+        $this->first->exec("UPDATE api_v2_directory_external_bindings SET resource_revision=2,resource_projection_sha256=(SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='client')");
         $next=$command;$next['expectedRevision']='2';$next['profile']['name']='Second Epoch Client';
         $result=\api_v2_directory_client_profile_command_write($this->first,str_repeat('a',32),$next,7,$headers,'second');self::assertSame(200,$result['status']);self::assertFalse($result['payload']['replayed']);self::assertSame('3',$result['payload']['result']['resource']['revision']);
         self::assertSame(2,(int)$this->first->query('SELECT COUNT(DISTINCT history_epoch) FROM api_v2_directory_client_profile_command_receipts')->fetchColumn());
