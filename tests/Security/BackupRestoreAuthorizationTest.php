@@ -9,11 +9,11 @@ final class BackupRestoreAuthorizationTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $temporary = sys_get_temp_dir() . '/pa-backup-auth-' . bin2hex(random_bytes(8));
-        foreach (['', '/src/controllers', '/src/config', '/src/utils'] as $suffix) {
+        foreach (['', '/src/controllers', '/src/controllers/settings', '/src/config', '/src/utils'] as $suffix) {
             mkdir($temporary . $suffix, 0700, true);
         }
         try {
-            foreach (['controllers/backup_handler.php', 'utils/acl.php'] as $file) {
+            foreach (['controllers/backup_handler.php', 'controllers/settings/backup_download.php', 'utils/acl.php'] as $file) {
                 copy($root . '/src/' . $file, $temporary . '/src/' . $file);
             }
             file_put_contents($temporary . '/src/config/db.php', '<?php $pdo = new PDO("sqlite:" . __DIR__ . "/../../users.sqlite");');
@@ -37,8 +37,18 @@ require __DIR__ . '/src/controllers/backup_handler.php';
 PHP);
 
             $owner = $this->runDriver($temporary, 2, 'admin'); // A stale session must not grant restore.
-            self::assertStringContainsString('Only an installation administrator can restore', $owner);
+            self::assertStringContainsString('Only an installation administrator can manage backups.', $owner);
             self::assertStringContainsString('|status=403', $owner);
+            file_put_contents($temporary . '/download-driver.php', <<<'PHP'
+<?php
+session_start();
+$_SESSION['user'] = ['id' => 2, 'role' => 'admin'];
+register_shutdown_function(static function (): void { echo '|status=' . (http_response_code() ?: 200); });
+require __DIR__ . '/src/controllers/settings/backup_download.php';
+PHP);
+            $download = $this->runScript($temporary . '/download-driver.php', $temporary);
+            self::assertStringContainsString('Only an installation administrator can download backups.', $download);
+            self::assertStringContainsString('|status=403', $download);
             $admin = $this->runDriver($temporary, 1, 'admin');
             self::assertStringContainsString('|status=302', $admin);
             self::assertStringContainsString('You must confirm the restore operation.', $admin);
@@ -53,7 +63,12 @@ PHP);
 
     private function runDriver(string $directory, int $userId, string $sessionRole): string
     {
-        $process = proc_open([PHP_BINARY, $directory . '/driver.php', (string)$userId, $sessionRole],
+        return $this->runScript($directory . '/driver.php', $directory, [(string)$userId, $sessionRole]);
+    }
+
+    private function runScript(string $script, string $directory, array $args = []): string
+    {
+        $process = proc_open([PHP_BINARY, $script, ...$args],
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, $directory);
         self::assertIsResource($process);
         fclose($pipes[0]);

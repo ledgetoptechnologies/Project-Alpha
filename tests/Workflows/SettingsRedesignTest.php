@@ -51,6 +51,7 @@ final class SettingsRedesignTest extends TestCase
         $canManage = static fn (string $permission): bool => $permission === 'settings.manage';
         $staffRegistry = pa_settings_visible_registry(pa_settings_registry(), $canManage, 'staff');
         $ownerRegistry = pa_settings_visible_registry(pa_settings_registry(), $canManage, 'owner');
+        $adminRegistry = pa_settings_visible_registry(pa_settings_registry(), $canManage, 'admin');
 
         self::assertArrayNotHasKey('business', $staffRegistry);
         self::assertArrayHasKey('business', $ownerRegistry);
@@ -59,6 +60,8 @@ final class SettingsRedesignTest extends TestCase
         self::assertArrayHasKey('workflow', $staffRegistry['workforce']['items']);
         self::assertArrayNotHasKey('accounts', $staffRegistry['account']['items']);
         self::assertArrayNotHasKey('api-keys', $staffRegistry['system']['items']);
+        self::assertArrayNotHasKey('backup', $ownerRegistry['system']['items']);
+        self::assertArrayHasKey('backup', $adminRegistry['system']['items']);
     }
 
     public function testSettingsShellUsesSharedNavigationAndExplicitSaveControls(): void

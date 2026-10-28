@@ -12,6 +12,11 @@ require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../utils/backup_archive.php';
 require_once __DIR__ . '/../utils/acl.php';
 
+if (acl_user_role($pdo, (int)($_SESSION['user']['id'] ?? 0)) !== 'admin') {
+    http_response_code(403);
+    exit('Only an installation administrator can manage backups.');
+}
+
 $action = $_POST['action'] ?? '';
 $backupsDir = '/var/www/backups';
 $settingsUrl = '/?page=settings&tab=backup';
