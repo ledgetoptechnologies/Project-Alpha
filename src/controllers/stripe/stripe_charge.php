@@ -18,6 +18,7 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/payment_methods.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/canonical_origin.php';
 
 if (!csrf_validate()) {
     http_response_code(403);
@@ -110,16 +111,10 @@ try {
         ? "Invoice {$invoiceLabel} - {$checkoutRecipient} (includes $" . number_format($surchargeAmount, 2) . " processing fee)"
         : "Invoice {$invoiceLabel} - {$checkoutRecipient}";
     
-    // Build URLs
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '' && !empty($appConfig['app_host'])) {
-        $host = (string)$appConfig['app_host'];
+    $baseUrl = app_canonical_https_origin($appConfig);
+    if ($baseUrl === null) {
+        throw new RuntimeException('Configure the canonical HTTPS app host before creating a Stripe checkout.');
     }
-    if ($host === '') {
-        $host = 'localhost';
-    }
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-    $baseUrl = $scheme . '://' . $host;
     
     $successUrl = $baseUrl . '/?page=invoice/invoice-details&id=' . $invoiceId . '&payment=success&session_id={CHECKOUT_SESSION_ID}';
     $cancelUrl = $baseUrl . '/?page=invoice/invoice-details&id=' . $invoiceId . '&payment=cancelled';

@@ -147,16 +147,12 @@ try {
     $surchargeAmount = max(0.0, (float)($surchargeInfo['client_pays'] ?? 0));
     $checkoutTotal = $amountDue + $surchargeAmount;
     
-    // Build URLs
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '' && !empty($appConfig['app_host'])) {
-        $host = (string)$appConfig['app_host'];
+    // Payment return URLs must never use a request-supplied Host header.
+    require_once __DIR__ . '/../../utils/canonical_origin.php';
+    $baseUrl = app_canonical_https_origin($appConfig);
+    if ($baseUrl === null) {
+        throw new RuntimeException('Configure the canonical HTTPS app host before creating a Stripe checkout.');
     }
-    if ($host === '') {
-        $host = 'localhost';
-    }
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-    $baseUrl = $scheme . '://' . $host;
     
     $docNumber = $invoice['doc_number'] ?? $invoiceId;
     $documentLabel = $documentType === 'project_invoice'
