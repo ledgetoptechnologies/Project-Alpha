@@ -55,13 +55,15 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
         $insert->execute([4, 'project_invoice_token_1', 'project_invoice', 30, null, 0, '2026-01-01']);
         $insert->execute([5, 'expired_invoice_token_1', 'invoice', 12, '2000-01-01 00:00:00', 0, '2026-01-01']);
         $insert->execute([6, 'org_only_aggregate_token', 'project_invoice', 31, null, 0, '2026-01-01']);
-        $this->pdo->exec("CREATE TABLE invoices(id INTEGER PRIMARY KEY,public_id TEXT,client_id INTEGER,organization_id INTEGER,project_id INTEGER,status TEXT,currency TEXT,total TEXT,amount_paid TEXT,balance_due TEXT,finalized_at TEXT,collection_mode TEXT,recipient_presentation_mode TEXT);
+        $this->pdo->exec("CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEXT);
+            INSERT INTO app_config VALUES(0,'timezone','UTC');
+            CREATE TABLE invoices(id INTEGER PRIMARY KEY,public_id TEXT,client_id INTEGER,organization_id INTEGER,project_id INTEGER,status TEXT,currency TEXT,total TEXT,amount_paid TEXT,balance_due TEXT,finalized_at TEXT,collection_mode TEXT,recipient_presentation_mode TEXT,document_date TEXT,due_date TEXT);
             CREATE TABLE contracts(id INTEGER PRIMARY KEY,public_id TEXT,client_id INTEGER,organization_id INTEGER,project_id INTEGER,status TEXT,currency TEXT,total TEXT,signed_at TEXT);
-            CREATE TABLE project_invoices(id INTEGER PRIMARY KEY,public_id TEXT,primary_client_id INTEGER,organization_id INTEGER,project_id INTEGER,status TEXT,currency TEXT,total TEXT,amount_paid TEXT,balance_due TEXT,finalized_at TEXT);
+            CREATE TABLE project_invoices(id INTEGER PRIMARY KEY,public_id TEXT,primary_client_id INTEGER,organization_id INTEGER,project_id INTEGER,status TEXT,currency TEXT,total TEXT,amount_paid TEXT,balance_due TEXT,finalized_at TEXT,due_date TEXT);
             CREATE TABLE project_invoice_items(project_invoice_id INTEGER,invoice_id INTEGER);
-            INSERT INTO invoices VALUES(10,'12121212121212121212121212121212',10,1,100,'partial','USD','100.00','20.00','80.00','2026-01-01','direct','named'),(11,'13131313131313131313131313131313',10,1,100,'unpaid','USD','50.00','0.00','50.00','2026-01-01','project_aggregate','named'),(90,'90909090909090909090909090909090',20,2,NULL,'unpaid','USD','999.00','0.00','999.00','2026-01-01','direct','named'),(91,'91919191919191919191919191919191',10,2,NULL,'unpaid','USD','777.00','0.00','777.00','2026-01-01','direct','named');
+            INSERT INTO invoices VALUES(10,'12121212121212121212121212121212',10,1,100,'partial','USD','100.00','20.00','80.00','2026-01-01','direct','named','2026-01-02 00:30:00','2026-02-01'),(11,'13131313131313131313131313131313',10,1,100,'unpaid','USD','50.00','0.00','50.00','2026-01-01','project_aggregate','named','2026-01-03 00:00:00','2026-02-02'),(90,'90909090909090909090909090909090',20,2,NULL,'unpaid','USD','999.00','0.00','999.00','2026-01-01','direct','named','2026-01-04 00:00:00','2026-02-03'),(91,'91919191919191919191919191919191',10,2,NULL,'unpaid','USD','777.00','0.00','777.00','2026-01-01','direct','named','2026-01-05 00:00:00','2026-02-04');
             INSERT INTO contracts VALUES(20,'14141414141414141414141414141414',10,1,100,'pending','USD','200.00',NULL);
-            INSERT INTO project_invoices VALUES(30,'15151515151515151515151515151515',10,1,100,'sent','USD','50.00','0.00','50.00','2026-01-01'),(31,'16161616161616161616161616161616',NULL,1,300,'overdue','USD','60.00','0.00','60.00','2026-01-01'),(32,'17171717171717171717171717171717',NULL,2,300,'overdue','USD','70.00','0.00','70.00','2026-01-01');
+            INSERT INTO project_invoices VALUES(30,'15151515151515151515151515151515',10,1,100,'sent','USD','50.00','0.00','50.00','2026-01-01','2026-02-15'),(31,'16161616161616161616161616161616',NULL,1,300,'overdue','USD','60.00','0.00','60.00','2026-01-01','2026-02-16'),(32,'17171717171717171717171717171717',NULL,2,300,'overdue','USD','70.00','0.00','70.00','2026-01-01','2026-02-17');
             INSERT INTO project_invoice_items VALUES(30,11);");
     }
 
@@ -119,18 +121,50 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
         $scope=api_v2_financial_resolve_scope($this->pdo,7,'project','project-a');self::assertNotNull($scope);
         $identity=['application_pk'=>7,'source_instance_id'=>'123e4567-e89b-42d3-a456-426614174000','application_id'=>'223e4567-e89b-42d3-a456-426614174000','history_epoch'=>'323e4567-e89b-42d3-a456-426614174000'];
         $beforeLinks=$this->pdo->query('SELECT * FROM public_links ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
-        $first=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',null,2,'https://pa.example.test','423e4567-e89b-42d3-a456-426614174000');
+        $first=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',null,2,'https://pa.example.test','423e4567-e89b-42d3-a456-426614174000',true);
         self::assertSame(200,$first['status']);self::assertSame(3,$first['payload']['snapshot']['documentCount']);self::assertCount(2,$first['payload']['documents']);
         self::assertSame(['apiVersion','sourceInstanceId','applicationId','historyEpoch','requestId','selector','snapshot','documents','nextCursor'],array_keys($first['payload']));
         self::assertSame(['kind','externalId','publicId','revision','projectionSha256','authorizationGeneration'],array_keys($first['payload']['selector']));
-        self::assertSame(['publicId','kind','status','currency','total','amountPaid','balanceDue','documentUrl','actionUrl'],array_keys($first['payload']['documents'][0]));
+        self::assertSame(['publicId','kind','status','currency','total','amountPaid','balanceDue','documentUrl','actionUrl','issueDate','dueDate'],array_keys($first['payload']['documents'][0]));
+        $byKind=[];foreach($first['payload']['documents'] as $document)$byKind[$document['kind']]=$document;
+        self::assertNull($byKind['contract']['issueDate']);self::assertNull($byKind['contract']['dueDate']);
+        self::assertSame('2026-01-02',$byKind['invoice']['issueDate']);self::assertSame('2026-02-01',$byKind['invoice']['dueDate']);
         self::assertNotContains('13131313131313131313131313131313',array_column($first['payload']['documents'],'publicId'));
         self::assertStringNotContainsString('999.00',json_encode($first['payload'],JSON_THROW_ON_ERROR));
         self::assertSame($beforeLinks,$this->pdo->query('SELECT * FROM public_links ORDER BY id')->fetchAll(PDO::FETCH_ASSOC));
         $cursor=$first['payload']['nextCursor'];self::assertIsString($cursor);
-        $second=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',$cursor,2,'https://pa.example.test','523e4567-e89b-42d3-a456-426614174000');self::assertSame(200,$second['status']);self::assertCount(1,$second['payload']['documents']);
-        $this->pdo->exec("UPDATE invoices SET balance_due='79.00' WHERE id=10");
-        self::assertSame(409,api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',$cursor,2,'https://pa.example.test','623e4567-e89b-42d3-a456-426614174000')['status']);
+        $second=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',$cursor,2,'https://pa.example.test','523e4567-e89b-42d3-a456-426614174000',true);self::assertSame(200,$second['status']);self::assertCount(1,$second['payload']['documents']);
+        self::assertSame('project_invoice',$second['payload']['documents'][0]['kind']);self::assertNull($second['payload']['documents'][0]['issueDate']);
+        self::assertSame('2026-02-15',$second['payload']['documents'][0]['dueDate']);
+        $this->pdo->exec("UPDATE invoices SET due_date='2026-02-05' WHERE id=10");
+        self::assertSame(409,api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',$cursor,2,'https://pa.example.test','623e4567-e89b-42d3-a456-426614174000',true)['status']);
+    }
+
+    public function testLegacyWireAndSnapshotStayStableWithoutDateNegotiation(): void
+    {
+        $scope=api_v2_financial_resolve_scope($this->pdo,7,'project','project-a');self::assertNotNull($scope);
+        $identity=['application_pk'=>7,'source_instance_id'=>'123e4567-e89b-42d3-a456-426614174000','application_id'=>'223e4567-e89b-42d3-a456-426614174000','history_epoch'=>'323e4567-e89b-42d3-a456-426614174000'];
+        $first=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',null,2,'https://pa.example.test','723e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(['publicId','kind','status','currency','total','amountPaid','balanceDue','documentUrl','actionUrl'],array_keys($first['payload']['documents'][0]));
+        $cursor=$first['payload']['nextCursor'];self::assertIsString($cursor);$legacySnapshot=$first['payload']['snapshot']['sha256'];
+        $this->pdo->exec("UPDATE invoices SET due_date='2026-02-06' WHERE id=10");
+        $next=api_v2_financial_feed_read($this->pdo,$identity,$scope,'project-a',$cursor,2,'https://pa.example.test','823e4567-e89b-42d3-a456-426614174000');
+        self::assertSame(200,$next['status']);self::assertSame($legacySnapshot,$next['payload']['snapshot']['sha256']);
+    }
+
+    public function testInvoiceIssueDateUsesTheConfiguredTimezoneLikeTheExistingPdf(): void
+    {
+        $previous=date_default_timezone_get();
+        try {
+            $this->pdo->exec("UPDATE app_config SET config_value='America/Los_Angeles' WHERE config_key='timezone'");
+            $timezone=api_v2_financial_timezone($this->pdo);self::assertSame('America/Los_Angeles',$timezone->getName());
+            date_default_timezone_set($timezone->getName());
+            $timestamp='2026-01-02 00:30:00';
+            self::assertSame(date('Y-m-d',strtotime($timestamp)),api_v2_financial_issue_date($timestamp,$timezone));
+            self::assertSame('2026-02-01',api_v2_financial_due_date('2026-02-01'));
+            self::assertNull(api_v2_financial_due_date(null));
+            self::assertNull(api_v2_financial_issue_date(null,$timezone));
+        } finally {date_default_timezone_set($previous);}
     }
 
     public function testOrganizationProjectionRejectsCrossCustomerRowsEvenWhenDocumentOrganizationIsForged(): void
@@ -168,7 +202,7 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
 
     public function testFullSnapshotUsesBoundedLinkChunksAndRejectsGlobalOverflowBeforeLinks(): void
     {
-        $insert=$this->pdo->prepare("INSERT INTO invoices VALUES(?, ?,10,1,100,'unpaid','USD','1.00','0.00','1.00','2026-01-01','direct','named')");
+        $insert=$this->pdo->prepare("INSERT INTO invoices(id,public_id,client_id,organization_id,project_id,status,currency,total,amount_paid,balance_due,finalized_at,collection_mode,recipient_presentation_mode,document_date,due_date) VALUES(?, ?,10,1,100,'unpaid','USD','1.00','0.00','1.00','2026-01-01','direct','named','2026-01-01 00:00:00','2026-02-01')");
         for($id=1000;$id<2001;$id++)$insert->execute([$id,str_pad(dechex($id),32,'0',STR_PAD_LEFT)]);
         $scope=api_v2_financial_resolve_scope($this->pdo,7,'project','project-a');
         $identity=['application_pk'=>7,'source_instance_id'=>'123e4567-e89b-42d3-a456-426614174000','application_id'=>'223e4567-e89b-42d3-a456-426614174000','history_epoch'=>'323e4567-e89b-42d3-a456-426614174000'];
@@ -205,6 +239,7 @@ final class ApiV2FinancialProjectionFoundationTest extends TestCase
         self::assertStringContainsString("APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED",$index);
         self::assertStringContainsString("['selectorType','externalId','cursor','limit']",$controller);
         self::assertStringContainsString("'financial.documents.read'",$controller);
+        self::assertStringContainsString('X_PA_FINANCIAL_DOCUMENT_DATES',$controller);
         self::assertStringContainsString('# APP_API_V2_FINANCIAL_DOCUMENTS_ENABLED=false',(string)file_get_contents($root.'/config/.env.example'));
     }
 

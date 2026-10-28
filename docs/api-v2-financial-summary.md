@@ -28,6 +28,7 @@ type FinancialSummary = {
   accountingBasis: "payment-date-current-adjustments-and-recorded-expense-date";
   coverage: {
     complete: boolean;
+    // Stable legacy token; see currency assignment rules below for current evidence sources.
     currencyPolicy: "linked-document-currency-only" | "explicit-company-base-and-linked-document-currency";
     baseCurrency: string | null;
     unknownPaymentCurrencyCount: number;
@@ -96,9 +97,16 @@ When unset, expense counts are reported once in `recordedExpenseCounts`, while
 currency-specific expense fields and operating results are null. When set, all
 non-void period expense counts/amounts belong to exactly the declared base
 currency; other currency buckets have zero expenses. Operating results use
-exact SQL DECIMAL subtraction. This expense declaration never assigns a
-currency to standalone payments. Income requires agreeing linked document
-currencies; missing, malformed, or conflicting currencies stay unknown. Invalid stored policy fails closed.
+exact SQL DECIMAL subtraction. The `currencyPolicy` values are stable
+compatibility tokens. With a base currency configured, current income evidence
+may also include an imported provider transaction's currency; the token has
+not changed to preserve the API contract. Linked invoice, project invoice, and
+contract currencies must agree with one another and with any imported provider
+currency. Invalid or conflicting evidence stays unknown. The base currency
+fills only payments with no linked document, job, or imported/provider evidence,
+such as standalone manual income. Payments with unresolved document/provider
+links stay unknown. Without a base currency, only linked document or imported
+provider currencies assign payment currency. Invalid stored policy fails closed.
 The setting is read in the same repeatable snapshot as the aggregates.
 Known currency buckets remain useful with incomplete coverage. `decimalScale:2`
 describes PA's actual DECIMAL storage, not an invented ISO currency minor-unit
