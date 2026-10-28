@@ -36,6 +36,7 @@ final class PaymentEmailDeliveryTest extends TestCase
         $this->pdo->exec('CREATE TABLE payment_receipts (
             id INTEGER PRIMARY KEY AUTOINCREMENT, payment_id INTEGER UNIQUE, invoice_id INTEGER,
             receipt_number TEXT UNIQUE, public_token TEXT UNIQUE, amount REAL, email_to TEXT,
+            expires_at TEXT, revoked INTEGER NOT NULL DEFAULT 0,
             emailed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )');
         $this->pdo->exec('CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, client_id INTEGER)');
@@ -83,6 +84,18 @@ final class PaymentEmailDeliveryTest extends TestCase
 
         self::assertStringStartsWith('payment-receipt:100:', $failedOptions['message_key']);
         self::assertNull($this->pdo->query('SELECT emailed_at FROM payment_receipts WHERE payment_id=100')->fetchColumn());
+        $access = $this->pdo->prepare('SELECT id FROM payment_receipts WHERE public_token=? AND revoked=0 AND expires_at>?');
+        $token = (string)$this->pdo->query('SELECT public_token FROM payment_receipts WHERE payment_id=100')->fetchColumn();
+        $access->execute([$token, date('Y-m-d H:i:s')]);
+        self::assertNotFalse($access->fetchColumn());
+        $access->execute([$token, (new DateTimeImmutable('now'))->modify('+2 years')->format('Y-m-d H:i:s')]);
+        self::assertFalse($access->fetchColumn());
+        $this->pdo->exec('UPDATE payment_receipts SET revoked=1 WHERE payment_id=100');
+        $access->execute([$token, date('Y-m-d H:i:s')]);
+        self::assertFalse($access->fetchColumn());
+        $this->pdo->exec('UPDATE payment_receipts SET revoked=0 WHERE payment_id=100');
+        $controller = (string)file_get_contents(dirname(__DIR__, 2) . '/src/controllers/public_view/payment_receipt.php');
+        self::assertStringContainsString('r.revoked=0 AND r.expires_at>?', $controller);
 
         $retryOptions = [];
         $receipt = payment_receipt_issue(

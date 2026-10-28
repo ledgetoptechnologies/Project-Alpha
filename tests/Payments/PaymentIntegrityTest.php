@@ -161,7 +161,7 @@ final class PaymentIntegrityTest extends TestCase
         $cashPaymentId = $this->remember('payments', (int)$cash['payment_id']);
 
         $receiptToken = bin2hex(random_bytes(32));
-        $this->pdo->prepare('INSERT INTO payment_receipts (payment_id,invoice_id,receipt_number,public_token,amount) VALUES (?,?,?,?,100)')
+        $this->pdo->prepare('INSERT INTO payment_receipts (payment_id,invoice_id,receipt_number,public_token,expires_at,amount) VALUES (?,?,?,?,DATE_ADD(NOW(), INTERVAL 1 YEAR),100)')
             ->execute([$stripePaymentId, $sourceInvoiceId, 'R-CORR-' . bin2hex(random_bytes(5)), $receiptToken]);
 
         $result = payment_reallocate_to_invoice(

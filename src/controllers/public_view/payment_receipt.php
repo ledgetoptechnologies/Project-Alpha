@@ -29,9 +29,9 @@ $stmt = $pdo->prepare(
      LEFT JOIN jobs j ON j.id=p.job_id
      LEFT JOIN processor_payment_transactions ppt ON ppt.payment_id=p.id
      LEFT JOIN invoices i ON i.id=r.invoice_id
-     WHERE r.public_token=?'
+     WHERE r.public_token=? AND r.revoked=0 AND r.expires_at>?'
 );
-$stmt->execute([$token]);
+$stmt->execute([$token, date('Y-m-d H:i:s')]);
 $receipt = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$receipt) {
     http_response_code(404);
