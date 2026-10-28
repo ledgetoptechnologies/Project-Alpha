@@ -49,7 +49,9 @@ services:
       PORTAL_INTEGRATION_HMAC_SECRETS_JSON: ""
       # Optional. Match the cron value exactly and retain it for restores.
       BACKUP_ENCRYPTION_KEY: ""
-      TRUSTED_PROXIES: "172.16.0.0/12 192.168.0.0/16 10.0.0.0/8 127.0.0.0/8"
+      # Set only the exact IPs of reverse proxies that append X-Forwarded-For.
+      # Direct private-network peers must not be able to set their own client IP.
+      TRUSTED_PROXIES: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
