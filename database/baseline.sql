@@ -1557,8 +1557,6 @@ CREATE TABLE IF NOT EXISTS payment_receipts (
     invoice_id INT NULL,
     receipt_number VARCHAR(50) NOT NULL,
     public_token VARCHAR(64) NOT NULL,
-    expires_at DATETIME NOT NULL,
-    revoked TINYINT(1) NOT NULL DEFAULT 0,
     amount DECIMAL(12,2) NOT NULL,
     email_to VARCHAR(255) NULL,
     emailed_at TIMESTAMP NULL,
@@ -1566,7 +1564,6 @@ CREATE TABLE IF NOT EXISTS payment_receipts (
     UNIQUE KEY uq_payment_receipt_payment (payment_id),
     UNIQUE KEY uq_payment_receipt_number (receipt_number),
     UNIQUE KEY uq_payment_receipt_token (public_token),
-    INDEX idx_payment_receipt_access (public_token,revoked,expires_at),
     CONSTRAINT fk_payment_receipt_payment FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
     CONSTRAINT fk_payment_receipt_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -2278,7 +2275,6 @@ CREATE TABLE IF NOT EXISTS system_audit (
 CREATE TABLE IF NOT EXISTS audit_schedules (
     id INT AUTO_INCREMENT PRIMARY KEY,
     organization_id INT NULL,
-    created_by INT NULL,
     report_type ENUM('audit','expense') NOT NULL DEFAULT 'audit',
     frequency ENUM('weekly', 'monthly', 'quarterly', 'annually') NOT NULL DEFAULT 'monthly',
     date_range_type VARCHAR(50) NOT NULL DEFAULT 'current_year',
@@ -2298,7 +2294,6 @@ CREATE TABLE IF NOT EXISTS audit_schedules (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_audit_sched_org (organization_id),
-    INDEX idx_audit_schedules_created_by (created_by),
     INDEX idx_audit_sched_type (organization_id, report_type, is_active),
     INDEX idx_audit_sched_active (is_active),
     INDEX idx_audit_sched_next (next_run_at)
@@ -2469,7 +2464,6 @@ CREATE TABLE IF NOT EXISTS archived_clients (
     email VARCHAR(255) NULL,
     phone VARCHAR(50) NULL,
     organization_id INT NULL,
-    created_by INT NULL,
     client_type ENUM('unknown','business','consumer') NULL,
     notes TEXT NULL,
     address_line1 VARCHAR(255) NULL,
@@ -2491,7 +2485,6 @@ CREATE TABLE IF NOT EXISTS archived_clients (
     archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_archived_clients_client (client_id),
     INDEX idx_archived_clients_org (organization_id),
-    INDEX idx_archived_clients_created_by (created_by),
     INDEX idx_archived_clients_name (name),
     INDEX idx_archived_clients_portal_principal (portal_principal_id),
     UNIQUE KEY uq_archived_clients_public_id (public_id),
