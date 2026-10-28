@@ -98,6 +98,42 @@ class WebhookSignatureTest extends TestCase
         self::assertLessThan($parseAt, $verifyAt);
     }
 
+    public function testUnsignedCallbacksCannotExhaustTheStripeWebhookQuota(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $frontController = (string)file_get_contents($root . '/public/index.php');
+        $router = (string)file_get_contents($root . '/src/controllers/webhook/stripe_webhooks.php');
+
+        $skipListStart = strpos($frontController, '$skipGlobalRateLimitFor = [');
+        $skipListEnd = strpos($frontController, '];', $skipListStart);
+        self::assertNotFalse($skipListStart);
+        self::assertNotFalse($skipListEnd);
+        $skipList = substr($frontController, $skipListStart, $skipListEnd - $skipListStart);
+        self::assertStringContainsString("'stripe-webhook',", $skipList);
+        self::assertStringContainsString("'stripe-webhook-legacy',", $skipList);
+
+        $payloadRead = strpos($router, 'pa_stripe_webhook_read_payload($input');
+        $signatureCheck = strpos($router, 'pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader)');
+        $quotaCheck = strpos($router, 'rate_limit_check($pdo, \'stripe_webhook\', 300, 60, false)');
+        $eventDispatch = strpos($router, '$event = json_decode($payload, true)');
+        self::assertNotFalse($payloadRead);
+        self::assertNotFalse($signatureCheck);
+        self::assertNotFalse($quotaCheck);
+        self::assertNotFalse($eventDispatch);
+        self::assertLessThan($signatureCheck, $payloadRead);
+        self::assertLessThan($quotaCheck, $signatureCheck);
+        self::assertLessThan($eventDispatch, $quotaCheck);
+
+        $invalidQuota = "rate_limit_check(\$pdo, 'stripe_webhook_invalid', 300, 60, false)";
+        self::assertSame(2, substr_count($router, $invalidQuota));
+        $emptyPayloadLog = strpos($router, 'webhook_log_insert($pdo, $endpointName, \'\', $sigHeader, $clientIp)');
+        $invalidSignatureLog = strpos($router, 'webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp)');
+        self::assertNotFalse($emptyPayloadLog);
+        self::assertNotFalse($invalidSignatureLog);
+        self::assertLessThan($emptyPayloadLog, strpos($router, $invalidQuota));
+        self::assertLessThan($invalidSignatureLog, strrpos($router, $invalidQuota));
+    }
+
     public function testWebhookBodiesAreLoggedOnlyAsMetadataAfterVerification(): void
     {
         $root = dirname(__DIR__, 2);

@@ -1172,6 +1172,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'on-demand-invoice-generate',
 
         // Invoices / payments
+        // Stripe authenticates its callbacks in the controller. Unverified
+        // requests must not consume a quota shared with genuine callbacks.
+        'stripe-webhook',
+        'stripe-webhook-legacy',
         'invoice/invoice-create',
         'invoice/invoice-action',
         'invoice/invoices-create',

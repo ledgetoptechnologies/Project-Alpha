@@ -19,12 +19,6 @@ $logId = null;
 
 header('Content-Type: application/json');
 
-if (!rate_limit_check($pdo, 'stripe_webhook', 300, 60, false)) {
-    http_response_code(429);
-    echo json_encode(['error' => 'Too many webhook requests']);
-    exit;
-}
-
 try {
     $input = fopen('php://input', 'rb');
     $payload = pa_stripe_webhook_read_payload($input, $_SERVER['CONTENT_LENGTH'] ?? null);
@@ -43,6 +37,11 @@ try {
 }
 
 if (!$payload) {
+    if (!rate_limit_check($pdo, 'stripe_webhook_invalid', 300, 60, false)) {
+        http_response_code(429);
+        echo json_encode(['error' => 'Too many webhook requests']);
+        exit;
+    }
     http_response_code(400);
     $logId = webhook_log_insert($pdo, $endpointName, '', $sigHeader, $clientIp);
     webhook_log_update($pdo, $logId, false, 400, 'No payload');
@@ -65,6 +64,11 @@ try {
     $webhookSecret = StripeService::webhookSecret($appConfig);
     pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader);
     $signatureValid = true;
+    if (!rate_limit_check($pdo, 'stripe_webhook', 300, 60, false)) {
+        http_response_code(429);
+        echo json_encode(['error' => 'Too many webhook requests']);
+        exit;
+    }
     $logId = webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp, true);
     
     // Parse the event
@@ -223,6 +227,12 @@ try {
     echo json_encode(['received' => true]);
     
 } catch (Throwable $e) {
+    if ($signatureValid !== true
+        && !rate_limit_check($pdo, 'stripe_webhook_invalid', 300, 60, false)) {
+        http_response_code(429);
+        echo json_encode(['error' => 'Too many webhook requests']);
+        exit;
+    }
     @error_log('[StripeWebhook] Error: ' . $e->getMessage());
     if ($logId === null && $signatureValid !== true) {
         $logId = webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp);
