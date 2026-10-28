@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
+require_once __DIR__ . '/../../../utils/project_notes_access.php';
 ?>
 
 <section>
@@ -10,10 +11,17 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
         echo '<h2>Job Details</h2><div style="color:var(--muted)">No job selected.</div>';
         return;
     }
+    $actorId = (int)($_SESSION['user']['id'] ?? 0);
+    $authorizedJob = project_notes_authorized_job($pdo, $project_code, $actorId);
+    if (!$authorizedJob) {
+        http_response_code(404);
+        echo '<h2>Job not found.</h2>';
+        return;
+    }
 
     // Fetch project meta (notes)
-    $metaStmt = $pdo->prepare('SELECT notes FROM project_meta WHERE project_code = ?');
-    $metaStmt->execute([$project_code]);
+    $metaStmt = $pdo->prepare('SELECT notes FROM project_meta WHERE project_code = ? AND client_id = ?');
+    $metaStmt->execute([$project_code, (int)$authorizedJob['client_id']]);
     $notes = (string)$metaStmt->fetchColumn();
 
     echo '<h2>Job ' . htmlspecialchars($project_code) . '</h2>';
@@ -30,21 +38,7 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
         <?php endif; ?>
         <div style="margin-top:10px">
             <?php
-            // Find a representative client id for this job (quotes > contracts > invoices)
-            $clientId = 0;
-            $tmp = $pdo->prepare('SELECT client_id FROM quotes WHERE project_code = ? LIMIT 1');
-            $tmp->execute([$project_code]);
-            $clientId = (int)$tmp->fetchColumn();
-            if (!$clientId) {
-                $tmp2 = $pdo->prepare('SELECT client_id FROM contracts WHERE project_code = ? LIMIT 1');
-                $tmp2->execute([$project_code]);
-                $clientId = (int)$tmp2->fetchColumn();
-            }
-            if (!$clientId) {
-                $tmp3 = $pdo->prepare('SELECT client_id FROM invoices WHERE project_code = ? LIMIT 1');
-                $tmp3->execute([$project_code]);
-                $clientId = (int)$tmp3->fetchColumn();
-            }
+            $clientId = (int)$authorizedJob['client_id'];
             ?>
             <form method="post" action="/?page=project-notes-update" style="margin-top:8px;display:grid;gap:8px">
                 <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($_SESSION['csrf'] ?? ''); ?>">
@@ -64,8 +58,8 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
         <div style="border:1px solid #eee;border-radius:8px;padding:12px;background:#fff">
             <h4>Quotes</h4>
             <?php
-            $qstmt = $pdo->prepare('SELECT id, doc_number, client_id, total, status, created_at, subtotal, deposit_type, deposit_amount, discount_type, discount_value, tax_percent FROM quotes WHERE project_code = ? ORDER BY created_at DESC');
-            $qstmt->execute([$project_code]);
+            $qstmt = $pdo->prepare('SELECT id, doc_number, client_id, total, status, created_at, subtotal, deposit_type, deposit_amount, discount_type, discount_value, tax_percent FROM quotes WHERE project_code = ? AND client_id = ? ORDER BY created_at DESC');
+            $qstmt->execute([$project_code, $clientId]);
             $quotes = $qstmt->fetchAll();
             if (!$quotes):
             ?>
@@ -118,8 +112,8 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
             <h4>Contracts</h4>
             <?php
             // Show the most recent contract (primary) if applicable
-            $primary = $pdo->prepare('SELECT id, doc_number, client_id, status, signed_pdf_path, created_at, subtotal, total, deposit_amount, deposit_paid FROM contracts WHERE project_code = ? ORDER BY created_at DESC LIMIT 1');
-            $primary->execute([$project_code]);
+            $primary = $pdo->prepare('SELECT id, doc_number, client_id, status, signed_pdf_path, created_at, subtotal, total, deposit_amount, deposit_paid FROM contracts WHERE project_code = ? AND client_id = ? ORDER BY created_at DESC LIMIT 1');
+            $primary->execute([$project_code, $clientId]);
             $primaryContract = $primary->fetch();
             if ($primaryContract): ?>
                 <div style="margin-bottom:10px;padding:8px;border:1px solid #eee;border-radius:8px;background:#fff">
@@ -135,8 +129,8 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
                     <?php endif; ?>
                 </div>
             <?php endif;
-            $cstmt = $pdo->prepare('SELECT id, doc_number, client_id, status, signed_pdf_path, created_at, subtotal, total, deposit_amount, deposit_paid FROM contracts WHERE project_code = ? ORDER BY created_at DESC');
-            $cstmt->execute([$project_code]);
+            $cstmt = $pdo->prepare('SELECT id, doc_number, client_id, status, signed_pdf_path, created_at, subtotal, total, deposit_amount, deposit_paid FROM contracts WHERE project_code = ? AND client_id = ? ORDER BY created_at DESC');
+            $cstmt->execute([$project_code, $clientId]);
             $contracts = $cstmt->fetchAll();
             if (!$contracts):
             ?>
@@ -192,8 +186,8 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
         <div style="border:1px solid #eee;border-radius:8px;padding:12px;background:#fff">
             <h4>Invoices</h4>
             <?php
-            $istmt = $pdo->prepare('SELECT id, doc_number, invoice_type, client_id, total, status, created_at FROM invoices WHERE project_code = ? ORDER BY created_at DESC');
-            $istmt->execute([$project_code]);
+            $istmt = $pdo->prepare('SELECT id, doc_number, invoice_type, client_id, total, status, created_at FROM invoices WHERE project_code = ? AND client_id = ? ORDER BY created_at DESC');
+            $istmt->execute([$project_code, $clientId]);
             $invoices = $istmt->fetchAll();
             if (!$invoices):
             ?>
