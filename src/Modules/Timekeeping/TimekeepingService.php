@@ -638,6 +638,7 @@ final class TimekeepingService
         $projectId = !empty($input['project_id']) ? (int)$input['project_id'] : null;
         $invoiceId = !empty($input['invoice_id']) ? (int)$input['invoice_id'] : null;
         $jobId = !empty($input['job_id']) ? (int)$input['job_id'] : null;
+        $jobProjectId = null;
 
         if (!$manageAll && ($invoiceId || ($clientId && empty($input['_service_context'])))) {
             throw new DomainException('Client and invoice details are available only to timekeeping managers.');
@@ -698,7 +699,7 @@ final class TimekeepingService
                 throw new DomainException('The selected project does not belong to that client.');
             }
             $clientId ??= $projectClientId;
-            if (!$jobId) {
+            if (!$jobProjectId) {
                 $this->assertProjectAssigned($userId, $projectId, $manageAll);
             }
         }
