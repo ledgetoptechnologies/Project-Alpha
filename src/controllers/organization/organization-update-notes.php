@@ -1,6 +1,7 @@
 <?php
 // src/controllers/organization/organization-update-notes.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
@@ -18,6 +19,7 @@ if (!$id) {
     header('Location: /?page=organization/organizations-list&error=' . urlencode('Invalid organization ID'));
     exit;
 }
+require_record_ownership($pdo, 'organizations', $id);
 
 // Verify organization exists
 $checkStmt = $pdo->prepare('SELECT id FROM organizations WHERE id = ?');

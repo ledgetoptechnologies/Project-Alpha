@@ -1,6 +1,7 @@
 <?php
 // src/controllers/organization/organizations_upload.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/acl.php';
 
 error_log('ORG_UPLOAD: ===== START ===== Method: ' . $_SERVER['REQUEST_METHOD'] . ' POST: ' . json_encode(array_keys($_POST)) . ' FILES: ' . json_encode(array_keys($_FILES)));
 
@@ -11,6 +12,7 @@ if ($id <= 0) {
     header('Location: /?page=organization/organizations-list&error=Invalid%20organization');
     exit;
 }
+require_record_ownership($pdo, 'organizations', $id);
 
 if (empty($_FILES['tax_exempt_file'])) {
     error_log('ORG_UPLOAD: ERROR - No file in $_FILES array');
