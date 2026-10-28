@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/escaper.php';
 require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
+require_once __DIR__ . '/../../../utils/acl.php';
 $directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 $per = (int)($_GET['per_page'] ?? 50);
@@ -11,30 +12,28 @@ if (!in_array($per, [50, 100], true)) $per = 50;
 $pageN = max(1, (int)($_GET['p'] ?? 1));
 $offset = ($pageN - 1) * $per;
 $q = trim($_GET['q'] ?? '');
-$params=[]; $where='';
-if ($q !== '') { $where = 'WHERE ac.name LIKE ?'; $params[] = '%'.$q.'%'; }
-
-$stc = $pdo->prepare('SELECT COUNT(*) FROM archived_clients ac '.($where));
-$stc->execute($params);
-$total = (int)$stc->fetchColumn();
-
-$sql = "SELECT ac.id, ac.client_id, ac.name, ac.email, ac.phone, org.name AS organization, ac.archived_at FROM archived_clients ac LEFT JOIN organizations org ON ac.organization_id = org.id ".($where)." ORDER BY ac.archived_at DESC LIMIT $per OFFSET $offset";
 $params = [];
-$where = '';
+$conditions = [];
 
 if ($q !== '') {
-  $where = 'WHERE name LIKE ?';
+  $conditions[] = 'ac.name LIKE ?';
   $params[] = '%' . $q . '%';
 }
+$userId = (int)($_SESSION['user']['id'] ?? 0);
+if (!in_array(acl_user_role($pdo, $userId), ['admin', 'owner', 'staff'], true)) {
+  $conditions[] = 'ac.created_by = ?';
+  $params[] = $userId;
+}
+$where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
-$stc = $pdo->prepare('SELECT COUNT(*) FROM archived_clients ' . ($where));
+$stc = $pdo->prepare('SELECT COUNT(*) FROM archived_clients ac ' . $where);
 $stc->execute($params);
 $total = (int)$stc->fetchColumn();
 
 $sql = "SELECT ac.id, ac.client_id, ac.name, ac.email, ac.phone, org.name AS organization, ac.archived_at
         FROM archived_clients ac
         LEFT JOIN organizations org ON ac.organization_id = org.id
-        " . ($where ? str_replace('WHERE name LIKE ?', 'WHERE ac.name LIKE ?', $where) : '') . "
+        " . $where . "
         ORDER BY ac.archived_at DESC LIMIT $per OFFSET $offset";
 
 $st = $pdo->prepare($sql);

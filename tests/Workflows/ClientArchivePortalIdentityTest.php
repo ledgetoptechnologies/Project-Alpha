@@ -31,7 +31,7 @@ CREATE TABLE app_config(organization_id INTEGER,config_key TEXT,config_value TEX
 CREATE TABLE portal_integration_audit(id INTEGER PRIMARY KEY,integration_profile_id INTEGER,api_key_id INTEGER,action TEXT,target_type TEXT,target_public_id TEXT,metadata_json TEXT);
 CREATE TABLE clients(
   id INTEGER PRIMARY KEY AUTOINCREMENT,public_id TEXT UNIQUE DEFAULT(lower(hex(randomblob(16)))),name TEXT,email TEXT,phone TEXT,
-  organization_id INTEGER,client_type TEXT DEFAULT 'unknown',notes TEXT,address_line1 TEXT,address_line2 TEXT,
+  organization_id INTEGER,created_by INTEGER,client_type TEXT DEFAULT 'unknown',notes TEXT,address_line1 TEXT,address_line2 TEXT,
   city TEXT,state TEXT,postal_code TEXT,country TEXT,source_version TEXT,created_at TEXT,
   archived INTEGER DEFAULT 0,deleted_at TEXT
 );
@@ -43,7 +43,7 @@ CREATE TABLE portal_principals(
 );
 CREATE TABLE archived_clients(
   id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER,public_id TEXT UNIQUE,name TEXT,email TEXT,
-  phone TEXT,organization_id INTEGER,client_type TEXT,notes TEXT,address_line1 TEXT,address_line2 TEXT,
+  phone TEXT,organization_id INTEGER,created_by INTEGER,client_type TEXT,notes TEXT,address_line1 TEXT,address_line2 TEXT,
   city TEXT,state TEXT,postal_code TEXT,country TEXT,created_at TEXT,portal_principal_id INTEGER,
   portal_manual_state TEXT,portal_canonical_email TEXT,
   portal_identity_binding_ids_json TEXT,
@@ -367,6 +367,20 @@ SQL);
             self::assertSame('Archived client not found.', $exception->getMessage());
             $this->pdo->rollBack();
         }
+    }
+
+    public function testArchivePreservesClientCreatorOnRestore(): void
+    {
+        $publicId = str_repeat('b', 32);
+        $this->insertClient(99, $publicId, 'Owned Client', 'owned@example.test', null, 'business');
+        $this->pdo->exec('UPDATE clients SET created_by=7 WHERE id=99');
+        $this->archiveClient(99);
+        self::assertSame(7, (int)$this->pdo->query('SELECT created_by FROM archived_clients WHERE client_id=99')->fetchColumn());
+
+        $this->pdo->beginTransaction();
+        $restored = $this->archive->consumeAndRestore($this->pdo, 1, 7);
+        $this->pdo->commit();
+        self::assertSame(7, (int)$this->pdo->query('SELECT created_by FROM clients WHERE id=' . (int)$restored['client_id'])->fetchColumn());
     }
 
     public function testControllersLockConsumeAndQueueEveryAffectedWorkspaceBeforeCommit(): void
