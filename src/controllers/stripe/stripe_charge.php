@@ -31,10 +31,7 @@ if ($actorId <= 0 || !user_can($pdo, $actorId, 'billing.manage', 0)) {
 }
 
 $invoiceId = (int)($_POST['invoice_id'] ?? 0);
-$returnUrl = (string)($_POST['return_url'] ?? '');
-if (!str_starts_with($returnUrl, '/?page=') || str_contains($returnUrl, "\r") || str_contains($returnUrl, "\n")) {
-    $returnUrl = '';
-}
+$returnToPaymentForm = ($_POST['return_url'] ?? '') === '/?page=payments/payments-create';
 
 if ($invoiceId <= 0) {
     header('Location: /?page=home&error=' . urlencode('Invalid invoice'));
@@ -167,7 +164,9 @@ try {
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[StripeCharge] Error: ' . $e->getMessage());
-    $errorUrl = $returnUrl ?: '/?page=invoice/invoice-details&id=' . $invoiceId;
+    $errorUrl = $returnToPaymentForm
+        ? '/?page=payments/payments-create'
+        : '/?page=invoice/invoice-details&id=' . $invoiceId;
     header('Location: ' . $errorUrl . '&stripe_error=' . urlencode($e->getMessage()));
     exit;
 }
