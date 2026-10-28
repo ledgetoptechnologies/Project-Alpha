@@ -7,6 +7,7 @@ use App\Services\ProjectLifecycleService;
 use App\Services\ProjectRevisionService;
 
 require_once __DIR__ . '/api_v2_capabilities.php';
+require_once __DIR__ . '/api_scopes.php';
 require_once __DIR__ . '/../services/ProjectRevisionService.php';
 require_once __DIR__ . '/../services/ProjectLifecycleService.php';
 require_once __DIR__ . '/../services/ProjectPresentationService.php';
@@ -47,6 +48,20 @@ function api_v2_project_identity(PDO $pdo, int $apiKeyId, array $headers, bool $
     return $identity;
 }
 
+/** The identity query holds the key row lock while this scope is rechecked. */
+function api_v2_project_command_scope_current(PDO $pdo, int $apiKeyId, string $action): bool
+{
+    $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $statement = $pdo->prepare('SELECT scopes FROM api_keys WHERE id=? AND revoked_at IS NULL' . $lock);
+    $statement->execute([$apiKeyId]);
+    $stored = $statement->fetchColumn();
+    if ($stored === false) return false;
+    $scopes = api_normalize_scopes($stored);
+    return !in_array('full', $scopes, true)
+        && in_array('api.capabilities.read', $scopes, true)
+        && in_array('projects.lifecycle.' . $action, $scopes, true);
+}
+
 function api_v2_project_read(PDO $pdo, string $publicId, int $apiKeyId, array $headers, string $requestId): ?array
 {
     if (preg_match('/^[0-9a-f]{32}$/D', $publicId) !== 1 || $apiKeyId < 1 || $pdo->inTransaction()) {
@@ -79,6 +94,7 @@ function api_v2_project_lifecycle_write(PDO $pdo, string $publicId, string $acti
     try {
         $identity = api_v2_project_identity($pdo, $apiKeyId, $headers, true);
         if (!$identity) { $pdo->rollBack(); return ['status' => 409]; }
+        if (!api_v2_project_command_scope_current($pdo, $apiKeyId, $action)) { $pdo->rollBack(); return ['status' => 409]; }
         $hash = hash('sha256', json_encode(['publicId'=>$publicId,'action'=>$action,'command'=>$command], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $lock = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
         $receiptStatement = $pdo->prepare(

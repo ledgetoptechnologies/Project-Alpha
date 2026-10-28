@@ -21,7 +21,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         require_once dirname(__DIR__,2).'/src/utils/api_v2_project_backfill.php';
         require_once dirname(__DIR__,2).'/src/utils/public_project_links.php';
         $this->pdo=new PDO('sqlite::memory:');$this->pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);$this->pdo->exec('PRAGMA foreign_keys=ON');
-        $this->pdo->exec("CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,revoked_at TEXT);
+        $this->pdo->exec("CREATE TABLE api_keys(id INTEGER PRIMARY KEY,api_v2_application_id INTEGER,revoked_at TEXT,scopes TEXT);
             CREATE TABLE api_v2_applications(id INTEGER PRIMARY KEY,application_id TEXT);
             CREATE TABLE api_v2_history_identity(singleton INTEGER PRIMARY KEY,source_instance_id TEXT,history_epoch TEXT);
             CREATE TABLE users(id INTEGER PRIMARY KEY);
@@ -43,7 +43,7 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
             CREATE TABLE system_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,organization_id INTEGER,action TEXT,entity_type TEXT,entity_id INTEGER,details TEXT,ip_address TEXT,user_agent TEXT);
             CREATE TABLE project_service_locations(id INTEGER PRIMARY KEY,project_id INTEGER,service_location_id INTEGER,is_default INTEGER);
             CREATE TABLE schedule_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,project_id INTEGER,job_id INTEGER,service_location_id INTEGER,title TEXT,starts_at TEXT,ends_at TEXT,timezone TEXT,status TEXT,source_type TEXT,source_id INTEGER,created_by INTEGER,FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL);
-            INSERT INTO api_keys VALUES(7,3,NULL);INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
+            INSERT INTO api_keys VALUES(7,3,NULL,'api.capabilities.read projects.lifecycle.complete projects.lifecycle.cancel projects.lifecycle.archive projects.lifecycle.restore');INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
             INSERT INTO projects(id,public_id,client_id,organization_id,department_id,name,description,status,completed_at,archived_at,portal_publish_enabled,public_project_enabled,public_project_token,revision,estimated_start,estimated_end,source_version,updated_at)
@@ -85,6 +85,17 @@ final class ApiV2ProjectLifecycleFoundationTest extends TestCase
         $this->pdo->exec('UPDATE projects SET public_project_enabled=1,portal_publish_enabled=1 WHERE id=1');
         self::assertNotNull(pa_project_public_resolve($this->pdo,'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef'));
         self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM projects WHERE '.$portalVisibility)->fetchColumn());
+    }
+
+    public function testCommandRefusesMissingCurrentKeyScopeBeforeMutation(): void
+    {
+        $command=['commandId'=>'423e4567-e89b-42d3-a456-426614174000','expectedRevision'=>'1'];
+        foreach (['api.capabilities.read', 'projects.lifecycle.archive', 'full projects.lifecycle.archive'] as $scopes) {
+            $this->pdo->prepare('UPDATE api_keys SET scopes=? WHERE id=7')->execute([$scopes]);
+            self::assertSame(['status'=>409], api_v2_project_lifecycle_write($this->pdo,str_repeat('a',32),'archive',$command,7,$this->headers,'scope-denied'), $scopes);
+            self::assertSame('active', $this->pdo->query('SELECT status FROM projects WHERE id=1')->fetchColumn(), $scopes);
+            self::assertSame(0, (int)$this->pdo->query('SELECT COUNT(*) FROM api_v2_project_lifecycle_command_receipts')->fetchColumn(), $scopes);
+        }
     }
 
     public function testCompletionUsesSharedCloseoutAndTransactionalSchedule(): void
