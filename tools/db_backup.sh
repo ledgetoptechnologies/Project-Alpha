@@ -9,14 +9,14 @@
 # Execs mysqldump INSIDE the db container, so it works with the
 # no-host-port hardened compose setup.
 #
-# Encryption: if BACKUP_ENCRYPTION_KEY is set in .env, the gzip output is
-# additionally encrypted with AES-256 via gpg --symmetric. The .sql.gz file
-# is replaced by a .sql.gz.gpg file. Set BACKUP_ENCRYPTION_KEY to a strong
+# Encryption: if BACKUP_ENCRYPTION_KEY is set in .env, the dump streams
+# directly into AES-256 GPG without writing a plaintext archive. Use a strong
 # passphrase (e.g. openssl rand -hex 32).
 #
 # Retention: keeps the most recent $KEEP backups (default 14) in backups/.
 
 set -euo pipefail
+umask 077
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$REPO_DIR"
@@ -31,38 +31,53 @@ set -a; source .env; set +a
 
 DB_NAME="${MYSQL_DATABASE:-project_alpha}"
 KEEP="${KEEP:-14}"
-
-STAMP="$(date +%Y%m%d_%H%M%S)"
-OUT="${1:-backups/${DB_NAME}_${STAMP}.sql.gz}"
-mkdir -p "$(dirname "$OUT")"
-
-echo "Dumping ${DB_NAME} -> ${OUT}"
-# --single-transaction: consistent InnoDB snapshot without locking
-# --routines --triggers --events: include all programmable objects
-docker compose exec -T db mysqldump \
-  -uroot -p"${MYSQL_ROOT_PASSWORD}" \
-  --single-transaction --routines --triggers --events \
-  --no-tablespaces \
-  "${DB_NAME}" | gzip > "$OUT"
-
-# sanity check: a real dump ends with "Dump completed"
-if ! gzip -cd "$OUT" | tail -1 | grep -q "Dump completed"; then
-  echo "ERROR: dump did not complete cleanly — keeping file for inspection: $OUT" >&2
+if [[ ! "$DB_NAME" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "ERROR: MYSQL_DATABASE contains unsupported characters." >&2
   exit 1
 fi
 
-# Encrypt the backup if a passphrase is configured
+STAMP="$(date +%Y%m%d_%H%M%S)"
+OUT="${1:-backups/${DB_NAME}_${STAMP}.sql.gz}"
+mkdir -p -m 700 "$(dirname "$OUT")"
+if [[ "$OUT" == backups/* ]]; then
+  chmod 700 backups
+fi
+
+dump_database() {
+  docker compose exec -T db sh -c '
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -uroot \
+      --single-transaction --routines --triggers --events --no-tablespaces \
+      "$MYSQL_DATABASE"
+  '
+}
+
+echo "Dumping ${DB_NAME} -> ${OUT}"
 ENCRYPTED=""
 if [[ -n "${BACKUP_ENCRYPTION_KEY:-}" ]]; then
-  echo "Encrypting with AES-256 (gpg)..."
-  gpg --batch --yes --passphrase "${BACKUP_ENCRYPTION_KEY}" \
-    --symmetric --cipher-algo AES256 "$OUT"
-  rm -f "$OUT"
   OUT="${OUT}.gpg"
   ENCRYPTED=".gpg"
-  # Verify the encrypted file is valid GPG
-  if ! gpg --batch --passphrase "${BACKUP_ENCRYPTION_KEY}" --decrypt "$OUT" >/dev/null 2>&1; then
-    echo "ERROR: encrypted backup verification failed — keeping file for inspection: $OUT" >&2
+  if ! dump_database | gzip | gpg --batch --yes --pinentry-mode loopback \
+    --passphrase-fd 3 --symmetric --cipher-algo AES256 --output "$OUT" \
+    3<<<"$BACKUP_ENCRYPTION_KEY"; then
+    rm -f -- "$OUT"
+    echo "ERROR: encrypted database dump failed." >&2
+    exit 1
+  fi
+  if ! gpg --batch --pinentry-mode loopback --passphrase-fd 3 --decrypt "$OUT" \
+    3<<<"$BACKUP_ENCRYPTION_KEY" 2>/dev/null | gzip -cd | tail -1 | grep -q "Dump completed"; then
+    rm -f -- "$OUT"
+    echo "ERROR: encrypted backup verification failed." >&2
+    exit 1
+  fi
+else
+  if ! dump_database | gzip > "$OUT"; then
+    rm -f -- "$OUT"
+    echo "ERROR: database dump failed." >&2
+    exit 1
+  fi
+  if ! gzip -cd "$OUT" | tail -1 | grep -q "Dump completed"; then
+    rm -f -- "$OUT"
+    echo "ERROR: database dump verification failed." >&2
     exit 1
   fi
 fi
