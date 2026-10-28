@@ -36,67 +36,11 @@ $includePdfs = isset($_POST['include_pdfs']) && $_POST['include_pdfs'] === '1';
 $enableScheduling = isset($_POST['enable_scheduling']) && $_POST['enable_scheduling'] === '1';
 $activeOrgId = request_client_org_id();
 
-// Handle scheduling separately
+// Scheduling is handled only by audit_schedule_handler, which records a
+// creator and enforces report and export permissions.
 if ($enableScheduling) {
-    $scheduleEmails = array_filter($_POST['schedule_email'] ?? [], function($email) {
-        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-    });
-    $scheduleEmails = array_slice($scheduleEmails, 0, 5);
-    
-    if (!empty($scheduleEmails)) {
-        $frequency = $_POST['schedule_frequency'] ?? 'monthly';
-        $dateRangeType = $_POST['schedule_date_range'] ?? 'current_year';
-        
-        // Calculate next run date based on frequency
-        $nextRun = calculateNextRunDate($frequency);
-        
-        try {
-            // Ensure audit_schedules table exists
-            $pdo->exec("CREATE TABLE IF NOT EXISTS audit_schedules (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                frequency VARCHAR(50) NOT NULL,
-                date_range_type VARCHAR(50) NOT NULL,
-                accounting_basis ENUM('cash','accrual') NOT NULL DEFAULT 'cash',
-                email_addresses TEXT NOT NULL,
-                include_invoices TINYINT(1) DEFAULT 1,
-                include_unpaid_invoices TINYINT(1) DEFAULT 0,
-                include_contracts TINYINT(1) DEFAULT 0,
-                include_quotes TINYINT(1) DEFAULT 0,
-                generate_csv TINYINT(1) DEFAULT 1,
-                include_pdfs TINYINT(1) DEFAULT 0,
-                is_active TINYINT(1) DEFAULT 1,
-                next_run_at DATETIME,
-                last_run_at DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )");
-            
-            $stmt = $pdo->prepare("INSERT INTO audit_schedules 
-                (organization_id, frequency, date_range_type, accounting_basis, email_addresses, include_invoices, include_unpaid_invoices,
-                 include_contracts, include_quotes, generate_csv, include_pdfs, next_run_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $activeOrgId ?: null,
-                $frequency,
-                $dateRangeType,
-                $accountingBasis,
-                json_encode($scheduleEmails),
-                $includeInvoices ? 1 : 0,
-                $includeUnpaidInvoices ? 1 : 0,
-                $includeContracts ? 1 : 0,
-                $includeQuotes ? 1 : 0,
-                $generateCsv ? 1 : 0,
-                $includePdfs ? 1 : 0,
-                $nextRun
-            ]);
-            
-            header('Location: /?page=financial/audit&scheduled=1');
-            exit;
-        } catch (Throwable $e) {
-            error_log('Audit schedule error: ' . $e->getMessage());
-            header('Location: /?page=financial/audit&error=' . urlencode('Failed to create schedule: ' . $e->getMessage()));
-            exit;
-        }
-    }
+    http_response_code(400);
+    exit('Use the scheduled report form to create an audit schedule.');
 }
 
 // Validate dates
@@ -440,41 +384,4 @@ try {
     
     header('Location: /?page=financial/audit&error=' . urlencode('Failed to generate audit: ' . $e->getMessage()));
     exit;
-}
-
-/**
- * Calculate next run date based on frequency
- */
-function calculateNextRunDate(string $frequency): string {
-    $now = new DateTime();
-    
-    switch ($frequency) {
-        case 'weekly':
-            // Next Monday
-            $next = new DateTime('next monday');
-            break;
-        case 'monthly':
-            // First day of next month
-            $next = new DateTime('first day of next month');
-            break;
-        case 'quarterly':
-            // First day of next quarter
-            $currentMonth = (int)$now->format('n');
-            $quarterStart = (int)ceil($currentMonth / 3) * 3 + 1;
-            if ($quarterStart > 12) {
-                $quarterStart = 1;
-                $next = new DateTime(($now->format('Y') + 1) . '-01-01');
-            } else {
-                $next = new DateTime($now->format('Y') . '-' . str_pad((string)$quarterStart, 2, '0', STR_PAD_LEFT) . '-01');
-            }
-            break;
-        case 'annually':
-            // January 1st next year
-            $next = new DateTime(($now->format('Y') + 1) . '-01-01');
-            break;
-        default:
-            $next = new DateTime('first day of next month');
-    }
-    
-    return $next->format('Y-m-d 06:00:00');
 }

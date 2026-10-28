@@ -72,6 +72,9 @@ try {
 
             $reportType = ($schedule['report_type'] ?? 'audit') === 'expense' ? 'expense' : 'audit';
             $organizationId = (int)($schedule['organization_id'] ?? 0);
+            if (!pa_report_schedule_creator_authorized($pdo, (int)($schedule['created_by'] ?? 0), $reportType)) {
+                throw new DomainException('Schedule creator is inactive or no longer has report export permission.');
+            }
             if ($reportType === 'expense') {
                 $result = processExpenseSchedule(
                     $pdo,

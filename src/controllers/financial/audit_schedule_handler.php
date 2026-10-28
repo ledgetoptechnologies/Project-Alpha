@@ -14,7 +14,8 @@ $userId = (int)($_SESSION['user']['id'] ?? 0);
 $organizationId = request_client_org_id();
 $scheduleOrgId = $organizationId > 0 ? $organizationId : null;
 $requiredPermission = $requestedType === 'expense' ? 'financial.manage' : 'financial.audit';
-if ($action === 'create' && !user_can($pdo, $userId, $requiredPermission, 0)) {
+if ($action === 'create' && (!user_can($pdo, $userId, $requiredPermission, 0)
+    || !user_can($pdo, $userId, 'financial.export', 0))) {
     require_once __DIR__ . '/../../utils/acl_middleware.php';
     deny_response($redirectPage);
 }
@@ -95,7 +96,7 @@ try {
     if ($id <= 0) {
         throw new RuntimeException('Invalid schedule.');
     }
-    $existing = $pdo->prepare('SELECT report_type, created_by FROM audit_schedules WHERE id=?');
+    $existing = $pdo->prepare('SELECT report_type, created_by, is_active FROM audit_schedules WHERE id=?');
     $existing->execute([$id]);
     $stored = $existing->fetch(PDO::FETCH_ASSOC);
     if (!$stored) {
@@ -118,6 +119,9 @@ try {
         exit;
     }
     if ($action === 'toggle') {
+        if (empty($stored['is_active']) && !user_can($pdo, $userId, 'financial.export', 0)) {
+            throw new RuntimeException('Report export permission is required to activate a schedule.');
+        }
         $pdo->prepare('UPDATE audit_schedules SET is_active=NOT is_active WHERE id=?')
             ->execute([$id]);
         header('Location: /?page=' . $redirectPage . '&schedule_updated=1');
