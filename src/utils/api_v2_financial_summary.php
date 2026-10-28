@@ -59,11 +59,28 @@ function api_v2_financial_summary_read(PDO $pdo,array $identity,array $period,st
     $income=payment_accounting_net_income_expr('p');
     $baseValue=$pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='financial_base_currency' LIMIT 1")->fetchColumn();
     $baseCurrency=financial_reporting_currency_value($baseValue===false?null:$baseValue);
-    // Every supplied income currency must agree. The expense declaration
-    // never assigns a currency to standalone or broken-linked payments.
-    $currency="CASE WHEN REGEXP_LIKE(COALESCE(i.currency,pi.currency,c.currency),'^[A-Z]{3}$','c') AND (i.currency IS NULL OR CAST(i.currency AS BINARY)=CAST(COALESCE(pi.currency,c.currency,i.currency) AS BINARY)) AND (pi.currency IS NULL OR c.currency IS NULL OR CAST(pi.currency AS BINARY)=CAST(c.currency AS BINARY)) THEN COALESCE(i.currency,pi.currency,c.currency) ELSE NULL END";
-    $stmt=$pdo->prepare("SELECT $currency currency,COUNT(*) n,CAST(SUM(p.amount) AS CHAR) received,CAST(SUM($income) AS CHAR) adjusted,SUM(p.processor_fee_source='actual') actual,SUM(p.processor_fee_source='estimated') estimated,SUM(p.processor_fee_source IS NULL OR p.processor_fee_source NOT IN ('actual','estimated')) unknown FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id LEFT JOIN contracts c ON c.id=p.contract_id LEFT JOIN project_invoice_payments pp ON pp.id=p.project_invoice_payment_id LEFT JOIN project_invoices pi ON pi.id=pp.project_invoice_id WHERE p.status='succeeded' AND p.payment_date BETWEEN ? AND ? GROUP BY currency ORDER BY currency");
-    $stmt->execute([$period['from'],$period['to']]);$paymentRows=$stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Linked documents and imported provider transactions are stronger evidence
+    // than an installation declaration. A bad/conflicting supplied value must
+    // stay unknown; base currency only fills a truly unlinked manual payment.
+    $documentCurrencyFields=['i.currency','pi.currency','c.currency'];
+    $documentCurrencyPresent=static fn(string $field):string=>"($field IS NOT NULL AND $field<>'')";
+    $documentHasCurrency='('.implode(' OR ',array_map($documentCurrencyPresent,$documentCurrencyFields)).')';
+    $invalidDocumentCurrency='('.implode(' OR ',array_map(static fn(string $field):string=>"(".$documentCurrencyPresent($field)." AND NOT REGEXP_LIKE($field,'^[A-Z]{3}$','c'))",$documentCurrencyFields)).')';
+    $documentCurrencyConflicts=[];
+    for($left=0;$left<count($documentCurrencyFields);$left++)for($right=$left+1;$right<count($documentCurrencyFields);$right++){
+        $a=$documentCurrencyFields[$left];$b=$documentCurrencyFields[$right];
+        $documentCurrencyConflicts[]='('.$documentCurrencyPresent($a).' AND '.$documentCurrencyPresent($b).' AND CAST('.$a.' AS BINARY)<>CAST('.$b.' AS BINARY))';
+    }
+    $conflictingDocumentCurrency='('.implode(' OR ',$documentCurrencyConflicts).')';
+    $documentCurrency="CASE WHEN $documentHasCurrency AND NOT $invalidDocumentCurrency AND NOT $conflictingDocumentCurrency THEN COALESCE(NULLIF(i.currency,''),NULLIF(pi.currency,''),NULLIF(c.currency,'')) ELSE NULL END";
+    $providerCurrency="CASE WHEN ppt.payment_id=p.id AND ppt.import_status='imported' AND REGEXP_LIKE(ppt.currency,'^[A-Za-z]{3}$','c') THEN UPPER(ppt.currency) ELSE NULL END";
+    $invalidProviderCurrency="(ppt.id IS NOT NULL AND (ppt.payment_id IS NULL OR ppt.payment_id<>p.id OR ppt.import_status IS NULL OR ppt.import_status<>'imported' OR ppt.currency IS NULL OR ppt.currency='' OR NOT REGEXP_LIKE(ppt.currency,'^[A-Za-z]{3}$','c')))";
+    $unresolvedDocumentLink="((p.invoice_id IS NOT NULL AND i.id IS NULL) OR (p.contract_id IS NOT NULL AND c.id IS NULL) OR (p.project_invoice_payment_id IS NOT NULL AND (pp.id IS NULL OR pi.id IS NULL)) OR (p.processor_transaction_id IS NOT NULL AND ppt.id IS NULL))";
+    $providerHints="(p.processor_transaction_id IS NOT NULL OR p.processor_provider IS NOT NULL OR p.processor_payment_id IS NOT NULL OR p.stripe_payment_intent_id IS NOT NULL OR p.stripe_session_id IS NOT NULL OR COALESCE(p.payment_method,'')='stripe')";
+    $eligibleBaseFallback=$baseCurrency===null?'FALSE':"(NOT $documentHasCurrency AND NOT $invalidDocumentCurrency AND NOT $conflictingDocumentCurrency AND p.invoice_id IS NULL AND p.contract_id IS NULL AND p.project_invoice_payment_id IS NULL AND p.job_id IS NULL AND ppt.id IS NULL AND NOT $providerHints)";
+    $currency="CASE WHEN $invalidDocumentCurrency OR $conflictingDocumentCurrency OR $invalidProviderCurrency OR $unresolvedDocumentLink OR (NOT $invalidProviderCurrency AND $documentCurrency IS NOT NULL AND $providerCurrency IS NOT NULL AND CAST($documentCurrency AS BINARY)<>CAST($providerCurrency AS BINARY)) THEN NULL WHEN $documentCurrency IS NOT NULL THEN $documentCurrency WHEN $providerCurrency IS NOT NULL THEN $providerCurrency WHEN $eligibleBaseFallback THEN ? ELSE NULL END";
+    $stmt=$pdo->prepare("SELECT $currency currency,COUNT(*) n,CAST(SUM(p.amount) AS CHAR) received,CAST(SUM($income) AS CHAR) adjusted,SUM(p.processor_fee_source='actual') actual,SUM(p.processor_fee_source='estimated') estimated,SUM(p.processor_fee_source IS NULL OR p.processor_fee_source NOT IN ('actual','estimated')) unknown FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id LEFT JOIN contracts c ON c.id=p.contract_id LEFT JOIN project_invoice_payments pp ON pp.id=p.project_invoice_payment_id LEFT JOIN project_invoices pi ON pi.id=pp.project_invoice_id LEFT JOIN processor_payment_transactions ppt ON ppt.id=p.processor_transaction_id WHERE p.status='succeeded' AND p.payment_date BETWEEN ? AND ? GROUP BY currency ORDER BY currency");
+    $stmt->execute([$baseCurrency,$period['from'],$period['to']]);$paymentRows=$stmt->fetchAll(PDO::FETCH_ASSOC);
     $stmt=$pdo->prepare("SELECT status,COUNT(*) n FROM expenses WHERE status<>'void' AND expense_date BETWEEN ? AND ? GROUP BY status ORDER BY status");$stmt->execute([$period['from'],$period['to']]);$expenseCounts=['pending'=>0,'confirmed'=>0,'reimbursed'=>0];
     foreach($stmt->fetchAll(PDO::FETCH_ASSOC) as $row){if(!array_key_exists($row['status'],$expenseCounts))throw new RuntimeException('Unknown expense status');$expenseCounts[$row['status']]=(int)$row['n'];}
     $expenseAmounts=null;
