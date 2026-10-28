@@ -207,6 +207,14 @@ switch ($action) {
         $retentionDays = (int)($_POST['retention_days'] ?? 10);
         $backupHour = (int)($_POST['backup_hour'] ?? 2);
         $backupMode = ($_POST['backup_mode'] ?? 'database') === 'full' ? 'full' : 'database';
+        if ($backupMode === 'full' && backup_archive_key() === '') {
+            $_SESSION['flash_backup'] = [
+                'type' => 'error',
+                'message' => 'Set BACKUP_ENCRYPTION_KEY on web and cron before enabling full backups.',
+            ];
+            header('Location: ' . $settingsUrl);
+            exit;
+        }
         $backupTimezone = (string)($appConfig['timezone'] ?? date_default_timezone_get() ?: 'UTC');
         if (!in_array($backupTimezone, DateTimeZone::listIdentifiers(), true)) {
             $backupTimezone = 'UTC';

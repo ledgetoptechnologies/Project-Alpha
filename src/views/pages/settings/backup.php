@@ -288,7 +288,7 @@ unset($_SESSION['flash_backup']);
                     <option value="database" <?php echo $backupMode === 'database' ? 'selected' : ''; ?>>Database only</option>
                     <option value="full" <?php echo $backupMode === 'full' ? 'selected' : ''; ?>>Full: database, uploads, and configuration</option>
                 </select>
-                <span class="help-text" style="display:block; margin-top:0.35rem; font-size:0.8rem;">Set BACKUP_ENCRYPTION_KEY on both web and cron services to encrypt archive contents.</span>
+                <span class="help-text" style="display:block; margin-top:0.35rem; font-size:0.8rem;">Full backups require BACKUP_ENCRYPTION_KEY on both web and cron services. Keep the key separately for restores.</span>
             </div>
 
             <div class="form-group" style="margin:0;">

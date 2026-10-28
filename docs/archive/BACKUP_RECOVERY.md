@@ -11,7 +11,7 @@ Weekly and monthly copies use the same artifact as the daily backup. Restoring a
 
 ## Optional Encryption
 
-Set the same strong `BACKUP_ENCRYPTION_KEY` environment value on both the `web` and `cron` services. ZIP contents are encrypted with AES-256. There is intentionally no browser setting for this secret.
+Full backups require the same strong `BACKUP_ENCRYPTION_KEY` environment value on both the `web` and `cron` services. Without it, the full backup job fails before writing a dump. ZIP contents are encrypted with AES-256. There is intentionally no browser setting for this secret.
 
 Store the key separately from the backup volume. Losing the key makes encrypted backups unrecoverable. Changing the key does not re-encrypt old files, so retain every key needed by retained backups.
 

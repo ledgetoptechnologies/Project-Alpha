@@ -118,11 +118,11 @@ administrator has neither the authenticator nor a backup code, use the explicit
 
 ## Backup Encryption
 
-`BACKUP_ENCRYPTION_KEY` is optional and does not affect startup or migrations.
-When it is empty, scheduled and manual backups still run, but their contents
-are not encrypted by PA. To enable application-level AES-256 archive
-encryption, place the same strong, stable value in both the `web` and `cron`
-service definitions and store it outside the server in a password manager.
+`BACKUP_ENCRYPTION_KEY` is required when Backup Mode is **Full**. Without it,
+full backup jobs fail before writing a dump. Database-only backups may remain
+unencrypted. For AES-256 archives, place the same strong, stable value in both
+the `web` and `cron` service definitions and store it outside the server in a
+password manager.
 
 The key is not written to the database, generated automatically, or recoverable
 by PA. Changing or losing it prevents PA from opening backups encrypted with
@@ -174,8 +174,8 @@ For an existing production installation:
    exists elsewhere.
 3. Add the `worker` service while retaining the existing `web`, `cron`, `db`,
    `migrate`, upload, config, backup, and database storage mappings.
-4. Set `BACKUP_ENCRYPTION_KEY` in both `web` and `cron` only if you have safely
-   stored the chosen key. It may remain empty for the upgrade.
+4. If Backup Mode is Full, set `BACKUP_ENCRYPTION_KEY` in both `web` and `cron`
+   after safely storing the chosen key. It may remain empty for database-only backups.
 5. Run `docker compose pull` followed by `docker compose up -d` without `-v`.
 6. Check `docker compose ps -a` and `docker compose logs migrate`; `migrate`
    must exit with status 0 before `web`, `worker`, and `cron` are considered
