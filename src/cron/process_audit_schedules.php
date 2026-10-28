@@ -10,6 +10,7 @@ require_once __DIR__ . '/../utils/crypto.php';
 require_once __DIR__ . '/../utils/cron_state.php';
 require_once __DIR__ . '/../utils/csv.php';
 require_once __DIR__ . '/../utils/email_identity.php';
+require_once __DIR__ . '/../utils/expense_schedule_authorization.php';
 require_once __DIR__ . '/../services/EmailService.php';
 
 $logPrefix = '[process_audit_schedules]';
@@ -319,15 +320,18 @@ function processExpenseSchedule(
     string $fromName
 ): string {
     $organizationId = (int)($schedule['organization_id'] ?? 0);
+    $creatorId = (int)($schedule['created_by'] ?? 0);
+    [$scopeWhere, $scopeParams] = pa_expense_schedule_scope($pdo, $creatorId, $organizationId);
+    $emails = json_decode((string)($schedule['email_addresses'] ?? ''), true);
+    $emails = is_array($emails) ? array_values(array_filter($emails, 'is_string')) : [];
+    if (!pa_expense_schedule_recipients_allowed($pdo, $creatorId, $emails)) {
+        throw new DomainException('Expense schedule recipients are no longer authorized.');
+    }
 
     $filters = json_decode((string)($schedule['filters'] ?? ''), true);
     $filters = is_array($filters) ? $filters : [];
-    $where = ['e.expense_date BETWEEN ? AND ?'];
-    $params = [$startDate, $endDate];
-    if ($organizationId > 0) {
-        $where[] = 'e.organization_id=?';
-        $params[] = $organizationId;
-    }
+    $where = ['e.expense_date BETWEEN ? AND ?', '(' . $scopeWhere . ')'];
+    $params = array_merge([$startDate, $endDate], $scopeParams);
     foreach (['category_id', 'vendor_id', 'client_id'] as $field) {
         $value = max(0, (int)($filters[$field] ?? 0));
         if ($value > 0) {
@@ -406,8 +410,6 @@ function processExpenseSchedule(
     $body = '<h2>Expense Report</h2><p><strong>Period:</strong> ' . htmlspecialchars($startDate) . ' to ' . htmlspecialchars($endDate) . '</p>'
         . '<p><strong>Expenses:</strong> ' . count($expenses) . ' | <strong>Total:</strong> $' . number_format($total, 2) . '</p>'
         . '<p>The CSV report is attached.</p>';
-    $emails = json_decode((string)($schedule['email_addresses'] ?? ''), true);
-    $emails = is_array($emails) ? $emails : [];
     $sent = 0;
     foreach ($emails as $email) {
         $email = trim((string)$email);

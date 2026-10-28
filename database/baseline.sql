@@ -2275,6 +2275,7 @@ CREATE TABLE IF NOT EXISTS system_audit (
 CREATE TABLE IF NOT EXISTS audit_schedules (
     id INT AUTO_INCREMENT PRIMARY KEY,
     organization_id INT NULL,
+    created_by INT NULL,
     report_type ENUM('audit','expense') NOT NULL DEFAULT 'audit',
     frequency ENUM('weekly', 'monthly', 'quarterly', 'annually') NOT NULL DEFAULT 'monthly',
     date_range_type VARCHAR(50) NOT NULL DEFAULT 'current_year',
@@ -2294,6 +2295,7 @@ CREATE TABLE IF NOT EXISTS audit_schedules (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_audit_sched_org (organization_id),
+    INDEX idx_audit_schedules_created_by (created_by),
     INDEX idx_audit_sched_type (organization_id, report_type, is_active),
     INDEX idx_audit_sched_active (is_active),
     INDEX idx_audit_sched_next (next_run_at)

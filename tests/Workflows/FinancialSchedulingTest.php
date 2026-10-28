@@ -25,7 +25,7 @@ final class FinancialSchedulingTest extends TestCase
         $handler = file_get_contents($this->root . '/src/controllers/financial/audit_schedule_handler.php');
         self::assertStringContainsString('request_client_org_id()', (string)$handler);
         self::assertStringContainsString('$scheduleOrgId = $organizationId > 0 ? $organizationId : null;', (string)$handler);
-        self::assertStringContainsString('SELECT report_type FROM audit_schedules WHERE id=?', (string)$handler);
+        self::assertStringContainsString('SELECT report_type, created_by FROM audit_schedules WHERE id=?', (string)$handler);
         self::assertStringContainsString('$requestedType === \'expense\'', (string)$handler);
     }
 

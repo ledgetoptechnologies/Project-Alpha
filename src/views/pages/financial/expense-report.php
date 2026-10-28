@@ -116,8 +116,14 @@ $detailStmt = $pdo->prepare("
 $detailStmt->execute($params);
 $details = $detailStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$scheduleStmt = $pdo->prepare('SELECT * FROM audit_schedules WHERE (organization_id IS NULL OR organization_id = 0) AND report_type="expense" ORDER BY created_at DESC');
-$scheduleStmt->execute();
+$scheduleSql = 'SELECT * FROM audit_schedules WHERE (organization_id IS NULL OR organization_id = 0) AND report_type="expense"';
+$scheduleParams = [];
+if (!in_array(acl_user_role($pdo, (int)$userId), ['admin', 'owner', 'staff'], true)) {
+    $scheduleSql .= ' AND created_by=?';
+    $scheduleParams[] = (int)$userId;
+}
+$scheduleStmt = $pdo->prepare($scheduleSql . ' ORDER BY created_at DESC');
+$scheduleStmt->execute($scheduleParams);
 $expenseSchedules = $scheduleStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Build export URL with current filters
