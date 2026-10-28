@@ -197,6 +197,30 @@ function api_v2_financial_money(string $value): ?string
     return $m[1].'.'.str_pad($m[2]??'',2,'0');
 }
 
+/** Match invoice_pdf.php: document_date is parsed in the configured PHP timezone. */
+function api_v2_financial_timezone(PDO $pdo): DateTimeZone
+{
+    $name='UTC';
+    try{$value=$pdo->query("SELECT config_value FROM app_config WHERE organization_id=0 AND config_key='timezone' LIMIT 1")->fetchColumn();if(is_string($value)&&$value!=='')$name=$value;}catch(Throwable){}
+    try{return new DateTimeZone($name);}catch(Throwable){return new DateTimeZone('UTC');}
+}
+
+function api_v2_financial_issue_date(?string $value,DateTimeZone $timezone):?string
+{
+    if($value===null||$value==='')return null;
+    try{return (new DateTimeImmutable($value,$timezone))->format('Y-m-d');}
+    catch(Throwable $error){throw new UnexpectedValueException('Invalid invoice document date.',0,$error);}
+}
+
+function api_v2_financial_due_date(?string $value):?string
+{
+    if($value===null||$value==='')return null;
+    $date=DateTimeImmutable::createFromFormat('!Y-m-d',$value,new DateTimeZone('UTC'));$errors=DateTimeImmutable::getLastErrors();
+    if($date===false||($errors!==false&&($errors['warning_count']>0||$errors['error_count']>0))||$date->format('Y-m-d')!==$value)
+        throw new UnexpectedValueException('Invalid invoice due date.');
+    return $date->format('Y-m-d');
+}
+
 function api_v2_financial_finish(PDO $pdo,bool $owned,array $result): array
 {
     if($owned&&$pdo->inTransaction())$pdo->commit();return $result;
@@ -232,7 +256,7 @@ function api_v2_financial_snapshot_links(PDO $pdo,array $rows,string $baseUrl): 
 }
 
 /** @return array{status:int,payload?:array} */
-function api_v2_financial_feed_read(PDO $pdo,array $identity,array $scope,string $externalId,?string $cursor,int $limit,string $baseUrl,string $requestId): array
+function api_v2_financial_feed_read(PDO $pdo,array $identity,array $scope,string $externalId,?string $cursor,int $limit,string $baseUrl,string $requestId,bool $includeDates=false): array
 {
     if($limit<1||$limit>100||strlen($externalId)>191||preg_match('/[\x00-\x1F\x7F]/',$externalId))throw new InvalidArgumentException('Invalid financial feed request.');
     $owned=!$pdo->inTransaction();if($owned)$pdo->beginTransaction();
@@ -258,17 +282,23 @@ function api_v2_financial_feed_read(PDO $pdo,array $identity,array $scope,string
                 : "EXISTS(SELECT 1 FROM clients owner WHERE owner.id={$clientColumn} AND owner.organization_id=d.organization_id)";
         }
         $documentWhere=implode(' AND ',$filters);
-        $select=$kind==='contract'?'d.id,d.public_id,d.status,d.currency,d.total,NULL amount_paid,NULL balance_due,d.signed_at':'d.id,d.public_id,d.status,d.currency,d.total,d.amount_paid,d.balance_due,d.finalized_at'.($kind==='invoice'?',d.collection_mode,d.recipient_presentation_mode':'');
+        $dates=match($kind){'contract'=>'NULL issue_timestamp,NULL due_date','invoice'=>'d.document_date issue_timestamp,d.due_date','project_invoice'=>'NULL issue_timestamp,d.due_date'};
+        $select=$kind==='contract'?'d.id,d.public_id,d.status,d.currency,d.total,NULL amount_paid,NULL balance_due,d.signed_at,'.$dates:'d.id,d.public_id,d.status,d.currency,d.total,d.amount_paid,d.balance_due,d.finalized_at,'.$dates.($kind==='invoice'?',d.collection_mode,d.recipient_presentation_mode':'');
         $remaining=10001-count($candidates);
         $statement=$pdo->prepare("SELECT {$select} FROM {$table} d WHERE {$documentWhere} AND {$statusWhere} ORDER BY d.public_id LIMIT {$remaining}");$statement->execute($params);
         foreach($statement->fetchAll(PDO::FETCH_ASSOC) as $row){$row['_kind']=$kind;$candidates[]=$row;}
         if(count($candidates)>10000)return api_v2_financial_finish($pdo,$owned,['status'=>409]);
     }
-    $links=api_v2_financial_snapshot_links($pdo,$candidates,$baseUrl);
+    $timezone=$includeDates?api_v2_financial_timezone($pdo):null;$links=api_v2_financial_snapshot_links($pdo,$candidates,$baseUrl);
     foreach($candidates as $row){$kind=$row['_kind'];$total=api_v2_financial_money((string)$row['total']);$paid=$row['amount_paid']===null?null:api_v2_financial_money((string)$row['amount_paid']);$balance=$row['balance_due']===null?null:api_v2_financial_money((string)$row['balance_due']);
             if(!api_v2_financial_public_id_valid((string)$row['public_id'])||!api_v2_financial_currency_valid((string)$row['currency'])||$total===null||($row['amount_paid']!==null&&$paid===null)||($row['balance_due']!==null&&$balance===null))return api_v2_financial_finish($pdo,$owned,['status'=>409]);
             $urls=$links[$kind.':'.(int)$row['id']];
-            $documents[]=['publicId'=>(string)$row['public_id'],'kind'=>$kind,'status'=>(string)$row['status'],'currency'=>(string)$row['currency'],'total'=>$total,'amountPaid'=>$paid,'balanceDue'=>$balance,'documentUrl'=>$urls['documentUrl'],'actionUrl'=>$urls['actionUrl']];
+            $document=['publicId'=>(string)$row['public_id'],'kind'=>$kind,'status'=>(string)$row['status'],'currency'=>(string)$row['currency'],'total'=>$total,'amountPaid'=>$paid,'balanceDue'=>$balance,'documentUrl'=>$urls['documentUrl'],'actionUrl'=>$urls['actionUrl']];
+            if($includeDates){
+                $document['issueDate']=$kind==='invoice'?api_v2_financial_issue_date($row['issue_timestamp']===null?null:(string)$row['issue_timestamp'],$timezone??new DateTimeZone('UTC')):null;
+                $document['dueDate']=$kind==='contract'?null:api_v2_financial_due_date($row['due_date']===null?null:(string)$row['due_date']);
+            }
+            $documents[]=$document;
     }
     usort($documents,static fn(array$a,array$b):int=>[$a['kind'],$a['publicId']]<=>[$b['kind'],$b['publicId']]);
     if(count($documents)>10000)return api_v2_financial_finish($pdo,$owned,['status'=>409]);
