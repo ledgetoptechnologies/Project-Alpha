@@ -36,6 +36,28 @@ function client_onboarding_find_invitation(PDO $pdo, string $token, bool $lock =
     return $invite;
 }
 
+function client_onboarding_grant_session(array $invitation): void
+{
+    $_SESSION['client_onboarding_invitation_id'] = (int)$invitation['id'];
+    $_SESSION['client_onboarding_token_hash'] = (string)$invitation['token_hash'];
+}
+
+function client_onboarding_session_matches(array $invitation): bool
+{
+    $storedHash = (string)($_SESSION['client_onboarding_token_hash'] ?? '');
+    $currentHash = (string)($invitation['token_hash'] ?? '');
+    return (int)($_SESSION['client_onboarding_invitation_id'] ?? 0) > 0
+        && (int)$_SESSION['client_onboarding_invitation_id'] === (int)($invitation['id'] ?? 0)
+        && preg_match('/^[a-f0-9]{64}$/', $storedHash) === 1
+        && preg_match('/^[a-f0-9]{64}$/', $currentHash) === 1
+        && hash_equals($currentHash, $storedHash);
+}
+
+function client_onboarding_clear_session(): void
+{
+    unset($_SESSION['client_onboarding_invitation_id'], $_SESSION['client_onboarding_token_hash']);
+}
+
 function client_onboarding_revoke_stale(PDO $pdo): void
 {
     static $done = false;

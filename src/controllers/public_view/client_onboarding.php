@@ -21,17 +21,22 @@ $invitationId = (int)($_SESSION['client_onboarding_invitation_id'] ?? 0);
 $invite = null;
 $existingClient = [];
 
-if ($invitationId > 0) {
-    $stmt = $pdo->prepare('SELECT * FROM client_onboarding_invitations WHERE id=? AND status="pending"');
-    $stmt->execute([$invitationId]);
-    $invite = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-} elseif ($token !== '') {
+if ($token !== '') {
     $invite = client_onboarding_find_invitation($pdo, $token);
     if (!$invite || ($invite['status'] ?? '') !== 'pending') {
         $invite = null;
+        client_onboarding_clear_session();
     } else {
         session_regenerate_id(true);
-        $_SESSION['client_onboarding_invitation_id'] = (int)$invite['id'];
+        client_onboarding_grant_session($invite);
+    }
+} elseif ($invitationId > 0) {
+    $stmt = $pdo->prepare('SELECT * FROM client_onboarding_invitations WHERE id=? AND status="pending"');
+    $stmt->execute([$invitationId]);
+    $invite = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$invite || !client_onboarding_session_matches($invite)) {
+        $invite = null;
+        client_onboarding_clear_session();
     }
 }
 if ($invite && !empty($invite['client_id'])) {
