@@ -23,16 +23,24 @@ final class ClientArchivePolicyHttpMySqlTest extends TestCase
         foreach(\migration_files($root.'/database/migrations')as$file){\migration_preflight($pdo,(int)$file['version']);$apply($file['path']);$pdo->prepare('INSERT INTO schema_migrations(version,filename,checksum)VALUES(?,?,?)')->execute([$file['version'],$file['filename'],$file['checksum']]);}
         \migration_schema_health($pdo);
         $pdo->exec("INSERT INTO users(id,email,password_hash,role)VALUES(91001,'archive-admin@example.invalid','unusable','admin');
-            INSERT INTO clients(id,public_id,name,email,client_type)VALUES(91001,'11111111111111111111111111111111','Synthetic archive fixture','contact@example.invalid','consumer');
+            INSERT INTO clients(id,public_id,name,email,client_type)VALUES(91001,'a1111111111111111111111111111111','Synthetic archive fixture','contact@example.invalid','consumer');
             INSERT INTO api_v2_applications(application_id,name)VALUES('11111111-1111-4111-8111-111111111111','Synthetic archive test');
             INSERT INTO portal_client_contact_identity_policy(client_id,portal_principal_id,login_email,application_pk,history_epoch,command_id,request_sha256)
             SELECT 91001,NULL,NULL,id,'22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333',REPEAT('a',64) FROM api_v2_applications WHERE application_id='11111111-1111-4111-8111-111111111111'");
         $before=$pdo->query('SELECT * FROM portal_client_contact_identity_policy WHERE client_id=91001')->fetch();
         $pdo->beginTransaction();\api_v2_directory_record($pdo,'client',91001);$pdo->commit();
+        $export = null;
+        if (getenv('ARCHIVE_HTTP_EXPORT_PATH')) {
+            require_once __DIR__.'/../Support/ArchiveReceiverFixtureExport.php';
+            require_once __DIR__.'/../Support/ArchiveReceiverPortalFixture.php';
+            $export = new \Tests\Support\ArchiveReceiverFixtureExport($pdo, (string)getenv('ARCHIVE_HTTP_EXPORT_PATH'));
+            \Tests\Support\ArchiveReceiverPortalFixture::setupPortal($pdo);
+        }
         // Prove the production failure's RESTRICT constraint is present, not disabled.
         try{$pdo->exec('DELETE FROM clients WHERE id=91001');self::fail('RESTRICT missing');}catch(\PDOException $e){self::assertSame('23000',$e->getCode());}
         $admin=$this->session($pdo,91001,'admin');
-        $this->withServer((int)$match[1],function(string $base)use($pdo,$admin,$before):void{
+        $this->withServer((int)$match[1],function(string $base)use($pdo,$admin,$before,$export):void{
+            $export?->capture($base, 'initial', true);
             $archive=$this->request($base.'/?page=client/clients-delete',$admin['id'],['csrf'=>$admin['csrf'],'id'=>91001]);
             self::assertSame(302,$archive['status'],$archive['body']);self::assertStringContainsString('archived=1',$archive['headers']['location']);
             self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM clients WHERE id=91001')->fetchColumn());
@@ -40,24 +48,27 @@ final class ClientArchivePolicyHttpMySqlTest extends TestCase
             $saved=$pdo->query("SELECT * FROM archived_entities WHERE entity_type='portal_contact_identity_policy'")->fetch();
             $savedPolicy=json_decode($saved['payload'],true,512,JSON_THROW_ON_ERROR);$expectedPolicy=$before;
             ksort($savedPolicy);ksort($expectedPolicy);self::assertSame($expectedPolicy,$savedPolicy);
-            self::assertSame(0,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            self::assertSame(0,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='a1111111111111111111111111111111'")->fetchColumn());
+            $export?->capture($base, 'archived', false);
             $pdo->exec("INSERT INTO clients(id,public_id,name,email,client_type)VALUES(91001,'22222222222222222222222222222222','Unrelated replacement','untouched@example.invalid','consumer')");
             $unrelated=$pdo->query('SELECT * FROM clients WHERE id=91001')->fetch();
             $restore=$this->request($base.'/?page=client/clients-restore',$admin['id'],['csrf'=>$admin['csrf'],'id'=>$saved['entity_id']]);
             self::assertSame(302,$restore['status'],$restore['body']);self::assertStringContainsString('restored=1',$restore['headers']['location']);
             self::assertSame($unrelated,$pdo->query('SELECT * FROM clients WHERE id=91001')->fetch());
-            $restored=$pdo->query("SELECT id,public_id FROM clients WHERE public_id='11111111111111111111111111111111'")->fetch();
+            $restored=$pdo->query("SELECT id,public_id FROM clients WHERE public_id='a1111111111111111111111111111111'")->fetch();
             self::assertNotSame(91001,(int)$restored['id']);$before['client_id']=$restored['id'];
             self::assertSame($before,$pdo->query('SELECT * FROM portal_client_contact_identity_policy WHERE client_id='.(int)$restored['id'])->fetch());
             self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM archived_entities WHERE entity_type='portal_contact_identity_policy'")->fetchColumn());
             self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM archived_clients')->fetchColumn());
             self::assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
-            self::assertSame(1,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            self::assertSame(1,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='a1111111111111111111111111111111'")->fetchColumn());
+            $export?->capture($base, 'restored', true);
             // A lost snapshot must not fall through to ordinary email-based enrollment.
             $archive=$this->request($base.'/?page=client/clients-delete',$admin['id'],['csrf'=>$admin['csrf'],'id'=>$restored['id']]);
             self::assertStringContainsString('archived=1',$archive['headers']['location']);
             $archiveRow=$pdo->query('SELECT * FROM archived_clients')->fetch();
             self::assertTrue(json_decode($archiveRow['portal_identity_binding_ids_json'],true,512,JSON_THROW_ON_ERROR)['contact_policy_expected']);
+            $export?->capture($base, 'rearchived', false);
             $pdo->prepare("DELETE FROM archived_entities WHERE entity_type='portal_contact_identity_policy' AND entity_id=? AND client_id=?")
                 ->execute([$archiveRow['id'],$restored['id']]);
             $authorityTables=['portal_principals','portal_principal_clients','portal_v2_entitlements','portal_identity_bindings'];
@@ -67,11 +78,13 @@ final class ClientArchivePolicyHttpMySqlTest extends TestCase
             self::assertSame(302,$restore['status']);
             self::assertStringNotContainsString('restored=1',$restore['headers']['location']);
             self::assertSame($archiveRow,$pdo->query('SELECT * FROM archived_clients')->fetch());
-            self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM clients WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            self::assertSame(0,(int)$pdo->query("SELECT COUNT(*) FROM clients WHERE public_id='a1111111111111111111111111111111'")->fetchColumn());
             foreach($authorityTables as$table)self::assertSame($authority[$table],$pdo->query('SELECT * FROM '.$table)->fetchAll(),$table);
             self::assertSame($unrelated,$pdo->query('SELECT * FROM clients WHERE id=91001')->fetch());
-            self::assertSame(0,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='11111111111111111111111111111111'")->fetchColumn());
+            self::assertSame(0,(int)$pdo->query("SELECT present FROM api_v2_directory_resource_state WHERE public_id='a1111111111111111111111111111111'")->fetchColumn());
+            $export?->capture($base, 'missing-policy-restore-refused', false);
         });
+        $export?->finish();
     }
     private function session(PDO $pdo, int $userId, string $role, array $previews = []): array
     {
@@ -113,6 +126,10 @@ final class ClientArchivePolicyHttpMySqlTest extends TestCase
         $env['MYSQL_PASSWORD'] = (string)getenv('ARCHIVE_HTTP_PASSWORD');
         $env['APP_SKIP_DB_CONFIG'] = '1';
         $env['APP_ENV'] = 'production';
+        if (getenv('ARCHIVE_HTTP_EXPORT_PATH')) {
+            $env['APP_API_V2_DIRECTORY_READ_ENABLED'] = 'true';
+            $env['APP_API_V2_DIRECTORY_INVENTORY_ENABLED'] = 'true';
+        }
         foreach (['AUTH_DISABLED', 'APP_AUTH_DISABLED'] as $key) $env[$key] = 'false';
         foreach (['STRIPE_SECRET_KEY', 'stripe_secret_key', 'stripe_secret_key_enc', 'STRIPE_WEBHOOK_SECRET'] as $key) $env[$key] = '';
         $log = tmpfile();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -11,6 +12,11 @@ const database = `pa_archive_http_${suffix}`;
 const password = crypto.randomBytes(24).toString('hex');
 const image = (process.env.ARCHIVE_HTTP_TEST_IMAGE ?? '').trim();
 let id = '';
+const exportDir = process.env.ARCHIVE_HTTP_EXPORT_DIR ? path.resolve(process.env.ARCHIVE_HTTP_EXPORT_DIR) : null;
+if (exportDir) {
+  assert(fs.statSync(exportDir).isDirectory(), 'Export directory must already exist');
+  assert(!fs.existsSync(path.join(exportDir, 'receiver-fixtures.json')), 'Refusing to replace an existing export');
+}
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true,
     shell: false, timeout: 300_000, ...options });
@@ -18,7 +24,7 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 try {
-  const args = ['run', '-d', '--name', name];
+  const args = ['run', '-d', '--name', name, '--memory=768m', '--cpus=1', '--pids-limit=128'];
   if (!image) args.push('-p', '127.0.0.1::3306');
   args.push('-e', `MYSQL_ROOT_PASSWORD=${password}`, '-e', `MYSQL_DATABASE=${database}`, 'mysql:8.4');
   id = run('docker', args);
@@ -40,11 +46,13 @@ try {
     ARCHIVE_HTTP_PASSWORD: password,
     ARCHIVE_HTTP_ALLOW: 'isolated-disposable-only',
   };
+  if (exportDir) variables.ARCHIVE_HTTP_EXPORT_PATH = image ? '/export/receiver-fixtures.json' : path.join(exportDir, 'receiver-fixtures.json');
   const tests = ['vendor/bin/phpunit', 'tests/Integration/ClientArchivePolicyHttpMySqlTest.php',
     '--do-not-cache-result', '--colors=never', '--fail-on-skipped'];
   if (image) {
-    const docker = ['run', '--rm', '--network', `container:${id}`,
+    const docker = ['run', '--rm', '--memory=768m', '--cpus=1', '--pids-limit=128', '--network', `container:${id}`,
       '--mount', `type=bind,source=${root},target=/source,readonly`];
+    if (exportDir) docker.push('--mount', `type=bind,source=${exportDir},target=/export`);
     for (const [key, value] of Object.entries(variables)) docker.push('--env', `${key}=${value}`);
     // Use this checkout's front controller, helper and tests, even with an older
     // image. Reuse vendor only when its lock matches; copying it under the new
