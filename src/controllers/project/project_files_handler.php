@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/upload_validator.php';
 require_once __DIR__ . '/../../utils/project_files.php';
+require_once __DIR__ . '/../../utils/rate_limiter.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -18,6 +19,7 @@ $action = (string)($_POST['action'] ?? '');
 $projectId = (int)($_POST['project_id'] ?? 0);
 $redirect = '/?page=project/projects-details&id=' . $projectId . '#project-files';
 $userId = (int)($_SESSION['user']['id'] ?? 0) ?: null;
+$movedFilePath = null;
 
 function project_files_redirect(int $projectId, string $param, string $message): never
 {
@@ -115,6 +117,9 @@ try {
     }
 
     if ($action === 'upload_file') {
+        if (!$userId || !rate_limit_check($pdo, 'project_file_upload_user_' . $userId, 20, 3600, false)) {
+            project_files_redirect($projectId, 'file_error', 'Upload limit reached. Please try again later.');
+        }
         $folderId = (int)($_POST['folder_id'] ?? 0) ?: null;
         if ($folderId) {
             project_files_owned_folder($pdo, $projectId, $folderId);
@@ -126,8 +131,12 @@ try {
         if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
             project_files_redirect($projectId, 'file_error', 'Invalid upload.');
         }
-        if ((int)($file['size'] ?? 0) <= 0) {
+        $fileSize = @filesize((string)$file['tmp_name']);
+        if ($fileSize === false || $fileSize <= 0) {
             project_files_redirect($projectId, 'file_error', 'File is empty.');
+        }
+        if ($fileSize > PROJECT_FILE_MAX_BYTES) {
+            project_files_redirect($projectId, 'file_error', 'Project files must be 250 MB or smaller.');
         }
         $scanError = scan_clamav((string)$file['tmp_name']);
         if ($scanError !== null) {
@@ -148,9 +157,12 @@ try {
         $originalName = basename((string)($file['name'] ?? 'project-file'));
         $storedName = project_files_safe_stored_name($originalName);
         $targetPath = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $storedName;
+        $pdo->beginTransaction();
+        project_files_assert_upload_quota($pdo, $projectId, $fileSize);
         if (!move_uploaded_file((string)$file['tmp_name'], $targetPath)) {
-            project_files_redirect($projectId, 'file_error', 'Failed to save uploaded file.');
+            throw new RuntimeException('Failed to save uploaded file.');
         }
+        $movedFilePath = $targetPath;
         $mimeType = project_files_detect_mime($targetPath, (string)($file['type'] ?? ''));
         $dbPath = project_files_db_path($projectId, $folderId, $storedName);
 
@@ -167,9 +179,11 @@ try {
             $storedName,
             $dbPath,
             $mimeType,
-            (int)($file['size'] ?? 0),
+            $fileSize,
             $userId,
         ]);
+        $pdo->commit();
+        $movedFilePath = null;
         project_files_redirect($projectId, 'file_msg', 'File uploaded.');
     }
 
@@ -201,6 +215,12 @@ try {
 
     project_files_redirect($projectId, 'file_error', 'Invalid project file action.');
 } catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    if ($movedFilePath !== null && is_file($movedFilePath)) {
+        @unlink($movedFilePath);
+    }
     @error_log('[project_files_handler] ' . $e->getMessage());
-    project_files_redirect($projectId, 'file_error', 'Project file action failed.');
+    project_files_redirect($projectId, 'file_error', $e instanceof LengthException ? $e->getMessage() : 'Project file action failed.');
 }

@@ -2,6 +2,34 @@
 
 declare(strict_types=1);
 
+const PROJECT_FILE_MAX_BYTES = 250 * 1024 * 1024;
+const PROJECT_STORAGE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** The caller keeps the transaction open until the file row is inserted. */
+function project_files_assert_upload_quota(PDO $pdo, int $projectId, int $fileSize): void
+{
+    if (!$pdo->inTransaction()) {
+        throw new LogicException('Project file quota requires a transaction.');
+    }
+    if ($fileSize <= 0 || $fileSize > PROJECT_FILE_MAX_BYTES) {
+        throw new LengthException('Project files must be 250 MB or smaller.');
+    }
+    $lockSql = 'SELECT id FROM projects WHERE id=?';
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+        $lockSql .= ' FOR UPDATE';
+    }
+    $lock = $pdo->prepare($lockSql);
+    $lock->execute([$projectId]);
+    if (!$lock->fetchColumn()) {
+        throw new RuntimeException('Project not found.');
+    }
+    $used = $pdo->prepare('SELECT COALESCE(SUM(file_size),0) FROM project_files WHERE project_id=?');
+    $used->execute([$projectId]);
+    if ((int)$used->fetchColumn() + $fileSize > PROJECT_STORAGE_MAX_BYTES) {
+        throw new LengthException('Project file storage is full. Delete old files before uploading more.');
+    }
+}
+
 function project_files_storage_root(): string
 {
     return dirname(__DIR__) . '/uploads/projects';
