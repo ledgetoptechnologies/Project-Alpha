@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/client_onboarding.php';
+require_once __DIR__ . '/../../utils/client_onboarding_access.php';
 
 client_onboarding_revoke_stale($pdo);
 
@@ -14,26 +15,19 @@ if ($userId <= 0) {
     header('Location: /?page=client/onboarding&error=' . urlencode('Sign in before creating an invitation.'));
     exit;
 }
+$orgWide = pa_onboarding_org_wide($pdo, $userId);
+if (!$orgWide) {
+    $organizationId = 0;
+}
 $ownerOrganizationId = $organizationId > 0 ? $organizationId : null;
+$invitationScope = pa_onboarding_invitation_scope($pdo, $userId, $organizationId, 'client_onboarding_invitations');
 
 $action = (string)($_POST['action'] ?? 'create');
 if ($action === 'revoke') {
     $id = (int)($_POST['id'] ?? 0);
-    if ($ownerOrganizationId !== null) {
-        $stmt = $pdo->prepare('
-            UPDATE client_onboarding_invitations
-            SET status="revoked", consumed_at=NOW()
-            WHERE id=? AND (organization_id=? OR (organization_id IS NULL AND created_by=?)) AND status IN ("pending","verified")
-        ');
-        $stmt->execute([$id, $ownerOrganizationId, $userId]);
-    } else {
-        $stmt = $pdo->prepare('
-            UPDATE client_onboarding_invitations
-            SET status="revoked", consumed_at=NOW()
-            WHERE id=? AND organization_id IS NULL AND created_by=? AND status IN ("pending","verified")
-        ');
-        $stmt->execute([$id, $userId]);
-    }
+    $stmt = $pdo->prepare('UPDATE client_onboarding_invitations SET status="revoked", consumed_at=NOW()
+        WHERE id=? AND ' . $invitationScope[0] . ' AND status IN ("pending","verified")');
+    $stmt->execute(array_merge([$id], $invitationScope[1]));
     audit_log($pdo, 'client_onboarding.revoke', 'client_onboarding_invitation', $id, ['organization_id' => $ownerOrganizationId]);
     header('Location: /?page=client/onboarding&revoked=1');
     exit;
@@ -44,23 +38,11 @@ if ($action === 'regenerate_link') {
     $token = bin2hex(random_bytes(32));
     $expiresAt = date('Y-m-d H:i:s', strtotime('+14 days'));
 
-    if ($ownerOrganizationId !== null) {
-        $stmt = $pdo->prepare('
-            UPDATE client_onboarding_invitations
-            SET token_hash=?, token_enc=?, status="pending", expires_at=?, consumed_at=NULL,
-                verification_code_hash=NULL, code_expires_at=NULL, verification_attempts=0, email_verified_at=NULL
-            WHERE id=? AND (organization_id=? OR (organization_id IS NULL AND created_by=?)) AND status IN ("pending","verified","expired")
-        ');
-        $stmt->execute([hash('sha256', $token), client_onboarding_store_token($token), $expiresAt, $id, $ownerOrganizationId, $userId]);
-    } else {
-        $stmt = $pdo->prepare('
-            UPDATE client_onboarding_invitations
-            SET token_hash=?, token_enc=?, status="pending", expires_at=?, consumed_at=NULL,
-                verification_code_hash=NULL, code_expires_at=NULL, verification_attempts=0, email_verified_at=NULL
-            WHERE id=? AND organization_id IS NULL AND created_by=? AND status IN ("pending","verified","expired")
-        ');
-        $stmt->execute([hash('sha256', $token), client_onboarding_store_token($token), $expiresAt, $id, $userId]);
-    }
+    $stmt = $pdo->prepare('UPDATE client_onboarding_invitations
+        SET token_hash=?, token_enc=?, status="pending", expires_at=?, consumed_at=NULL,
+            verification_code_hash=NULL, code_expires_at=NULL, verification_attempts=0, email_verified_at=NULL
+        WHERE id=? AND ' . $invitationScope[0] . ' AND status IN ("pending","verified","expired")');
+    $stmt->execute(array_merge([hash('sha256', $token), client_onboarding_store_token($token), $expiresAt, $id], $invitationScope[1]));
 
     if ($stmt->rowCount() <= 0) {
         header('Location: /?page=client/onboarding&error=' . urlencode('That onboarding invitation cannot be regenerated. Create a new link instead.'));
@@ -81,7 +63,7 @@ $targetOrganizationId = max(0, (int)($_POST['target_organization_id'] ?? 0));
 $delivery = ($_POST['delivery'] ?? 'link') === 'email' ? 'email' : 'link';
 $expiresHours = max(1, min(336, (int)($_POST['expires_hours'] ?? 336)));
 $notifyOnSubmit = !empty($_POST['notify_on_submit']) ? 1 : 0;
-try {
+if ($orgWide) try {
     $pdo->prepare(
         'INSERT INTO app_config (organization_id, config_key, config_value)
          VALUES (0, "notify_client_onboarding_submit", ?)
@@ -103,12 +85,16 @@ if ($delivery === 'link' && $email !== '' && !filter_var($email, FILTER_VALIDATE
 if ($clientId > 0) {
     $client = $pdo->prepare('SELECT id FROM clients WHERE id=? AND archived=0');
     $client->execute([$clientId]);
-    if (!$client->fetchColumn()) {
+    if (!$client->fetchColumn() || (!$orgWide && !can_access_record($pdo, 'clients', $clientId, $userId))) {
         header('Location: /?page=client/onboarding&error=' . urlencode('The selected client is unavailable.'));
         exit;
     }
 }
 if ($targetOrganizationId > 0) {
+    if (!$orgWide) {
+        header('Location: /?page=client/onboarding&error=' . urlencode('The selected client organization is unavailable.'));
+        exit;
+    }
     $target = $pdo->prepare('SELECT id FROM organizations WHERE id=?');
     $target->execute([$targetOrganizationId]);
     if (!$target->fetchColumn()) {
@@ -120,17 +106,9 @@ if ($targetOrganizationId > 0) {
 $token = bin2hex(random_bytes(32));
 $expiresAt = date('Y-m-d H:i:s', strtotime('+' . $expiresHours . ' hours'));
 if ($email !== '') {
-    if ($ownerOrganizationId !== null) {
-        $pdo->prepare(
-            'UPDATE client_onboarding_invitations SET status="revoked",consumed_at=NOW()
-             WHERE (organization_id=? OR (organization_id IS NULL AND created_by=?)) AND invited_email=? AND status IN ("pending","verified")'
-        )->execute([$ownerOrganizationId, $userId, $email]);
-    } else {
-        $pdo->prepare(
-            'UPDATE client_onboarding_invitations SET status="revoked",consumed_at=NOW()
-             WHERE organization_id IS NULL AND created_by=? AND invited_email=? AND status IN ("pending","verified")'
-        )->execute([$userId, $email]);
-    }
+    $pdo->prepare('UPDATE client_onboarding_invitations SET status="revoked",consumed_at=NOW()
+        WHERE ' . $invitationScope[0] . ' AND invited_email=? AND status IN ("pending","verified")')
+        ->execute(array_merge($invitationScope[1], [$email]));
 }
 $stmt = $pdo->prepare(
     'INSERT INTO client_onboarding_invitations

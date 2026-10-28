@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/client_onboarding.php';
+require_once __DIR__ . '/../../utils/client_onboarding_access.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
@@ -11,6 +12,10 @@ require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
 
 $organizationId = request_client_org_id();
 $userId = (int)($_SESSION['user']['id'] ?? 0);
+$orgWide = pa_onboarding_org_wide($pdo, $userId);
+if (!$orgWide) {
+    $organizationId = 0;
+}
 $submissionId = (int)($_POST['submission_id'] ?? 0);
 $decision = (string)($_POST['decision'] ?? '');
 if ($decision === 'approve' && api_v2_directory_management_guard($pdo, 'directory', 'onboarding_review')) {
@@ -31,10 +36,7 @@ if ($userId <= 0 || $submissionId <= 0 || !in_array($decision, ['approve', 'reje
 try {
     $pdo->beginTransaction();
     if ($decision === 'approve') api_v2_directory_management_acquire_shared_gate($pdo);
-    $ownerWhere = $organizationId > 0
-        ? '(i.organization_id=? OR (i.organization_id IS NULL AND i.created_by=?))'
-        : 'i.organization_id IS NULL AND i.created_by=?';
-    $ownerParams = $organizationId > 0 ? [$organizationId, $userId] : [$userId];
+    [$ownerWhere, $ownerParams] = pa_onboarding_invitation_scope($pdo, $userId, $organizationId);
     $stmt = $pdo->prepare(
         'SELECT s.*,i.organization_id,i.target_organization_id,i.client_id,i.invited_email,c.email AS current_client_email
          FROM client_onboarding_submissions s
@@ -56,11 +58,11 @@ try {
     if ($decision === 'approve') {
         $allowedClientMatchIds = array_map(
             static fn(array $match): int => (int)$match['id'],
-            client_onboarding_find_client_matches($pdo, $submittedData, $organizationId > 0 ? $organizationId : null)
+            client_onboarding_find_client_matches($pdo, $submittedData, $organizationId > 0 ? $organizationId : null, $orgWide ? null : $userId)
         );
         $allowedOrganizationMatchIds = array_map(
             static fn(array $match): int => (int)$match['id'],
-            client_onboarding_find_organization_matches($pdo, (string)($submittedData['organization_name'] ?? ''))
+            $orgWide ? client_onboarding_find_organization_matches($pdo, (string)($submittedData['organization_name'] ?? '')) : []
         );
         if (in_array($resolution, ['keep_existing', 'merge_existing'], true)
             && !in_array($matchClientId, $allowedClientMatchIds, true)) {
@@ -73,6 +75,9 @@ try {
     }
 
     $clientId = (int)($submission['client_id'] ?? 0);
+    if (!$orgWide && ($matchOrganizationId > 0 || (int)($submission['target_organization_id'] ?? 0) > 0)) {
+        throw new RuntimeException('The selected organization is unavailable.');
+    }
     $projection = new \App\Services\PortalProjectionMutationService();
     $portalBeforeScopes = [];
     $portalClientIds = array_values(array_unique(array_filter([$clientId, $matchClientId])));
@@ -86,6 +91,13 @@ try {
         $portalClientIds,
         $portalTargetOrganizationIds
     );
+    if (!$orgWide) {
+        foreach ($portalClientIds as $candidateClientId) {
+            if (!can_access_record($pdo, 'clients', (int)$candidateClientId, $userId)) {
+                throw new RuntimeException('The selected client is unavailable.');
+            }
+        }
+    }
     if ($decision === 'approve') {
         $reviewData = is_array($_POST['review_data'] ?? null) ? $_POST['review_data'] : [];
         $reviewClientType = (string)($reviewData['client_type'] ?? 'consumer');
@@ -161,6 +173,9 @@ try {
                 ]);
                 $targetOrganizationId = (int)$pdo->lastInsertId();
             } catch (Throwable $orgError) {
+                if (!$orgWide) {
+                    throw new RuntimeException('The submitted organization already exists and requires a manager to review it.', 0, $orgError);
+                }
                 $orgLookup = $pdo->prepare('SELECT id FROM organizations WHERE name=?');
                 $orgLookup->execute([$submittedOrganizationName]);
                 $targetOrganizationId = (int)($orgLookup->fetchColumn() ?: 0) ?: $targetOrganizationId;

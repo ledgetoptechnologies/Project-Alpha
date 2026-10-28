@@ -135,7 +135,7 @@ function client_onboarding_submitted_email(array $data, array $submission = []):
 /**
  * @return list<array<string,mixed>>
  */
-function client_onboarding_find_client_matches(PDO $pdo, array $data, ?int $ownerOrganizationId = null): array
+function client_onboarding_find_client_matches(PDO $pdo, array $data, ?int $ownerOrganizationId = null, ?int $creatorId = null): array
 {
     $email = client_onboarding_submitted_email($data);
     $phone = client_onboarding_normalize_phone($data['phone'] ?? '');
@@ -150,6 +150,10 @@ function client_onboarding_find_client_matches(PDO $pdo, array $data, ?int $owne
     if ($ownerOrganizationId !== null && $ownerOrganizationId > 0) {
         $sql .= ' AND (c.organization_id=? OR c.organization_id IS NULL)';
         $params[] = $ownerOrganizationId;
+    }
+    if ($creatorId !== null) {
+        $sql .= ' AND c.created_by=?';
+        $params[] = $creatorId;
     }
     $sql .= ' ORDER BY c.updated_at DESC, c.id DESC LIMIT 400';
 
