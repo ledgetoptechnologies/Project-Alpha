@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf_sf.php';
 require_once __DIR__ . '/../../../utils/two_factor_auth.php';
 require_once __DIR__ . '/../../../utils/two_factor_policy.php';
+require_once __DIR__ . '/../../../utils/two_factor_enrollment.php';
 
 use App\Utils\TwoFactorAuth;
 
@@ -31,8 +32,14 @@ $success = (string)($_GET['success'] ?? '');
 $isRecoveryEnrollment = !empty($_GET['recovery']);
 $qrDataUri = null;
 $qrError = null;
+$pending = $_SESSION['totp_pending_enrollment'] ?? null;
+$hasPendingEnrollment = totp_enrollment_is_pending($pending, $userId, $twofa, time());
+if ($step === 'verify' && !$hasPendingEnrollment) {
+    $step = 'main';
+    $error = 'Authenticator setup expired. Start again.';
+}
 
-if ($step === 'verify' && $twofa && !empty($twofa['secret'])) {
+if ($step === 'verify' && $hasPendingEnrollment) {
     try {
         $otpUri = TwoFactorAuth::getOtpAuthUri(
             (string)$twofa['secret'],

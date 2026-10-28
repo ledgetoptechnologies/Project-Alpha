@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/logger.php';
 require_once __DIR__ . '/../../utils/two_factor_auth.php';
 require_once __DIR__ . '/../../utils/two_factor_policy.php';
+require_once __DIR__ . '/../../utils/two_factor_enrollment.php';
 
 use App\Utils\TwoFactorAuth;
 
@@ -42,24 +43,38 @@ try {
     $twofa = $st->fetch(PDO::FETCH_ASSOC);
     
     if ($action === 'enable_init') {
+        if (!totp_enrollment_can_start($twofa ?: null)) {
+            header('Location: /?page=2fa-setup&error=' . urlencode('Disable the current authenticator with your password before enrolling a new one.'));
+            exit;
+        }
         // Generate the secret only. Recovery codes were retired in schema 46;
         // users can enroll another passkey or use audited administrator recovery.
         $secret = TwoFactorAuth::generateSecret();
         
         // Store in database (not enabled yet, waiting for verification)
         if ($twofa) {
-            $st = $pdo->prepare('UPDATE user_2fa SET secret = ?, enabled = 0, enabled_at = NULL WHERE user_id = ?');
+            $st = $pdo->prepare('UPDATE user_2fa SET secret = ?, enabled = 0, enabled_at = NULL WHERE user_id = ? AND enabled = 0');
             $st->execute([$secret, $userId]);
+            if ($st->rowCount() !== 1) {
+                throw new RuntimeException('An enabled authenticator cannot be replaced by setup.');
+            }
         } else {
             $st = $pdo->prepare('INSERT INTO user_2fa (user_id, secret, enabled) VALUES (?, ?, 0)');
             $st->execute([$userId, $secret]);
         }
         
+        $_SESSION['totp_pending_enrollment'] = ['user_id' => $userId, 'expires_at' => time() + 600];
         header('Location: /?page=2fa-setup&step=verify');
         exit;
     }
     
     if ($action === 'enable_verify') {
+        $pending = $_SESSION['totp_pending_enrollment'] ?? null;
+        if (!totp_enrollment_is_pending($pending, $userId, $twofa ?: null, time())) {
+            unset($_SESSION['totp_pending_enrollment']);
+            header('Location: /?page=2fa-setup&error=' . urlencode('Authenticator setup expired. Start again.'));
+            exit;
+        }
         // Verify the code before enabling
         $code = trim($_POST['code'] ?? '');
         
@@ -72,7 +87,7 @@ try {
         $totpLock->execute([$userId]);
         $lockedTwofa = $totpLock->fetch(PDO::FETCH_ASSOC);
 
-        if (!$lockedTwofa) {
+        if (!$lockedTwofa || !empty($lockedTwofa['enabled'])) {
             $pdo->rollBack();
             header('Location: /?page=2fa-setup&error=' . urlencode('2FA setup not initialized'));
             exit;
@@ -86,6 +101,7 @@ try {
             }
             $pdo->prepare('UPDATE users SET totp_reenroll_required = 0 WHERE id = ?')->execute([$userId]);
             $pdo->commit();
+            unset($_SESSION['totp_pending_enrollment']);
             App\Security\SessionPolicy::rotateAuthenticatedId();
             $_SESSION['authn']['reauthenticated_at'] = time();
 
@@ -133,6 +149,7 @@ try {
             App\Security\SessionPolicy::rotateAuthenticatedId();
             app_log('2fa', '2FA disabled', ['user_id' => $userId]);
         }
+        unset($_SESSION['totp_pending_enrollment']);
         
         header('Location: /?page=2fa-setup&success=disabled');
         exit;
