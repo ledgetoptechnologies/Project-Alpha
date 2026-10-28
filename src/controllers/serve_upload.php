@@ -58,6 +58,17 @@ if ($uploadCategory === 'organizations') {
   }
 }
 
+if (in_array($uploadCategory, ['receipts', 'forms'], true)) {
+  require_once __DIR__ . '/../config/db.php';
+  require_once __DIR__ . '/../utils/upload_access.php';
+  $actorId = (int)($_SESSION['user']['id'] ?? 0);
+  $filePath = '/src/uploads/' . str_replace('\\', '/', $fname);
+  if (!upload_financial_file_accessible($pdo, $uploadCategory, $filePath, $actorId, request_client_org_id())) {
+    http_response_code(404);
+    exit;
+  }
+}
+
 $bases = [
   __DIR__ . '/../uploads', // src/uploads for contract files
   '/var/www/config/uploads', // fallback for Docker environments
