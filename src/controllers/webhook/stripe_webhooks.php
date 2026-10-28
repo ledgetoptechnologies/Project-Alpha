@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../utils/webhook_logger.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
+require_once __DIR__ . '/../../utils/stripe_webhook_signature.php';
 
 $endpointName = 'stripe-webhook';
 $payload = file_get_contents('php://input');
@@ -36,41 +37,9 @@ try {
         throw new Exception('Stripe not configured');
     }
     
-    // Verify webhook signature if webhook secret is configured
     $webhookSecret = StripeService::webhookSecret($appConfig);
-    
-    // Verify webhook signature if secret is available
-    if ($webhookSecret && $sigHeader) {
-        // Parse Stripe signature header: t=timestamp,v1=signature
-        $sigParts = [];
-        foreach (explode(',', $sigHeader) as $part) {
-            $kv = explode('=', trim($part), 2);
-            if (count($kv) === 2) $sigParts[$kv[0]] = $kv[1];
-        }
-        $timestamp = $sigParts['t'] ?? '';
-        $sig = $sigParts['v1'] ?? '';
-        
-        if (!$timestamp || !$sig) {
-            throw new Exception('Invalid webhook signature format');
-        }
-        
-        // Reject if timestamp is older than 5 minutes (replay protection)
-        if (abs(time() - (int)$timestamp) > 300) {
-            throw new Exception('Webhook timestamp too old');
-        }
-        
-        $signedPayload = $timestamp . '.' . $payload;
-        $expected = hash_hmac('sha256', $signedPayload, $webhookSecret);
-        if (!hash_equals($expected, $sig)) {
-            throw new Exception('Webhook signature verification failed');
-        }
-        $signatureValid = true;
-    } elseif ($webhookSecret) {
-        // Secret configured but no signature header = reject
-        throw new Exception('Missing webhook signature');
-    } elseif (strtolower((string)(getenv('APP_ENV') ?: 'production')) === 'production') {
-        throw new Exception('Stripe webhook secret is required in production');
-    }
+    pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader);
+    $signatureValid = true;
     
     // Parse the event
     $event = json_decode($payload, true);

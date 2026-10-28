@@ -4,6 +4,25 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/public_links.php';
 
+/** Files exposed to a public project recipient, including folder publication rules. */
+function pa_project_public_visible_files(PDO $pdo, int $projectId, ?int $fileId = null): array
+{
+    $sql = 'SELECT pf.* FROM project_files pf
+            LEFT JOIN project_file_folders f ON f.id = pf.folder_id AND f.project_id = pf.project_id
+            WHERE pf.project_id = ? AND pf.client_visible = 1
+              AND (pf.folder_id IS NULL OR f.client_visible = 1)';
+    $params = [$projectId];
+    if ($fileId !== null) {
+        $sql .= ' AND pf.id = ? LIMIT 1';
+        $params[] = $fileId;
+    } else {
+        $sql .= ' ORDER BY pf.uploaded_at DESC, pf.id DESC LIMIT 100';
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 function pa_project_public_link_has_column(PDO $pdo, string $table, string $column): bool
 {
     static $cache = [];

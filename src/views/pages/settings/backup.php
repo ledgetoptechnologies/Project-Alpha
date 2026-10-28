@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/cron_state.php';
+require_once __DIR__ . '/../../../utils/acl.php';
 
 // Get existing database-only and full backups.
 $backupsDir = '/var/www/backups';
@@ -324,6 +325,7 @@ unset($_SESSION['flash_backup']);
 
     <hr>
 
+    <?php if (acl_user_role($pdo, (int)($_SESSION['user']['id'] ?? 0)) === 'admin'): ?>
     <h4>Restore from Backup</h4>
     <form method="POST" action="/?page=settings-backup" class="backup-form" enctype="multipart/form-data">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
@@ -357,6 +359,7 @@ unset($_SESSION['flash_backup']);
         </button>
         <span class="warning-text">Warning: This will overwrite all current data. Make a backup first!</span>
     </form>
+    <?php endif; ?>
 
     <hr>
 

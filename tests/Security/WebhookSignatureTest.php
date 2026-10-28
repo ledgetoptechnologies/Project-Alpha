@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../src/utils/crypto.php';
+require_once __DIR__ . '/../../src/utils/stripe_webhook_signature.php';
 
 use PHPUnit\Framework\TestCase;
 
@@ -18,6 +19,54 @@ class WebhookSignatureTest extends TestCase
         $header = $this->buildStripeSignature('{"id":1}', 'whsec_test_secret');
         $this->assertStringContainsString('t=', $header);
         $this->assertStringContainsString('v1=', $header);
+    }
+
+    public function testWebhookRequiresSecretAndSignatureInEveryEnvironment(): void
+    {
+        $payload = '{"id":"evt_test","type":"checkout.session.completed"}';
+        foreach (['production', 'prod', 'staging', 'test'] as $environment) {
+            putenv('APP_ENV=' . $environment);
+            try {
+                pa_stripe_webhook_verify_signature($payload, null, '');
+                self::fail('Secretless webhook accepted in ' . $environment);
+            } catch (RuntimeException $error) {
+                self::assertSame('Stripe webhook secret is required', $error->getMessage());
+            }
+        }
+        putenv('APP_ENV');
+    }
+
+    public function testWebhookRejectsUnsignedInvalidAndStaleEventsButAcceptsValidSignature(): void
+    {
+        $payload = '{"id":"evt_test"}';
+        $secret = 'whsec_synthetic';
+        $now = 1_800_000_000;
+        $valid = 't=' . $now . ',v1=' . hash_hmac('sha256', $now . '.' . $payload, $secret);
+        pa_stripe_webhook_verify_signature($payload, $secret, $valid, $now);
+
+        foreach ([
+            ['', 'Missing webhook signature'],
+            ['t=' . $now . ',v1=' . str_repeat('0', 64), 'Webhook signature verification failed'],
+            ['t=' . ($now - 301) . ',v1=' . hash_hmac('sha256', ($now - 301) . '.' . $payload, $secret), 'Webhook timestamp too old'],
+            ['t=not-a-time,v1=' . str_repeat('0', 64), 'Invalid webhook signature format'],
+        ] as [$header, $expected]) {
+            try {
+                pa_stripe_webhook_verify_signature($payload, $secret, $header, $now);
+                self::fail('Invalid webhook signature accepted: ' . $header);
+            } catch (RuntimeException $error) {
+                self::assertSame($expected, $error->getMessage());
+            }
+        }
+    }
+
+    public function testRouterVerifiesSignatureBeforeDispatchingEvents(): void
+    {
+        $router = (string)file_get_contents(dirname(__DIR__, 2) . '/src/controllers/webhook/stripe_webhooks.php');
+        $verifyAt = strpos($router, 'pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader)');
+        $parseAt = strpos($router, '$event = json_decode($payload, true)');
+        self::assertNotFalse($verifyAt);
+        self::assertNotFalse($parseAt);
+        self::assertLessThan($parseAt, $verifyAt);
     }
 
     public function testCryptoRoundTrip(): void

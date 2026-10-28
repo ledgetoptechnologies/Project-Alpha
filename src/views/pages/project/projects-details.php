@@ -442,7 +442,7 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
     $kindLabel = strtoupper($kind === 'file' ? (pathinfo($displayName, PATHINFO_EXTENSION) ?: 'file') : $kind);
     $viewUrl = '/?page=project/project-file-download&id=' . $fileId;
     $downloadUrl = $viewUrl . '&download=1';
-    $canPreview = in_array($kind, ['pdf', 'image', 'text'], true);
+    $canPreview = project_files_delivery_policy((string)($file['mime_type'] ?? ''), false)['safe_inline'];
     ?>
     <div class="project-file-row">
         <div class="project-file-main">

@@ -106,9 +106,7 @@ $invoices = [];
 $projectInvoices = [];
 
 if (!empty($project['public_project_can_view_documents'])) {
-    $fileStmt = $pdo->prepare('SELECT * FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC, id DESC LIMIT 100');
-    $fileStmt->execute([$projectId]);
-    $files = $fileStmt->fetchAll(PDO::FETCH_ASSOC);
+    $files = pa_project_public_visible_files($pdo, $projectId);
 
     $quoteStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM quotes WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
     $quoteStmt->execute([$projectId]);
@@ -209,7 +207,9 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
                     <div class="pp-muted"><?php echo htmlspecialchars(project_files_format_size((int)($file['file_size'] ?? 0)), ENT_QUOTES, 'UTF-8'); ?> · Uploaded <?php echo htmlspecialchars(date('M j, Y', strtotime((string)$file['uploaded_at'])), ENT_QUOTES, 'UTF-8'); ?></div>
                   </div>
                   <div class="pp-row-actions">
-                    <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>" target="_blank" rel="noopener">Open</a>
+                    <?php if (project_files_delivery_policy((string)($file['mime_type'] ?? ''), false)['safe_inline']): ?>
+                      <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>" target="_blank" rel="noopener">Open</a>
+                    <?php endif; ?>
                     <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>&amp;download=1">Download</a>
                   </div>
                 </div>

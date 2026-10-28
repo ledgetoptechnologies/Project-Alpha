@@ -18,11 +18,6 @@ $isNotificationsTab = $tab === 'notifications';
 $isWorkflowTab = $tab === 'workflow';
 $isBillingTab = $tab === 'billing';
 
-if ($tab === 'links') {
-    require_once __DIR__ . '/settings/links_handler.php';
-    exit;
-}
-
 // Prefer dedicated config mount if present
 
 // Optional: account password change for logged-in user
@@ -60,9 +55,17 @@ if (!empty($_POST['change_password']) && $uid > 0) {
 }
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../utils/acl.php';
-if ($tab !== 'account' && ($uid <= 0 || !user_can($pdo,$uid,'settings.manage',0))) {
+if ($tab === 'account') {
+    http_response_code(400);
+    exit('No account change was requested.');
+}
+if ($uid <= 0 || !user_can($pdo,$uid,'settings.manage',0)) {
     http_response_code(403);
     exit('You do not have permission to change installation settings.');
+}
+if ($tab === 'links') {
+    require_once __DIR__ . '/settings/links_handler.php';
+    exit;
 }
 if ($isSystemTab && !in_array((string)($_SESSION['user']['role'] ?? ''), ['admin','owner'], true)) {
     http_response_code(403);

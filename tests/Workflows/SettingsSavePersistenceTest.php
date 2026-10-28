@@ -34,7 +34,9 @@ final class SettingsSavePersistenceTest extends TestCase
         $this->database->exec('CREATE TABLE app_config(organization_id INTEGER NOT NULL DEFAULT 0,
             config_key TEXT NOT NULL, config_value TEXT NOT NULL, UNIQUE(organization_id,config_key))');
         $this->database->exec("CREATE TABLE users(id INTEGER PRIMARY KEY, role TEXT NOT NULL);
-            INSERT INTO users VALUES(1,'admin')");
+            INSERT INTO users VALUES(1,'admin'),(2,'member');
+            CREATE TABLE user_permissions_overrides(user_id INTEGER, organization_id INTEGER, permission TEXT, allowed INTEGER);
+            INSERT INTO user_permissions_overrides VALUES(2,NULL,'settings.view',1),(2,NULL,'settings.manage',0)");
         $insert = $this->database->prepare('INSERT INTO app_config VALUES(0,?,?)');
         foreach (['google_oauth_client_secret_enc' => 'fixture-encrypted-google-credential',
             'google_routes_api_key_enc' => 'fixture-encrypted-routes-credential',
@@ -93,13 +95,27 @@ final class SettingsSavePersistenceTest extends TestCase
         self::assertArrayNotHasKey('workforce_allow_non_admin_time_management', $file);
     }
 
+    public function testViewOnlyMemberCannotWriteThroughLinksOrAccountTabs(): void
+    {
+        foreach (['links', 'account'] as $tab) {
+            [$exit, $output] = $this->save(['tab' => $tab, 'brand_name' => 'Attacker brand'], 2);
+            self::assertSame(0, $exit, $output);
+            self::assertStringContainsString(
+                $tab === 'links' ? 'You do not have permission' : 'No account change was requested',
+                $output
+            );
+            self::assertSame('{}', file_get_contents($this->directory . '/config/settings.json'));
+            self::assertFalse($this->database->query("SELECT config_value FROM app_config WHERE config_key='brand_name'")->fetchColumn());
+        }
+    }
+
     /** @return array{int,string} */
-    private function save(array $overrides = []): array
+    private function save(array $overrides = [], int $userId = 1): array
     {
         $post = array_replace(['tab' => 'system', 'csrf' => 'settings-save-fixture', 'financial_base_currency' => 'USD',
             'google_oauth_client_id' => '', 'google_oauth_client_secret' => '',
             'google_maps_browser_key' => '', 'google_routes_api_key' => ''], $overrides);
-        $process = proc_open([PHP_BINARY, $this->directory . '/driver.php', base64_encode(json_encode($post))],
+        $process = proc_open([PHP_BINARY, $this->directory . '/driver.php', base64_encode(json_encode($post)), (string)$userId],
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, $this->directory);
         self::assertIsResource($process);
         fclose($pipes[0]);

@@ -48,6 +48,27 @@ function project_files_detect_mime(string $path, ?string $fallback = null): stri
     return $fallback ?: 'application/octet-stream';
 }
 
+/** Only passive content types may render under the application's origin. */
+function project_files_delivery_policy(string $detectedMime, bool $download): array
+{
+    $mime = strtolower(trim(explode(';', $detectedMime, 2)[0]));
+    $safeInline = in_array($mime, [
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'text/plain',
+        'text/csv',
+    ], true);
+
+    return [
+        'content_type' => $safeInline ? $mime : 'application/octet-stream',
+        'disposition' => ($download || !$safeInline) ? 'attachment' : 'inline',
+        'safe_inline' => $safeInline,
+    ];
+}
+
 function project_files_kind(?string $mimeType, string $fileName): string
 {
     $mimeType = strtolower((string)$mimeType);

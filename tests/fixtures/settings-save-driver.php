@@ -36,7 +36,8 @@ final class SettingsSaveTestPDO extends PDO
 
 session_save_path(__DIR__ . '/sessions');
 session_start();
-$_SESSION = ['user' => ['id' => 1, 'role' => 'admin'], 'csrf' => 'settings-save-fixture'];
+$userId = (int)($argv[2] ?? 1);
+$_SESSION = ['user' => ['id' => $userId, 'role' => $userId === 1 ? 'admin' : 'member'], 'csrf' => 'settings-save-fixture'];
 $_POST = json_decode(base64_decode($argv[1], true), true, 512, JSON_THROW_ON_ERROR);
 $_FILES = [];
 require __DIR__ . '/src/controllers/settings_handler.php';
