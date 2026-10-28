@@ -9,17 +9,42 @@ require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../utils/webhook_logger.php';
 require_once __DIR__ . '/../../utils/stripe_financial_events.php';
 require_once __DIR__ . '/../../utils/stripe_webhook_signature.php';
+require_once __DIR__ . '/../../utils/client_ip.php';
+require_once __DIR__ . '/../../utils/rate_limiter.php';
 
 $endpointName = 'stripe-webhook';
-$payload = file_get_contents('php://input');
 $sigHeader = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
-$clientIp = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
-$logId = webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp);
+$clientIp = get_client_ip();
+$logId = null;
 
 header('Content-Type: application/json');
 
+if (!rate_limit_check($pdo, 'stripe_webhook', 300, 60, false)) {
+    http_response_code(429);
+    echo json_encode(['error' => 'Too many webhook requests']);
+    exit;
+}
+
+try {
+    $input = fopen('php://input', 'rb');
+    $payload = pa_stripe_webhook_read_payload($input, $_SERVER['CONTENT_LENGTH'] ?? null);
+} catch (LengthException $e) {
+    http_response_code(413);
+    echo json_encode(['error' => 'Payload too large']);
+    exit;
+} catch (Throwable $e) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid payload']);
+    exit;
+} finally {
+    if (isset($input) && is_resource($input)) {
+        fclose($input);
+    }
+}
+
 if (!$payload) {
     http_response_code(400);
+    $logId = webhook_log_insert($pdo, $endpointName, '', $sigHeader, $clientIp);
     webhook_log_update($pdo, $logId, false, 400, 'No payload');
     echo json_encode(['error' => 'No payload']);
     exit;
@@ -40,6 +65,7 @@ try {
     $webhookSecret = StripeService::webhookSecret($appConfig);
     pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader);
     $signatureValid = true;
+    $logId = webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp, true);
     
     // Parse the event
     $event = json_decode($payload, true);
@@ -198,6 +224,9 @@ try {
     
 } catch (Throwable $e) {
     @error_log('[StripeWebhook] Error: ' . $e->getMessage());
+    if ($logId === null && $signatureValid !== true) {
+        $logId = webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp);
+    }
     $responseCode = $stripeEventId ? 500 : 400;
     $errorMessage = $e->getMessage();
     if ($stripeEventId) {
@@ -205,7 +234,6 @@ try {
             ->execute([substr($errorMessage, 0, 2000), $stripeEventId]);
     }
     http_response_code($responseCode);
-    webhook_log_update($pdo, $logId, $signatureValid, $responseCode, $errorMessage);
     echo json_encode(['error' => $e->getMessage()]);
 }
 

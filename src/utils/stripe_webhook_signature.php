@@ -1,6 +1,26 @@
 <?php
 declare(strict_types=1);
 
+/** Read at most one byte beyond the cap so oversized requests cannot be buffered. */
+function pa_stripe_webhook_read_payload($stream, mixed $contentLength, int $maxBytes = 1048576): string
+{
+    if (!is_resource($stream) || $maxBytes <= 0) {
+        throw new InvalidArgumentException('Invalid webhook input stream.');
+    }
+    if (is_scalar($contentLength) && ctype_digit((string)$contentLength)
+        && (float)$contentLength > $maxBytes) {
+        throw new LengthException('Stripe webhook payload is too large.');
+    }
+    $payload = stream_get_contents($stream, $maxBytes + 1);
+    if (!is_string($payload)) {
+        throw new RuntimeException('Stripe webhook payload could not be read.');
+    }
+    if (strlen($payload) > $maxBytes) {
+        throw new LengthException('Stripe webhook payload is too large.');
+    }
+    return $payload;
+}
+
 /** Require Stripe authentication before a webhook event can reach payment handlers. */
 function pa_stripe_webhook_verify_signature(string $payload, ?string $secret, string $header, ?int $now = null): void
 {

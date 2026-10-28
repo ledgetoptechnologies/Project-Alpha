@@ -6,6 +6,35 @@ use PHPUnit\Framework\TestCase;
 
 class WebhookSignatureTest extends TestCase
 {
+    public function testWebhookPayloadReadIsBoundedEvenWithoutContentLength(): void
+    {
+        $stream = fopen('php://temp', 'w+');
+        self::assertIsResource($stream);
+        fwrite($stream, str_repeat('x', 1024));
+        rewind($stream);
+        try {
+            pa_stripe_webhook_read_payload($stream, null, 32);
+            self::fail('Oversized stream was accepted.');
+        } catch (LengthException) {
+            self::assertSame(33, ftell($stream));
+        } finally {
+            fclose($stream);
+        }
+
+        $stream = fopen('php://temp', 'w+');
+        self::assertIsResource($stream);
+        fwrite($stream, 'valid');
+        rewind($stream);
+        try {
+            self::assertSame('valid', pa_stripe_webhook_read_payload($stream, '5', 32));
+            rewind($stream);
+            $this->expectException(LengthException::class);
+            pa_stripe_webhook_read_payload($stream, '33', 32);
+        } finally {
+            fclose($stream);
+        }
+    }
+
     private function buildStripeSignature(string $payload, string $secret): string
     {
         $timestamp = time();
@@ -67,6 +96,20 @@ class WebhookSignatureTest extends TestCase
         self::assertNotFalse($verifyAt);
         self::assertNotFalse($parseAt);
         self::assertLessThan($parseAt, $verifyAt);
+    }
+
+    public function testWebhookBodiesAreLoggedOnlyAsMetadataAfterVerification(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $router = (string)file_get_contents($root . '/src/controllers/webhook/stripe_webhooks.php');
+        $logger = (string)file_get_contents($root . '/src/utils/webhook_logger.php');
+        $legacy = (string)file_get_contents($root . '/src/controllers/stripe/stripe_webhook.php');
+        self::assertLessThan(
+            strpos($router, 'webhook_log_insert($pdo, $endpointName, $payload, $sigHeader, $clientIp, true)'),
+            strpos($router, 'pa_stripe_webhook_verify_signature($payload, $webhookSecret, $sigHeader)')
+        );
+        self::assertStringContainsString('null // Event IDs and status are sufficient; never retain webhook bodies.', $logger);
+        self::assertStringNotContainsString("file_get_contents('php://input')", $legacy);
     }
 
     public function testCryptoRoundTrip(): void
