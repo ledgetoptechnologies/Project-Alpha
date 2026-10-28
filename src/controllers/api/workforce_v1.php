@@ -102,7 +102,13 @@ try {
     }
     if ($method === 'GET' && $resource === 'jobs') {
         $stmt=$pdo->query("SELECT j.id,j.job_code,j.client_id,j.project_id,j.status,j.created_by,c.name client_name FROM jobs j JOIN clients c ON c.id=j.client_id WHERE j.archived=0 ORDER BY j.created_at DESC,j.id DESC LIMIT 250");
-        $rows=array_values(array_filter($stmt->fetchAll(PDO::FETCH_ASSOC),static function(array $job)use($access,$userId,$canManage):bool{return $canManage('jobs.view')||$access->can($userId,'jobs.view','job',(int)$job['id']);}));
+        $canViewOwn = user_can($pdo, $userId, 'jobs.view', 0);
+        $canViewAll = $canViewOwn && acl_user_has_org_wide_scope($pdo, $userId, 0);
+        $rows=array_values(array_filter($stmt->fetchAll(PDO::FETCH_ASSOC),static function(array $job)use($access,$userId,$canViewOwn,$canViewAll):bool{
+            return $canViewAll
+                || ($canViewOwn && (int)$job['created_by'] === $userId)
+                || $access->can($userId,'jobs.view','job',(int)$job['id']);
+        }));
         api_json_success(['data'=>$rows]);
     }
     if ($method === 'GET' && $resource === 'assignments') {
@@ -400,7 +406,10 @@ try {
         $clientId=(int)($input['client_id']??0);$projectId=(int)($input['project_id']??0)?:null;
         $client=$pdo->prepare('SELECT id,organization_id FROM clients WHERE id=? AND archived=0 AND deleted_at IS NULL');$client->execute([$clientId]);$client=$client->fetch(PDO::FETCH_ASSOC);
         if(!$client)throw new DomainException('Choose an active client.');
-        if($projectId){$project=$pdo->prepare('SELECT 1 FROM projects WHERE id=? AND client_id=?');$project->execute([$projectId,$clientId]);if(!$project->fetchColumn())throw new DomainException('The Project does not belong to that client.');}
+        if(!can_access_record($pdo,'clients',$clientId,$userId)
+            && !$access->can($userId,'clients.search','client',$clientId)) api_json_failure(403,'client_scope_denied','Client is outside your scope.');
+        if($projectId){$project=$pdo->prepare('SELECT 1 FROM projects WHERE id=? AND client_id=?');$project->execute([$projectId,$clientId]);if(!$project->fetchColumn())throw new DomainException('The Project does not belong to that client.');
+            if(!can_access_record($pdo,'projects',$projectId,$userId)) api_json_failure(403,'project_scope_denied','Project is outside your scope.');}
         $code=project_next_code($pdo,$clientId);
         $pdo->prepare('INSERT INTO jobs (client_id,organization_id,project_id,job_code,status,notes,created_by) VALUES (?,?,?,?,"not_started",?,?)')->execute([$clientId,$client['organization_id']?:null,$projectId,$code,trim((string)($input['notes']??''))?:null,$userId]);
         api_json_success(['data'=>['id'=>(int)$pdo->lastInsertId(),'job_code'=>$code]],201);
