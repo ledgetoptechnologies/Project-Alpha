@@ -495,7 +495,7 @@ final class PortalProjectionDeliveryTest extends TestCase
                 strpos($source, 'lockedProjectScopes') ?: PHP_INT_MAX,
             ]));
             $transactionPosition = strpos($source, 'beginTransaction');
-            $deferredByHelper = preg_match('/portal_projection_mutate\([\s\S]{0,300}?static fn\(\):array=>[^;\r\n]*locked(?:Client|Project)Scopes(?:ForIds)?\s*\(/', $source) === 1;
+            $deferredByHelper = preg_match('/portal_projection_mutate\([\s\S]{0,300}?static\s+fn\s*\(\s*\)\s*:\s*array\s*=>[^;\r\n]*locked(?:Client|Project)Scopes(?:ForIds)?\s*\(/', $source) === 1;
             self::assertTrue($deferredByHelper || ($transactionPosition !== false && $transactionPosition < $lockPosition), $path);
         }
         sort($lockedPaths);
