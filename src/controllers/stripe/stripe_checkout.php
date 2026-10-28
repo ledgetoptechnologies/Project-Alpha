@@ -185,6 +185,8 @@ try {
                 && ($existing['payment_status'] ?? '') === 'unpaid'
                 && (int)($existing['amount_total'] ?? 0) === $expectedCents
                 && $existingInvoiceId === $invoiceId
+                && hash_equals($successUrl, (string)($existing['success_url'] ?? ''))
+                && hash_equals($cancelUrl, (string)($existing['cancel_url'] ?? ''))
                 && !empty($existing['url'])) {
                 header('Location: ' . $existing['url']);
                 exit;
@@ -200,7 +202,8 @@ try {
         }
     }
 
-    $idempotencyKey = 'pa-' . str_replace('_', '-', $documentType) . '-' . $invoiceId . '-' . $expectedCents . '-' . date('YmdH');
+    $returnUrlFingerprint = substr(hash('sha256', $successUrl . "\n" . $cancelUrl), 0, 16);
+    $idempotencyKey = 'pa-' . str_replace('_', '-', $documentType) . '-' . $invoiceId . '-' . $expectedCents . '-' . date('YmdH') . '-' . $returnUrlFingerprint;
     $checkoutMetadata = $documentType === 'project_invoice'
         ? [
             'pa_project_invoice_id' => (string)$invoiceId,
