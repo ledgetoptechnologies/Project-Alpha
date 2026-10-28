@@ -90,6 +90,60 @@ final class ManagedDeliveryIntegrationTest extends TestCase
         self::assertSame(1,$accepted['accepted']);
     }
 
+    public function testScheduledSenderDeliversQueuedRevocationWithoutConsumingRetries(): void
+    {
+        $pdo = $this->database();
+        $service = new ManagedDeliveryService();
+        $sender = new ManagedDeliveryIntentSender();
+        $provisionId = 'd1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1';
+        $revokeId = 'e2e2e2e2-e2e2-42e2-82e2-e2e2e2e2e2e2';
+        $service->queue($pdo, [
+            'delivery_id'=>$provisionId,
+            'scope_type'=>'project',
+            'scope_public_id'=>str_repeat('a', 32),
+            'audience_type'=>'principal',
+            'audience_public_id'=>str_repeat('b', 32),
+        ], 7);
+        $seen = [];
+        $transport = static function (string $url, array $headers, string $body) use (&$seen): array {
+            $event = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+            $seen[] = $event['intent_kind'];
+            return ['status'=>200, 'body'=>json_encode([
+                'ok'=>true, 'event_id'=>$event['event_id'], 'status'=>'completed',
+                'result'=>['receiptId'=>'receipt_' . $event['intent_kind'], 'status'=>'accepted'],
+            ], JSON_THROW_ON_ERROR)];
+        };
+        self::assertSame(1, $sender->deliverDue($pdo, 1, $transport)['accepted']);
+        $service->queueRevocation($pdo, $provisionId, $revokeId, 7);
+        self::assertSame(1, $sender->deliverDue($pdo, 1, $transport)['accepted']);
+        self::assertSame(['provision', 'revoke'], $seen);
+        self::assertSame(1, (int)$pdo->query("SELECT attempts FROM managed_delivery_intent_outbox WHERE delivery_id='{$revokeId}'")->fetchColumn());
+        self::assertNotFalse($pdo->query("SELECT revoked_at FROM managed_delivery_intent_outbox WHERE delivery_id='{$provisionId}'")->fetchColumn());
+    }
+
+    public function testScheduledSenderDefersLocalProgrammingErrorWithoutDeadLettering(): void
+    {
+        $pdo = $this->database();
+        $deliveryId = 'f3f3f3f3-f3f3-43f3-83f3-f3f3f3f3f3f3';
+        (new ManagedDeliveryService())->queue($pdo, [
+            'delivery_id'=>$deliveryId,
+            'scope_type'=>'project',
+            'scope_public_id'=>str_repeat('a', 32),
+            'audience_type'=>'principal',
+            'audience_public_id'=>str_repeat('b', 32),
+        ], 7);
+        $summary = (new ManagedDeliveryIntentSender())->deliverDue($pdo, 1, static function (): array {
+            throw new \TypeError('Synthetic local programming error');
+        });
+        self::assertSame(['processed'=>1, 'accepted'=>0, 'retrying'=>1, 'dead_lettered'=>0], $summary);
+        $row = $pdo->query("SELECT attempts,last_error_code,dead_lettered_at,claim_token FROM managed_delivery_intent_outbox WHERE delivery_id='{$deliveryId}'")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(0, (int)$row['attempts']);
+        self::assertSame('local_processing_error', $row['last_error_code']);
+        self::assertNull($row['dead_lettered_at']);
+        self::assertNull($row['claim_token']);
+        self::assertSame(0, (new ManagedDeliveryIntentSender())->deliverDue($pdo, 1, static fn(): array => ['status'=>200])['processed']);
+    }
+
     public function testPreUpgradeHmacClaimsRemainDispatchableAndRevocable(): void
     {
         $pdo = $this->database();

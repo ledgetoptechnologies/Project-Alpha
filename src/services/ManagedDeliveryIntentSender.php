@@ -6,6 +6,7 @@ namespace App\Services;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Error;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -35,7 +36,7 @@ final class ManagedDeliveryIntentSender
             $maxAttempts = max(1, min(50, (int)$claim['delivery_max_attempts']));
             try {
                 $contract = $service->deliveryContractForClaim($pdo, $claim);
-                $response = $this->send($contract, $claim, $transport);
+                $response = $this->send($pdo, $contract, $claim, $transport);
                 $status = (int)($response['status'] ?? 0);
                 $receipt = empty($response['error']) ? $this->acceptedReceipt($claim, $status, (string)($response['body'] ?? '')) : null;
                 if ($receipt !== null) {
@@ -49,6 +50,9 @@ final class ManagedDeliveryIntentSender
                 $dead = $this->shouldDeadLetter($claim, $status, $maxAttempts);
                 $this->finish($pdo, $claim, false, $status, $code, $dead, null);
                 $dead ? $summary['dead_lettered']++ : $summary['retrying']++;
+            } catch (Error $error) {
+                $this->deferLocalError($pdo, $claim);
+                $summary['retrying']++;
             } catch (Throwable $error) {
                 $dead = ((int)$claim['attempts'] + 1) >= $maxAttempts;
                 $this->finish($pdo, $claim, false, 0, $this->safeError($error), $dead, null);
@@ -94,6 +98,9 @@ final class ManagedDeliveryIntentSender
             $dead = $this->shouldDeadLetter($claim, $status, $maxAttempts);
             $this->finish($pdo, $claim, false, $status, $code, $dead, null);
             $summary[$dead ? 'dead_lettered' : 'retrying'] = 1;
+        } catch (Error $error) {
+            $this->deferLocalError($pdo, $claim);
+            $summary['retrying'] = 1;
         } catch (Throwable $error) {
             $dead = ((int)$claim['attempts'] + 1) >= $maxAttempts;
             $this->finish($pdo, $claim, false, 0, $this->safeError($error), $dead, null);
@@ -299,6 +306,14 @@ final class ManagedDeliveryIntentSender
             if ($pdo->inTransaction()) $pdo->rollBack();
             throw $failure;
         }
+    }
+
+    /** Programming errors occur before a reliable transport result exists. */
+    private function deferLocalError(PDO $pdo, array $claim): void
+    {
+        $next = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+1 hour')->format('Y-m-d H:i:s.u');
+        $statement = $pdo->prepare("UPDATE managed_delivery_intent_outbox SET next_attempt_at=?,last_error_code='local_processing_error',claim_token=NULL,claimed_at=NULL WHERE id=? AND claim_token=? AND delivered_at IS NULL AND dead_lettered_at IS NULL");
+        $statement->execute([$next, (int)$claim['id'], (string)$claim['claim_token']]);
     }
 
     /** @param array<string,mixed> $claim */
