@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../utils/crypto.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/password_policy.php';
 require_once __DIR__ . '/../../utils/password_reset_tokens.php';
+require_once __DIR__ . '/../../utils/auth_gate_checks.php';
 
 // Verbose error toggle: set APP_VERBOSE_ERRORS=true or AUTH_VERBOSE_ERRORS=true (or APP_DEBUG=true)
 $VERBOSE_AUTH = filter_var(getenv('APP_VERBOSE_ERRORS') ?: getenv('AUTH_VERBOSE_ERRORS') ?: getenv('APP_DEBUG') ?: 'false', FILTER_VALIDATE_BOOLEAN);
@@ -171,12 +172,13 @@ if ($action === 'login') {
             exit;
         }
         // Check if user has 2FA enabled
-        $twofa_enabled = false;
         try {
-            $st2fa = $pdo->prepare('SELECT enabled FROM user_2fa WHERE user_id = ? AND enabled = 1');
-            $st2fa->execute([(int)$u['id']]);
-            $twofa_enabled = (bool)$st2fa->fetchColumn();
-        } catch (Throwable $e) {}
+            $twofa_enabled = pa_auth_two_factor_enabled($pdo, (int)$u['id']);
+        } catch (Throwable $e) {
+            error_log('[security] 2FA enrollment lookup failed: ' . get_class($e));
+            header('Location: /?page=login&error=' . urlencode('Authentication temporarily unavailable'));
+            exit;
+        }
         $trustedDevice = false;
         if ($twofa_enabled) {
             $deviceToken = (string)($_COOKIE['device_trust'] ?? '');

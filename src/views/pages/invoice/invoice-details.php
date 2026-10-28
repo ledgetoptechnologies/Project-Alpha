@@ -231,7 +231,7 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
     </div>
   <?php endif; ?>
   <?php if (!empty($_GET['payment']) && $_GET['payment'] === 'success'): ?>
-    <div class="no-print" style="padding:8px 12px;background:#d1fae5;color:#065f46;border-radius:6px;margin-bottom:8px;font-size:14px">✓ Payment processed successfully! The invoice status will update shortly.</div>
+    <div class="no-print" style="padding:8px 12px;background:#fef3c7;color:#92400e;border-radius:6px;margin-bottom:8px;font-size:14px">Returned from Stripe Checkout. Payment status will update after confirmation.</div>
   <?php endif; ?>
   <?php if (!empty($_GET['payment']) && $_GET['payment'] === 'cancelled'): ?>
     <div class="no-print" style="padding:8px 12px;background:#fef3c7;color:#92400e;border-radius:6px;margin-bottom:8px;font-size:14px">Payment was cancelled.</div>

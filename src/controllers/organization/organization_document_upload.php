@@ -2,6 +2,7 @@
 // src/controllers/organization/organization_document_upload.php
 // Generic handler for uploading COI, W-9, and Tax Exempt documents for organizations
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/acl.php';
 
 error_log('ORG_DOC_UPLOAD: ===== START ===== Method: ' . $_SERVER['REQUEST_METHOD']);
 
@@ -14,6 +15,7 @@ if ($id <= 0) {
     header('Location: /?page=organization/organizations-list&error=Invalid%20organization');
     exit;
 }
+require_record_ownership($pdo, 'organizations', $id);
 
 // Validate doc type
 $validDocTypes = ['coi', 'w9', 'tax_exempt'];

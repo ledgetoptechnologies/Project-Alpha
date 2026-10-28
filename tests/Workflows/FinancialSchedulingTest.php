@@ -25,8 +25,11 @@ final class FinancialSchedulingTest extends TestCase
         $handler = file_get_contents($this->root . '/src/controllers/financial/audit_schedule_handler.php');
         self::assertStringContainsString('request_client_org_id()', (string)$handler);
         self::assertStringContainsString('$scheduleOrgId = $organizationId > 0 ? $organizationId : null;', (string)$handler);
-        self::assertStringContainsString('SELECT report_type FROM audit_schedules WHERE id=?', (string)$handler);
+        self::assertStringContainsString('SELECT report_type, created_by, is_active FROM audit_schedules WHERE id=?', (string)$handler);
         self::assertStringContainsString('$requestedType === \'expense\'', (string)$handler);
+        self::assertStringContainsString("'financial.export'", (string)$handler);
+        $legacyExport = file_get_contents($this->root . '/src/controllers/financial/audit_export.php');
+        self::assertStringNotContainsString('INSERT INTO audit_schedules', (string)$legacyExport);
     }
 
     public function testCronGeneratesExpenseScheduleArtifacts(): void
@@ -35,6 +38,7 @@ final class FinancialSchedulingTest extends TestCase
         self::assertStringContainsString('processExpenseSchedule', (string)$cron);
         self::assertStringContainsString('/var/www/config/reports/', (string)$cron);
         self::assertStringContainsString('Expense Report', (string)$cron);
+        self::assertStringContainsString('pa_report_schedule_creator_authorized', (string)$cron);
     }
 
     public function testCronStatusSchemaSelfRepairsAndUsesConfiguredTimezone(): void

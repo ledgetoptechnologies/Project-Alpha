@@ -4,8 +4,20 @@ set -euo pipefail
 DB_HOST="${DB_HOST:-db}"
 DB_PORT="${DB_PORT:-3306}"
 ROOT_USER="${MYSQL_ROOT_USER:-root}"
-ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-rootpass}"
+ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-}"
 APP_ENV_NORMALIZED="$(printf '%s' "${APP_ENV:-production}" | tr '[:upper:]' '[:lower:]')"
+if [ "$APP_ENV_NORMALIZED" = "production" ] || [ "$APP_ENV_NORMALIZED" = "prod" ]; then
+  case "${MYSQL_PASSWORD:-}" in
+    ''|changeme_secure_pass|change-me-use-a-long-random-password)
+      echo "Startup refused: MYSQL_PASSWORD must be a deployment-specific value." >&2
+      exit 1 ;;
+  esac
+  case "${MYSQL_ROOT_PASSWORD:-}" in
+    changeme_root_pass|rootpass|change-me-use-a-different-long-random-password)
+      echo "Startup refused: MYSQL_ROOT_PASSWORD is an example value." >&2
+      exit 1 ;;
+  esac
+fi
 APP_ENCRYPTION_KEY_WAS_SET=1
 if [ -z "${APP_ENCRYPTION_KEY:-}" ]; then
   APP_ENCRYPTION_KEY_WAS_SET=0
@@ -37,9 +49,6 @@ if [ "$APP_ENV_NORMALIZED" = "production" ] || [ "$APP_ENV_NORMALIZED" = "prod" 
   fi
   if [ "$APP_ENCRYPTION_KEY_WAS_SET" = "0" ]; then
     echo "WARNING: APP_ENCRYPTION_KEY was not explicitly supplied. A persisted key was used/generated; back it up securely."
-  fi
-  if [ "${MYSQL_ROOT_PASSWORD:-}" = "changeme_root_pass" ] || [ "${MYSQL_ROOT_PASSWORD:-}" = "rootpass" ]; then
-    echo "WARNING: MYSQL_ROOT_PASSWORD appears to use a default/example value."
   fi
   if [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
     echo "WARNING: BACKUP_ENCRYPTION_KEY is not set; backup archives will not be encrypted."

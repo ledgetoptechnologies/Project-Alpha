@@ -56,6 +56,15 @@ final class WorkforceApiParityTest extends TestCase
         self::assertStringContainsString('$reviewQueue->recentlyApprovedFor(', $this->source);
     }
 
+    public function testJobDirectoryAndCreationEnforceRecordScope(): void
+    {
+        self::assertStringNotContainsString("\$canManage('jobs.view')||", $this->source);
+        self::assertStringContainsString("(int)\$job['created_by'] === \$userId", $this->source);
+        self::assertStringContainsString("\$access->can(\$userId,'jobs.view','job'", $this->source);
+        self::assertStringContainsString("can_access_record(\$pdo,'clients',\$clientId,\$userId)", $this->source);
+        self::assertStringContainsString("can_access_record(\$pdo,'projects',\$projectId,\$userId)", $this->source);
+    }
+
     public function testRevisionBoundSubmissionUsesTheSharedSubmissionService(): void
     {
         self::assertSame('time.submit', WorkforceCommandRegistry::require('submit-period')['policy']);

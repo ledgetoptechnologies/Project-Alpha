@@ -6,9 +6,9 @@ require_once __DIR__ . '/client_ip.php';
 
 /**
  * Forwarded protocol headers affect cookie and redirect security decisions, so
- * they require an explicitly configured immediate proxy. The broader
- * client-IP helper intentionally accepts private networks for legacy address
- * discovery; that permissive fallback is not appropriate for HTTPS trust.
+ * they require an explicitly configured immediate proxy. Keep this in sync
+ * with client-IP attribution so private-network peers cannot set identity or
+ * HTTPS state through forwarded headers.
  */
 function request_is_explicitly_trusted_proxy(string $ip): bool
 {

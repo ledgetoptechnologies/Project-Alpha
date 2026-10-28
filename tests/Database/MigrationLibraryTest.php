@@ -29,6 +29,26 @@ final class MigrationLibraryTest extends TestCase
         $this->assertSame([], migration_files($this->directory));
     }
 
+    public function testFreshBaselineLeavesNewSecurityColumnsForForwardMigrations(): void
+    {
+        $baseline = (string)file_get_contents(dirname(__DIR__, 2) . '/database/baseline.sql');
+        foreach ([
+            'archived_clients' => ['created_by', 'idx_archived_clients_created_by'],
+            'audit_schedules' => ['created_by', 'idx_audit_schedules_created_by'],
+            'payment_receipts' => ['expires_at', 'revoked', 'idx_payment_receipt_access'],
+        ] as $table => $addedNames) {
+            self::assertSame(1, preg_match(
+                '/CREATE TABLE IF NOT EXISTS ' . preg_quote($table, '/') . ' \\((.*?)\\) ENGINE=/s',
+                $baseline,
+                $match
+            ), $table . ' definition missing from baseline');
+            foreach ($addedNames as $name) {
+                self::assertDoesNotMatchRegularExpression('/^\\s*(?:INDEX\\s+)?' . preg_quote($name, '/') . '\\b/m', $match[1],
+                    $table . '.' . $name . ' must be added by its forward migration');
+            }
+        }
+    }
+
     public function testSequentialFilesAndChecksumsAreLoaded(): void
     {
         file_put_contents($this->directory . '/0001_add_widget.sql', "CREATE TABLE widget (id INT);\n");

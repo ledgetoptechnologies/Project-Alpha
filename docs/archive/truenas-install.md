@@ -32,9 +32,9 @@ and run its render/deployment tests before opening the catalog pull request.
 
 4. **Change all passwords** — search for `changeme` and replace with strong, unique passwords
 
-5. **Optional encrypted backups:** Set the same strong `BACKUP_ENCRYPTION_KEY`
-   value on both the `web` and `cron` services. Keep a protected copy outside
-   TrueNAS; an encrypted backup cannot be restored without it.
+5. **Full backup encryption:** Set the same strong `BACKUP_ENCRYPTION_KEY`
+   value on both the `web` and `cron` services before enabling Full Backup Mode.
+   Keep a protected copy outside TrueNAS; the archive cannot be restored without it.
 
 6. **Deploy** — PA will be available at `http://your-truenas-ip:1627`
 

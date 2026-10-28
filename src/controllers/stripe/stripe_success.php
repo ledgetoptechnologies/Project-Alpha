@@ -5,11 +5,15 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/StripeService.php';
+require_once __DIR__ . '/../../utils/stripe_success_policy.php';
 
 $token = isset($_GET['token']) ? (string)$_GET['token'] : '';
 $sessionId = isset($_GET['session_id']) ? (string)$_GET['session_id'] : '';
 
 $brandName = $appConfig['brand_name'] ?? 'Project Alpha';
+$documentLabel = 'Unknown';
+$paymentVerified = false;
+$linkValid = false;
 
 if ($token === '' || $sessionId === '') {
     http_response_code(400);
@@ -23,9 +27,10 @@ try {
     $st->execute([$token]);
     $linkRow = $st->fetch(PDO::FETCH_ASSOC);
     
-    if (!$linkRow || !in_array((string)$linkRow['document_type'], ['invoice','project_invoice'], true)) {
+    if (!pa_stripe_success_link_valid($linkRow, time())) {
         throw new Exception('Invalid payment link');
     }
+    $linkValid = true;
     $isProjectInvoice = $linkRow['document_type'] === 'project_invoice';
     
     $invoiceId = (int)$linkRow['document_id'];
@@ -39,26 +44,20 @@ try {
         throw new Exception('Invoice not found');
     }
     
-    // Initialize Stripe and verify the session
-    $stripe = StripeService::fromAppConfig($appConfig);
-    if ($stripe) {
-        try {
-            // Retrieve checkout session to verify payment
-            // Note: In production, you'd want to use webhooks for reliable payment confirmation
-            // This is a basic check for the success page display
-            @error_log('[StripeSuccess] Payment success page viewed for invoice ' . $invoiceId . ', session: ' . $sessionId);
-        } catch (Throwable $e) {
-            @error_log('[StripeSuccess] Could not verify session: ' . $e->getMessage());
-        }
-    }
-    
     $documentLabel = $isProjectInvoice
         ? 'PI-' . ($invoice['doc_number'] ?? $invoiceId)
         : pa_invoice_label_from_row($invoice + ['id' => $invoiceId]);
+
+    // Verify the paid Checkout Session with Stripe before claiming success.
+    $stripe = StripeService::fromAppConfig($appConfig);
+    if (!$stripe) {
+        throw new RuntimeException('Stripe verification is unavailable.');
+    }
+    $session = $stripe->getCheckoutSession($sessionId);
+    $paymentVerified = pa_stripe_success_session_verified($session, $invoice, (string)$linkRow['document_type'], $invoiceId, $token, $sessionId);
     
 } catch (Throwable $e) {
     @error_log('[StripeSuccess] Error: ' . $e->getMessage());
-    $documentLabel = 'Unknown';
 }
 ?>
 <!DOCTYPE html>
@@ -66,15 +65,16 @@ try {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Payment Successful - <?php echo htmlspecialchars($brandName); ?></title>
+    <title><?php echo $paymentVerified ? 'Payment Confirmed' : 'Payment Status Pending'; ?> - <?php echo htmlspecialchars($brandName); ?></title>
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%); 
+            background: #f8fafc;
             margin: 0; 
             padding: 20px;
             min-height: 100vh;
         }
+        body.verified { background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%); }
         .success-wrap { 
             max-width: 500px; 
             margin: 60px auto; 
@@ -102,10 +102,11 @@ try {
             fill: none;
         }
         h1 { 
-            color: #065f46; 
+            color: #334155;
             font-size: 28px; 
             margin: 0 0 12px; 
         }
+        body.verified h1 { color: #065f46; }
         .subtitle {
             color: #6b7280;
             font-size: 16px;
@@ -150,23 +151,25 @@ try {
         }
     </style>
 </head>
-<body>
+<body class="<?php echo $paymentVerified ? 'verified' : 'pending'; ?>">
     <div class="success-wrap">
-        <div class="success-icon">
+        <?php if ($paymentVerified): ?><div class="success-icon">
             <svg viewBox="0 0 24 24">
                 <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
-        </div>
-        <h1>Payment Successful!</h1>
-        <p class="subtitle">Thank you for your payment.</p>
+        </div><?php endif; ?>
+        <h1><?php echo $paymentVerified ? 'Payment Confirmed' : 'Payment Not Yet Confirmed'; ?></h1>
+        <p class="subtitle"><?php echo $paymentVerified ? 'Thank you for your payment.' : 'We cannot confirm this payment yet.'; ?></p>
         
         <div class="invoice-ref">
             <strong>Invoice <?php echo htmlspecialchars($documentLabel); ?></strong>
         </div>
         
-        <p>Your payment has been submitted successfully. The invoice will update as soon as Stripe confirms it.</p>
+        <p><?php echo $paymentVerified
+            ? 'Stripe confirmed the payment. The invoice will update as soon as reconciliation finishes.'
+            : 'Please check the invoice status before trying another payment. If it does not update, contact us.'; ?></p>
         
-        <?php if ($token): ?>
+        <?php if ($linkValid): ?>
         <a href="/?page=public-doc&token=<?php echo htmlspecialchars(rawurlencode($token)); ?>" class="back-link">View Invoice</a>
         <?php endif; ?>
         
@@ -176,8 +179,8 @@ try {
     </div>
 </body>
 <script>
-    // Attempt to close the Stripe checkout tab if the browser allows it
-    if (window.opener && window.opener !== window) {
+    // Keep unverified returns visible so the user sees the pending state.
+    if (<?php echo $paymentVerified ? 'true' : 'false'; ?> && window.opener && window.opener !== window) {
         window.close();
     }
 </script>

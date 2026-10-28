@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../utils/api_response.php';
 require_once __DIR__ . '/../../utils/crypto.php';
 require_once __DIR__ . '/../../utils/rate_limiter.php';
 require_once __DIR__ . '/../../utils/csrf.php';
+require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../services/RoutingProviders.php';
 
 $userId = (int)($_SESSION['user']['id'] ?? 0);
@@ -32,6 +33,18 @@ if ($originId <= 0 || $serviceLocationId <= 0) {
 }
 
 try {
+    $originStatement = $pdo->prepare('SELECT location_enc FROM user_mileage_origins WHERE id=? AND user_id=?');
+    $originStatement->execute([$originId, $userId]);
+    $originEncrypted = $originStatement->fetchColumn();
+    if (!is_string($originEncrypted) || !can_access_record($pdo, 'service_locations', $serviceLocationId, $userId)) {
+        api_json_failure(403, 'route_access_denied', 'The selected route is not available.');
+    }
+    $destinationStatement = $pdo->prepare('SELECT address_line1,address_line2,city,state,postal_code,country FROM service_locations WHERE id=? AND archived=0');
+    $destinationStatement->execute([$serviceLocationId]);
+    $destination = $destinationStatement->fetch(PDO::FETCH_ASSOC);
+    if (!$destination) {
+        api_json_failure(422, 'location_not_found', 'The service location was not found.');
+    }
     $cached = $pdo->prepare(
         'SELECT distance_miles,duration_seconds,provider,attribution,expires_at
          FROM route_estimate_cache WHERE user_mileage_origin_id=? AND service_location_id=? AND expires_at>NOW() LIMIT 1'
@@ -42,19 +55,10 @@ try {
         api_json_success(['data' => $row]);
     }
 
-    $originStatement = $pdo->prepare('SELECT location_enc FROM user_mileage_origins WHERE id=? AND user_id=?');
-    $originStatement->execute([$originId, $userId]);
-    $originEncrypted = $originStatement->fetchColumn();
     $originJson = is_string($originEncrypted) ? crypto_decrypt($originEncrypted) : null;
     $origin = is_string($originJson) ? json_decode($originJson, true) : null;
     if (!is_array($origin)) {
         api_json_failure(422, 'origin_unavailable', 'The saved billing origin could not be decrypted.');
-    }
-    $destinationStatement = $pdo->prepare('SELECT address_line1,address_line2,city,state,postal_code,country FROM service_locations WHERE id=? AND archived=0');
-    $destinationStatement->execute([$serviceLocationId]);
-    $destination = $destinationStatement->fetch(PDO::FETCH_ASSOC);
-    if (!$destination) {
-        api_json_failure(422, 'location_not_found', 'The service location was not found.');
     }
     $routesKey = crypto_decrypt((string)($appConfig['google_routes_api_key_enc'] ?? ''));
     if (!is_string($routesKey) || $routesKey === '') {

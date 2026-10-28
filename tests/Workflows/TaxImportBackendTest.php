@@ -33,6 +33,7 @@ final class TaxImportBackendTest extends TestCase
         self::assertStringContainsString("fgetcsv(\$handle, 0, ',', '\"', '\\\\')", $handler);
         self::assertStringContainsString('taxImportResolveChunkSource', $handler);
         self::assertStringContainsString('taxImportCleanupSources', $handler);
+        self::assertStringContainsString('TAX_IMPORT_CHUNK_TTL_SECONDS', $handler);
         self::assertStringContainsString('taxImportChunkDir', (string)$chunkHandler);
         self::assertStringContainsString('session_hash', (string)$chunkHandler);
         self::assertStringContainsString('12 * 1024 * 1024', (string)$chunkHandler);

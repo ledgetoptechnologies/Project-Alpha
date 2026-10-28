@@ -101,6 +101,20 @@ function backup_database_run(array $argv = []): int
             }
         }
 
+        $backupMode = 'database';
+        try {
+            $modeStmt = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key="backup_mode"');
+            $modeStmt->execute();
+            $configuredMode = (string)($modeStmt->fetchColumn() ?: 'database');
+            $backupMode = $configuredMode === 'full' ? 'full' : 'database';
+        } catch (Throwable $e) {
+            // Database-only remains the safe default.
+        }
+        $encryptionKey = backup_archive_key();
+        if ($backupMode === 'full' && $encryptionKey === '') {
+            throw new RuntimeException('Full backups require BACKUP_ENCRYPTION_KEY on the backup worker.');
+        }
+
         $date = date('Y-m-d_H-i-s');
         $filename = $db . '_' . $date . '.sql.gz';
         $filepath = $dailyDir . '/' . $filename;
@@ -158,17 +172,6 @@ function backup_database_run(array $argv = []): int
             throw new RuntimeException('Backup file too small or missing');
         }
 
-        $backupMode = 'database';
-        try {
-            $modeStmt = $pdo->prepare('SELECT config_value FROM app_config WHERE organization_id=0 AND config_key="backup_mode"');
-            $modeStmt->execute();
-            $configuredMode = (string)($modeStmt->fetchColumn() ?: 'database');
-            $backupMode = $configuredMode === 'full' ? 'full' : 'database';
-        } catch (Throwable $e) {
-            // Database-only remains the safe default.
-        }
-
-        $encryptionKey = backup_archive_key();
         if ($backupMode === 'full' || $encryptionKey !== '') {
             $archiveSuffix = $backupMode === 'full' ? '.full.zip' : '.db.zip';
             $archiveFilename = $db . '_' . $date . $archiveSuffix;

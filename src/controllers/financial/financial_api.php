@@ -1,13 +1,25 @@
 <?php
 // src/controllers/financial/financial_api.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/acl.php';
 
 header('Content-Type: application/json');
+$actorId = (int)($_SESSION['user']['id'] ?? 0);
+if ($actorId <= 0 || !user_can($pdo, $actorId, 'financial.view', 0)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'Forbidden']);
+    exit;
+}
 
 // Get filters from query params
 $startDate = $_GET['start_date'] ?? date('Y') . '-01-01';
 $endDate = $_GET['end_date'] ?? date('Y') . '-12-31';
 $clientId = isset($_GET['client_id']) && $_GET['client_id'] !== '' ? (int)$_GET['client_id'] : null;
+if ($clientId !== null && ($clientId <= 0 || !can_access_record($pdo, 'clients', $clientId, $actorId))) {
+    http_response_code(404);
+    echo json_encode(['success' => false, 'error' => 'Client not found']);
+    exit;
+}
 $groupBy = $_GET['group_by'] ?? 'month'; // month, week, day
 
 // Validate groupBy
@@ -36,6 +48,9 @@ $query = "
 ";
 
 $params = [$dateFormat, $startDate, $endDate];
+[$invoiceScopeWhere, $invoiceScopeParams] = finance_scope_clause($pdo, 'i', $actorId, request_client_org_id(), 'created_by');
+$query .= " AND {$invoiceScopeWhere}";
+$params = array_merge($params, $invoiceScopeParams);
 
 // Add client filter if specified
 if ($clientId !== null) {

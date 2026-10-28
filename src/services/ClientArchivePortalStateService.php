@@ -133,17 +133,18 @@ final class ClientArchivePortalStateService
 
         $insert = $pdo->prepare(
             'INSERT INTO archived_clients
-             (client_id,public_id,name,email,phone,organization_id,client_type,notes,
+             (client_id,public_id,name,email,phone,organization_id,created_by,client_type,notes,
               address_line1,address_line2,city,state,postal_code,country,created_at,
               portal_principal_id,portal_manual_state,portal_canonical_email,
               portal_identity_binding_ids_json,portal_principal_authorization_version,
               portal_principal_disabled_for_archive,portal_principal_was_present,
               portal_entitlement_ids_json,portal_affected_workspace_ids_json)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         );
         $insert->execute([
             $clientId, $publicId, $client['name'], $client['email'] ?? null,
             $client['phone'] ?? null, $client['organization_id'] ?? null,
+            $client['created_by'] ?? null,
             $this->clientType($client['client_type'] ?? null), $client['notes'] ?? null,
             $client['address_line1'] ?? null, $client['address_line2'] ?? null,
             $client['city'] ?? null, $client['state'] ?? null,
@@ -194,10 +195,11 @@ final class ClientArchivePortalStateService
         $exists->execute([$originalId]);
         $useOriginalId = $originalId > 0 && (int)$exists->fetchColumn() === 0;
 
-        $columns = ['name','email','phone','organization_id','client_type','notes','address_line1',
+        $columns = ['name','email','phone','organization_id','created_by','client_type','notes','address_line1',
             'address_line2','city','state','postal_code','country','source_version','created_at'];
         $values = [$archive['name'], $archive['email'] ?? null, $archive['phone'] ?? null,
-            $archive['organization_id'] ?? null, $this->clientType($archive['client_type'] ?? null),
+            $archive['organization_id'] ?? null, $archive['created_by'] ?? null,
+            $this->clientType($archive['client_type'] ?? null),
             $archive['notes'] ?? null, $archive['address_line1'] ?? null,
             $archive['address_line2'] ?? null, $archive['city'] ?? null,
             $archive['state'] ?? null, $archive['postal_code'] ?? null,

@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
     $code = (string)($_POST['access_code'] ?? '');
     $hash = (string)($project['public_project_password_hash'] ?? '');
     if ($hash !== '' && password_verify($code, $hash)) {
-        pa_project_public_mark_unlocked($token);
+        pa_project_public_mark_unlocked($token, $hash);
         header('Location: /?page=public-project&token=' . rawurlencode($token));
         exit;
     }
@@ -106,15 +106,13 @@ $invoices = [];
 $projectInvoices = [];
 
 if (!empty($project['public_project_can_view_documents'])) {
-    $fileStmt = $pdo->prepare('SELECT * FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC, id DESC LIMIT 100');
-    $fileStmt->execute([$projectId]);
-    $files = $fileStmt->fetchAll(PDO::FETCH_ASSOC);
+    $files = pa_project_public_visible_files($pdo, $projectId);
 
-    $quoteStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM quotes WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
+    $quoteStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM quotes WHERE project_id = ? AND status NOT IN ("draft", "rejected", "denied") ORDER BY created_at DESC LIMIT 50');
     $quoteStmt->execute([$projectId]);
     $quotes = $quoteStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $contractStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM contracts WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
+    $contractStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM contracts WHERE project_id = ? AND status NOT IN ("draft", "denied", "cancelled", "void") ORDER BY created_at DESC LIMIT 50');
     $contractStmt->execute([$projectId]);
     $contracts = $contractStmt->fetchAll(PDO::FETCH_ASSOC);
 }
@@ -147,9 +145,9 @@ if (!empty($project['public_project_can_view_invoices'])) {
 $notice = !empty($_GET['sent']) ? 'Your update request was sent.' : (!empty($_GET['uploaded']) ? 'Your file was uploaded.' : '');
 $error = (string)($_GET['error'] ?? '');
 
-$renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array $row, string $label): void {
+$renderDocRow = static function (array $appConfig, string $token, string $type, array $row, string $label): void {
     $id = (int)$row['id'];
-    $url = pa_project_public_document_url($pdo, $type, $id, $appConfig);
+    $url = pa_project_public_document_url($token, $type, $id, $appConfig);
     $documentNumber = $type === 'invoice'
         ? pa_invoice_label_from_row($row)
         : ($type === 'project_invoice'
@@ -163,7 +161,7 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
       </div>
       <div class="pp-row-actions">
         <span class="pp-money">$<?php echo number_format((float)($row['total'] ?? 0), 2); ?></span>
-        <?php if ($url): ?><a class="pp-btn pp-btn-small" href="<?php echo htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>" target="_blank" rel="noopener">Open</a><?php endif; ?>
+        <?php if ($url): ?><a class="pp-btn pp-btn-small" href="<?php echo htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>" target="_blank" rel="noopener">View PDF</a><?php endif; ?>
       </div>
     </div>
     <?php
@@ -193,8 +191,8 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
           <section class="pp-panel">
             <h2>Project Docs</h2>
             <div class="pp-list">
-              <?php foreach ($quotes as $quote): $renderDocRow($pdo, $appConfig ?? [], 'quote', $quote, 'Quote'); endforeach; ?>
-              <?php foreach ($contracts as $contract): $renderDocRow($pdo, $appConfig ?? [], 'contract', $contract, 'Contract'); endforeach; ?>
+              <?php foreach ($quotes as $quote): $renderDocRow($appConfig ?? [], $token, 'quote', $quote, 'Quote'); endforeach; ?>
+              <?php foreach ($contracts as $contract): $renderDocRow($appConfig ?? [], $token, 'contract', $contract, 'Contract'); endforeach; ?>
               <?php if (empty($quotes) && empty($contracts)): ?><div class="pp-empty">No project quotes or contracts are available.</div><?php endif; ?>
             </div>
           </section>
@@ -209,7 +207,9 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
                     <div class="pp-muted"><?php echo htmlspecialchars(project_files_format_size((int)($file['file_size'] ?? 0)), ENT_QUOTES, 'UTF-8'); ?> · Uploaded <?php echo htmlspecialchars(date('M j, Y', strtotime((string)$file['uploaded_at'])), ENT_QUOTES, 'UTF-8'); ?></div>
                   </div>
                   <div class="pp-row-actions">
-                    <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>" target="_blank" rel="noopener">Open</a>
+                    <?php if (project_files_delivery_policy((string)($file['mime_type'] ?? ''), false)['safe_inline']): ?>
+                      <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>" target="_blank" rel="noopener">Open</a>
+                    <?php endif; ?>
                     <a class="pp-btn pp-btn-small" href="/?page=public-project-file&amp;token=<?php echo htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8'); ?>&amp;id=<?php echo $fileId; ?>&amp;download=1">Download</a>
                   </div>
                 </div>
@@ -222,8 +222,8 @@ $renderDocRow = static function (PDO $pdo, array $appConfig, string $type, array
           <section class="pp-panel">
             <h2>Invoices</h2>
             <div class="pp-list">
-              <?php foreach ($projectInvoices as $projectInvoice): $renderDocRow($pdo, $appConfig ?? [], 'project_invoice', $projectInvoice + ['doc_number' => 'PI-' . (int)$projectInvoice['id']], 'Project Invoice'); endforeach; ?>
-              <?php foreach ($invoices as $invoice): $renderDocRow($pdo, $appConfig ?? [], 'invoice', $invoice, 'Invoice'); endforeach; ?>
+              <?php foreach ($projectInvoices as $projectInvoice): $renderDocRow($appConfig ?? [], $token, 'project_invoice', $projectInvoice + ['doc_number' => 'PI-' . (int)$projectInvoice['id']], 'Project Invoice'); endforeach; ?>
+              <?php foreach ($invoices as $invoice): $renderDocRow($appConfig ?? [], $token, 'invoice', $invoice, 'Invoice'); endforeach; ?>
               <?php if (empty($projectInvoices) && empty($invoices)): ?><div class="pp-empty">No project invoices are available.</div><?php endif; ?>
             </div>
           </section>

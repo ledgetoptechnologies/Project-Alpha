@@ -33,14 +33,14 @@ if (!$storageRoot || !$path || !is_file($path) || strpos($path, $storageRoot) !=
 $mimeType = project_files_detect_mime($path, (string)($file['mime_type'] ?? ''));
 $download = isset($_GET['download']) && (string)$_GET['download'] === '1';
 $fileName = (string)($file['display_name'] ?: $file['original_name'] ?: basename($path));
-$disposition = $download ? 'attachment' : 'inline';
+$delivery = project_files_delivery_policy($mimeType, $download);
 
-header('Content-Type: ' . $mimeType);
+header('Content-Type: ' . $delivery['content_type']);
 header('X-Content-Type-Options: nosniff');
-if (strtolower(pathinfo($fileName, PATHINFO_EXTENSION)) === 'svg') {
-    header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'");
+if (!$delivery['safe_inline']) {
+    header("Content-Security-Policy: sandbox; default-src 'none'");
 }
-header('Content-Disposition: ' . $disposition . '; filename="' . str_replace('"', '', basename($fileName)) . '"');
+header('Content-Disposition: ' . $delivery['disposition'] . '; filename="' . str_replace('"', '', basename($fileName)) . '"');
 header('Content-Length: ' . filesize($path));
 @readfile($path);
 exit;

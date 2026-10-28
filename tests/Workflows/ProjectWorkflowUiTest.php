@@ -872,7 +872,7 @@ final class ProjectWorkflowUiTest extends TestCase
         $appConfig = file_get_contents($this->root . '/src/config/app.php');
         $baseline = file_get_contents($this->root . '/database/baseline.sql');
         $projectBilling = file_get_contents($this->root . '/src/utils/project_invoice_billing.php');
-        $legacyWebhook = file_get_contents($this->root . '/src/controllers/stripe/stripe_webhook.php');
+        $paymentNotifications = file_get_contents($this->root . '/src/utils/stripe_payment_notifications.php');
         $manualPayments = file_get_contents($this->root . '/src/controllers/payments_create.php');
 
         foreach ([
@@ -899,7 +899,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('function notify_admin_project_invoice_paid', (string)$notifications);
         self::assertStringContainsString("\$statusValue === 'paid' ? 'paid' : 'partial', false, true", (string)$projectBilling);
         self::assertStringContainsString("\$statusValue === 'paid' ? 'paid' : 'partial', true, true", (string)$projectBilling);
-        self::assertStringContainsString('notify_admin_invoice_paid($pdo, $GLOBALS[\'appConfig\'] ?? [], $invoiceId, $paymentAmount, $status)', (string)$legacyWebhook);
+        self::assertStringContainsString('notify_admin_invoice_paid(', (string)$paymentNotifications);
         self::assertStringNotContainsString('notify_admin_invoice_paid', (string)$manualPayments);
     }
 

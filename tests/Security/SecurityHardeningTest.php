@@ -25,6 +25,16 @@ final class SecurityHardeningTest extends TestCase
         $_SESSION = [];
     }
 
+    public function testPasswordResetLinksRequireAConfiguredHttpsOrigin(): void
+    {
+        self::assertSame('https://alpha.example.test', password_reset_canonical_origin(['app_host' => 'https://alpha.example.test/']));
+        foreach (['http://alpha.example.test', 'alpha.example.test', 'https://user:pass@alpha.example.test',
+            'https://alpha.example.test/redirect', 'https://alpha.example.test?next=evil', 'https://bad_host.test'] as $host) {
+            self::assertNull(password_reset_canonical_origin(['app_host' => $host]), $host);
+        }
+        self::assertStringNotContainsString('HTTP_HOST', $this->read('src/controllers/auth/reset_request.php'));
+    }
+
     protected function tearDown(): void
     {
         $_SESSION = [];
@@ -51,9 +61,11 @@ final class SecurityHardeningTest extends TestCase
         $orgA = $this->insertOrganization("Security Org A {$suffix}");
         $orgB = $this->insertOrganization("Security Org B {$suffix}");
         $userId = $this->insertUser("security-client-{$suffix}@example.invalid");
+        $otherUserId = $this->insertUser("security-other-client-{$suffix}@example.invalid");
 
         $sameOrgClient = $this->insertClient('Same Org Client', $orgA, $userId);
         $otherOrgClient = $this->insertClient('Other Org Client', $orgB, $userId);
+        $otherMemberClient = $this->insertClient('Other Member Client', $orgA, $otherUserId);
 
         $_SESSION['user'] = [
             'id' => $userId,
@@ -63,6 +75,25 @@ final class SecurityHardeningTest extends TestCase
 
         self::assertTrue(can_access_record($pdo, 'clients', $sameOrgClient, $userId));
         self::assertTrue(can_access_record($pdo, 'clients', $otherOrgClient, $userId));
+        self::assertFalse(can_access_record($pdo, 'clients', $otherMemberClient, $userId));
+    }
+
+    public function testDocumentCreatePathsRequireAccessToSelectedClient(): void
+    {
+        foreach ([
+            'src/controllers/quote/quotes_create.php',
+            'src/controllers/contract/contracts_create.php',
+            'src/controllers/contract/long_term_contracts_create.php',
+            'src/controllers/contract/on_demand_contracts_create.php',
+            'src/controllers/invoice/invoices_create.php',
+        ] as $path) {
+            $source = $this->read($path);
+            $accessCheck = strpos($source, "can_access_record(\$pdo, 'clients', \$client_id");
+            $projectCheck = strpos($source, 'pa_project_is_active_for_client($pdo');
+            self::assertNotFalse($accessCheck, $path);
+            self::assertNotFalse($projectCheck, $path);
+            self::assertLessThan($projectCheck, $accessCheck, $path);
+        }
     }
 
     public function testPasswordResetFailuresIncrementAndLockSharedCounter(): void
@@ -196,10 +227,36 @@ final class SecurityHardeningTest extends TestCase
         $recovery = $this->read('bin/admin-recovery.php');
         self::assertStringNotContainsString('admin_sync.php', $migrator);
         self::assertStringNotContainsString('ADMIN_PASSWORD', $compose);
+        self::assertStringContainsString('${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}', $compose);
+        self::assertStringContainsString('${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD before deployment}', $compose);
+        self::assertStringNotContainsString('MYSQL_PASSWORD: changeme_secure_pass', $compose);
+        self::assertStringNotContainsString('MYSQL_ROOT_PASSWORD: changeme_root_pass', $compose);
+        self::assertStringContainsString('Migration failed: MYSQL_PASSWORD must be a deployment-specific value.', $migrator);
         self::assertStringContainsString('recover_admin_account', $recovery);
 
         $front = $this->read('public/index.php');
         self::assertStringContainsString('AUTH_DISABLED ignored because APP_ENV is production or not explicitly development/test', $front);
+        $upload = $this->read('src/controllers/serve_upload.php');
+        self::assertStringContainsString("empty(\$_SESSION['user'])", $upload);
+        self::assertStringNotContainsString("getenv('AUTH_DISABLED')", $upload);
+        self::assertStringNotContainsString("getenv('APP_AUTH_DISABLED')", $upload);
+        foreach (['worker-documents', 'contractor-invoices', 'projects'] as $privateStore) {
+            self::assertStringContainsString("'{$privateStore}'", $upload);
+        }
+        self::assertStringContainsString('WHERE tax_exempt_file = ?', $upload);
+        self::assertStringContainsString("can_access_record(\$pdo, 'organizations', \$organizationId, \$actorId)", $upload);
+        self::assertStringContainsString("['receipts', 'forms']", $upload);
+        self::assertStringContainsString('upload_financial_file_accessible', $upload);
+        self::assertStringContainsString('upload_contract_file_accessible', $upload);
+        self::assertStringContainsString("!in_array(\$uploadCategory, ['organizations', 'receipts', 'forms', 'signed_contracts', 'contract_amendments'], true)", $upload);
+        self::assertStringContainsString('rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR', $upload);
+        self::assertStringContainsString("can_access_record(\$pdo,'clients',\$clientId,\$userId)", $this->read('src/controllers/financial/mileage_unbilled.php'));
+        $chart = $this->read('src/controllers/financial/financial_api.php');
+        self::assertStringContainsString("can_access_record(\$pdo, 'clients', \$clientId, \$actorId)", $chart);
+        self::assertStringContainsString("finance_scope_clause(\$pdo, 'i', \$actorId, request_client_org_id(), 'created_by')", $chart);
+        $dashboard = $this->read('src/views/pages/financial/financial-dashboard.php');
+        self::assertStringContainsString("finance_scope_clause(\$pdo, 'i', \$userId, 0, 'created_by')", $dashboard);
+        self::assertSame(3, substr_count($dashboard, '$incomeScopeWhere'));
         self::assertStringContainsString('two_factor_warning_needed', $front);
         self::assertStringNotContainsString('two_factor_enforce_required($pdo, $page)', $front);
         self::assertStringContainsString('Development auth bypass', $this->read('src/views/partials/header.php'));

@@ -46,6 +46,11 @@ if (!isset($_FILES['project_file'])) {
 
 $projectId = (int)$project['id'];
 $targetDir = project_files_folder_dir($projectId, null);
+$fileSize = @filesize((string)($_FILES['project_file']['tmp_name'] ?? ''));
+if ($fileSize === false || $fileSize <= 0 || $fileSize > 20 * 1024 * 1024) {
+    header('Location: ' . $redirect . '&error=' . rawurlencode('Upload must be a nonempty file of 20 MB or less.'));
+    exit;
+}
 $allowedMap = [
     'application/pdf' => 'pdf',
     'image/jpeg' => ['jpg', 'jpeg'],
@@ -63,44 +68,63 @@ $allowedMap = [
 ];
 
 $error = null;
-$storedName = validate_and_store_upload(
-    $_FILES['project_file'],
-    $allowedMap,
-    20 * 1024 * 1024,
-    $targetDir,
-    $error,
-    [
-        'reject_archives' => true,
-        'max_image_pixels' => 25000000,
-        'require_pdf_header' => true,
-        'reject_pdf_active_content' => true,
-    ]
-);
-if ($storedName === null) {
-    header('Location: ' . $redirect . '&error=' . rawurlencode($error ?: 'Upload failed.'));
+$storedName = null;
+try {
+    $pdo->beginTransaction();
+    project_files_assert_upload_quota($pdo, $projectId, $fileSize);
+    $storedName = validate_and_store_upload(
+        $_FILES['project_file'],
+        $allowedMap,
+        20 * 1024 * 1024,
+        $targetDir,
+        $error,
+        [
+            'reject_archives' => true,
+            'max_image_pixels' => 25000000,
+            'require_pdf_header' => true,
+            'reject_pdf_active_content' => true,
+        ]
+    );
+    if ($storedName === null) {
+        throw new RuntimeException($error ?: 'Upload failed.');
+    }
+
+    $targetPath = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $storedName;
+    $originalName = basename((string)($_FILES['project_file']['name'] ?? 'project-file'));
+    $mimeType = project_files_detect_mime($targetPath, (string)($_FILES['project_file']['type'] ?? ''));
+    $dbPath = project_files_db_path($projectId, null, $storedName);
+
+    $stmt = $pdo->prepare('
+        INSERT INTO project_files
+            (project_id, folder_id, original_name, display_name, stored_name, file_path, mime_type, file_size, client_visible, uploaded_by)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 1, NULL)
+    ');
+    $stmt->execute([
+        $projectId,
+        $originalName,
+        $originalName,
+        $storedName,
+        $dbPath,
+        $mimeType,
+        $fileSize,
+    ]);
+    $fileId = (int)$pdo->lastInsertId();
+    $pdo->commit();
+} catch (Throwable $uploadError) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    if ($storedName !== null) {
+        $failedPath = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $storedName;
+        if (is_file($failedPath)) {
+            @unlink($failedPath);
+        }
+    }
+    @error_log('[public_project_upload] ' . $uploadError->getMessage());
+    $message = $uploadError instanceof LengthException ? $uploadError->getMessage() : ($error ?: 'Upload failed.');
+    header('Location: ' . $redirect . '&error=' . rawurlencode($message));
     exit;
 }
-
-$targetPath = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $storedName;
-$originalName = basename((string)($_FILES['project_file']['name'] ?? 'project-file'));
-$mimeType = project_files_detect_mime($targetPath, (string)($_FILES['project_file']['type'] ?? ''));
-$dbPath = project_files_db_path($projectId, null, $storedName);
-
-$stmt = $pdo->prepare('
-    INSERT INTO project_files
-        (project_id, folder_id, original_name, display_name, stored_name, file_path, mime_type, file_size, client_visible, uploaded_by)
-    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 1, NULL)
-');
-$stmt->execute([
-    $projectId,
-    $originalName,
-    $originalName,
-    $storedName,
-    $dbPath,
-    $mimeType,
-    (int)($_FILES['project_file']['size'] ?? 0),
-]);
-$fileId = (int)$pdo->lastInsertId();
 $clientLabel = trim((string)($_POST['client_label'] ?? ''));
 pa_project_public_log_event($pdo, $projectId, 'upload', null, $fileId, mb_substr($clientLabel, 0, 190));
 

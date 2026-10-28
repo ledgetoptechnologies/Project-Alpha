@@ -2,8 +2,8 @@
 #
 # This is the only tracked Compose file. It pulls the production images from
 # GHCR and uses project-scoped named volumes, which also work in TrueNAS.
-# Change the database passwords before deployment. Backup archive encryption is
-# optional; if enabled, use the same durable key in both web and cron.
+# Set deployment-specific database passwords before startup. Backup archive
+# encryption is optional; if enabled, use the same durable key in web and cron.
 
 services:
   migrate:
@@ -14,8 +14,8 @@ services:
       DB_PORT: 3306
       MYSQL_DATABASE: project_alpha
       MYSQL_USER: appuser
-      MYSQL_PASSWORD: changeme_secure_pass
-      MYSQL_ROOT_PASSWORD: changeme_root_pass
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD before deployment}
       MYSQL_ENCRYPTION_REQUIRED: "true"
     depends_on:
       db:
@@ -33,7 +33,7 @@ services:
       DB_PORT: 3306
       MYSQL_DATABASE: project_alpha
       MYSQL_USER: appuser
-      MYSQL_PASSWORD: changeme_secure_pass
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}
       APP_ENV: production
       APP_AUTH_DISABLED: "false"
       # Optional when Settings -> Application Domain is configured. Otherwise,
@@ -49,7 +49,9 @@ services:
       PORTAL_INTEGRATION_HMAC_SECRETS_JSON: ""
       # Optional. Match the cron value exactly and retain it for restores.
       BACKUP_ENCRYPTION_KEY: ""
-      TRUSTED_PROXIES: "172.16.0.0/12 192.168.0.0/16 10.0.0.0/8 127.0.0.0/8"
+      # Set only the exact IPs of reverse proxies that append X-Forwarded-For.
+      # Direct private-network peers must not be able to set their own client IP.
+      TRUSTED_PROXIES: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -74,7 +76,7 @@ services:
       DB_PORT: 3306
       MYSQL_DATABASE: project_alpha
       MYSQL_USER: appuser
-      MYSQL_PASSWORD: changeme_secure_pass
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}
       APP_ENV: production
       WORKER_SLEEP_SECONDS: "5"
     depends_on:
@@ -95,7 +97,7 @@ services:
       DB_PORT: 3306
       MYSQL_DATABASE: project_alpha
       MYSQL_USER: appuser
-      MYSQL_PASSWORD: changeme_secure_pass
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}
       APP_ENV: production
       AUTOPAY_BETA_ENABLED: "false"
       # Optional. Match the web value exactly and retain it for restores.
@@ -115,10 +117,10 @@ services:
   db:
     image: "ghcr.io/ledgetoptechnologies/project-alpha:db-latest"
     environment:
-      MYSQL_ROOT_PASSWORD: changeme_root_pass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD before deployment}
       MYSQL_DATABASE: project_alpha
       MYSQL_USER: appuser
-      MYSQL_PASSWORD: changeme_secure_pass
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD before deployment}
     restart: unless-stopped
     volumes:
       - pa_db_data:/var/lib/mysql

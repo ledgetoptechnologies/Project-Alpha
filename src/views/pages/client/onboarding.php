@@ -5,19 +5,23 @@ require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/client_onboarding.php';
+require_once __DIR__ . '/../../../utils/client_onboarding_access.php';
 require_once __DIR__ . '/../../../utils/api_v2_directory_management.php';
 $directoryManagementStatus=api_v2_directory_management_status($pdo);
 
 client_onboarding_revoke_stale($pdo);
 
 $organizationId = request_client_org_id();
-$clients = $pdo->query('SELECT id,name,email FROM clients WHERE archived=0 ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
-$organizations = $pdo->query('SELECT id,name FROM organizations ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
 $userId = (int)($_SESSION['user']['id'] ?? 0);
-$invitationWhere = $organizationId > 0
-    ? '(i.organization_id=? OR (i.organization_id IS NULL AND i.created_by=?))'
-    : 'i.organization_id IS NULL AND i.created_by=?';
-$invitationParams = $organizationId > 0 ? [$organizationId, $userId] : [$userId];
+$orgWide = pa_onboarding_org_wide($pdo, $userId);
+if (!$orgWide) {
+    $organizationId = 0;
+}
+$clientStmt = $pdo->prepare('SELECT id,name,email FROM clients WHERE archived=0' . ($orgWide ? '' : ' AND created_by=?') . ' ORDER BY name');
+$clientStmt->execute($orgWide ? [] : [$userId]);
+$clients = $clientStmt->fetchAll(PDO::FETCH_ASSOC);
+$organizations = $orgWide ? $pdo->query('SELECT id,name FROM organizations ORDER BY name')->fetchAll(PDO::FETCH_ASSOC) : [];
+[$invitationWhere, $invitationParams] = pa_onboarding_invitation_scope($pdo, $userId, $organizationId);
 $stmt = $pdo->prepare(
     'SELECT i.*,c.name AS client_name,o.name AS target_organization_name,
             s.id AS submission_id,s.proposed_data,s.status AS submission_status,s.created_at AS submitted_at
@@ -257,8 +261,8 @@ $notifyOnSubmitDefault = !array_key_exists('notify_client_onboarding_submit', $a
           <td style="min-width:260px">
             <?php if (($invitation['submission_status'] ?? '') === 'pending'): ?>
               <?php
-                $clientMatches = client_onboarding_find_client_matches($pdo, $proposal, $organizationId > 0 ? $organizationId : null);
-                $orgMatches = client_onboarding_find_organization_matches($pdo, (string)($proposal['organization_name'] ?? ''));
+                $clientMatches = client_onboarding_find_client_matches($pdo, $proposal, $organizationId > 0 ? $organizationId : null, $orgWide ? null : $userId);
+                $orgMatches = $orgWide ? client_onboarding_find_organization_matches($pdo, (string)($proposal['organization_name'] ?? '')) : [];
                 $modalId = 'onboardingReview' . (int)$invitation['submission_id'];
                 $reviewFields = ['name' => 'Name', 'email' => 'Email', 'phone' => 'Phone', 'address_line1' => 'Address', 'address_line2' => 'Apartment / Suite / PO box', 'city' => 'City', 'state' => 'State', 'postal_code' => 'Postal code', 'country' => 'Country', 'client_type' => 'Client type'];
                 $proposalClientType = in_array((string)($proposal['client_type'] ?? ''), ['business', 'consumer'], true) ? (string)$proposal['client_type'] : 'consumer';

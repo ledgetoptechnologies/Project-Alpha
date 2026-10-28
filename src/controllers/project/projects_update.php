@@ -68,6 +68,11 @@ if ($billingTransitionDeliveryAction === 'send_all'
 $projectStmt = $pdo->prepare('SELECT organization_id,manager_user_id,invoice_billing_period,public_project_token,public_project_password_hash FROM projects WHERE id = ? LIMIT 1');
 $projectStmt->execute([$id]);
 $storedProject = $projectStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+if ($publicProjectEnabled && $publicProjectRequirePassword && $publicProjectPassword === ''
+    && (password_get_info((string)($storedProject['public_project_password_hash'] ?? ''))['algo'] ?? null) === null) {
+    header('Location: '.$editRedirect.'&error=' . urlencode('Set an access code before requiring one on the public project link.'));
+    exit;
+}
 $storedOrganizationId = (int)($storedProject['organization_id'] ?? 0);
 $storedManagerUserId = (int)($storedProject['manager_user_id'] ?? 0);
 $projectInvoiceManualEmails = [];

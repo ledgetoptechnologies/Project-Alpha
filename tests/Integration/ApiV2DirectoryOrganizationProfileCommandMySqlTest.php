@@ -105,6 +105,7 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
         self::assertSame(200,\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$command,7,$this->headers(),'first')['status']);
         $nextEpoch='923e4567-e89b-42d3-a456-426614174000';$this->first->prepare('UPDATE api_v2_history_identity SET history_epoch=?')->execute([$nextEpoch]);$headers=array_replace($this->headers(),['epoch'=>$nextEpoch]);
         self::assertSame(409,\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$command,7,$headers,'stale-old-epoch')['status']);
+        $this->first->exec("UPDATE api_v2_directory_external_bindings SET resource_revision=2,resource_projection_sha256=(SELECT projection_sha256 FROM api_v2_directory_resource_state WHERE resource_type='organization')");
         $next=$command;$next['expectedRevision']='2';$next['profile']['name']='Second Epoch Org';
         $result=\api_v2_directory_organization_profile_command_write($this->first,str_repeat('a',32),$next,7,$headers,'second');self::assertSame(200,$result['status']);self::assertFalse($result['payload']['replayed']);self::assertSame('3',$result['payload']['result']['resource']['revision']);
         self::assertSame(2,(int)$this->first->query('SELECT COUNT(DISTINCT history_epoch) FROM api_v2_directory_organization_profile_command_receipts')->fetchColumn());
@@ -145,7 +146,7 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
     private function resetSchema(): void
     {
         $this->first->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['api_v2_directory_organization_profile_command_receipts', 'api_v2_directory_client_profile_command_receipts', 'api_v2_directory_resource_changes', 'api_v2_directory_resource_state', 'api_v2_directory_authorization_state', 'api_keys', 'api_v2_applications', 'api_v2_history_identity', 'address_assignments', 'addresses', 'organizations', 'app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
+        foreach (['api_v2_directory_external_bindings', 'api_v2_directory_organization_profile_command_receipts', 'api_v2_directory_client_profile_command_receipts', 'api_v2_directory_resource_changes', 'api_v2_directory_resource_state', 'api_v2_directory_authorization_state', 'api_keys', 'api_v2_applications', 'api_v2_history_identity', 'address_assignments', 'addresses', 'organizations', 'app_config'] as $table) $this->first->exec("DROP TABLE IF EXISTS `$table`");
         $this->first->exec('SET FOREIGN_KEY_CHECKS=1');
         $this->first->exec("CREATE TABLE api_v2_applications(id BIGINT UNSIGNED NOT NULL PRIMARY KEY, application_id CHAR(36) NOT NULL, name VARCHAR(191) NOT NULL) ENGINE=InnoDB;
             CREATE TABLE api_keys(id BIGINT UNSIGNED NOT NULL PRIMARY KEY, api_v2_application_id BIGINT UNSIGNED NULL, revoked_at DATETIME NULL, CONSTRAINT fk_test_key_application FOREIGN KEY(api_v2_application_id) REFERENCES api_v2_applications(id)) ENGINE=InnoDB;
@@ -181,5 +182,7 @@ final class ApiV2DirectoryOrganizationProfileCommandMySqlTest extends TestCase
         $this->first->beginTransaction();
         \api_v2_directory_record($this->first, 'organization', 9);
         $this->first->commit();
+        $this->first->exec("CREATE TABLE api_v2_directory_external_bindings(application_pk BIGINT UNSIGNED,resource_type VARCHAR(32),external_id VARCHAR(191),public_id CHAR(32),resource_revision BIGINT UNSIGNED,resource_projection_sha256 CHAR(64),status VARCHAR(32),PRIMARY KEY(application_pk,resource_type,external_id)) ENGINE=InnoDB");
+        $this->first->exec("INSERT INTO api_v2_directory_external_bindings SELECT 3,resource_type,'ops/existing/org',public_id,revision,projection_sha256,'active' FROM api_v2_directory_resource_state WHERE resource_type='organization'");
     }
 }

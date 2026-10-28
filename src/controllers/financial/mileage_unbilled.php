@@ -9,6 +9,7 @@ $userId=(int)($_SESSION['user']['id']??0);$clientId=max(0,(int)($_GET['client_id
 if($userId<=0)api_json_failure(401,'authentication_required','Authentication is required.');
 if($clientId<=0)api_json_failure(422,'client_required','Choose a client first.');
 if(!user_can($pdo,$userId,'invoices.create',0))api_json_failure(403,'permission_denied','Permission denied.');
+if(!can_access_record($pdo,'clients',$clientId,$userId))api_json_failure(404,'client_not_found','Client not found.');
 try{
  $stmt=$pdo->prepare('SELECT a.id,a.mileage_log_id,a.charge_method,a.billable_miles,a.mileage_rate,a.fixed_amount,a.client_charge,
    m.trip_date,m.start_location,m.end_location,m.logged_miles,m.description,

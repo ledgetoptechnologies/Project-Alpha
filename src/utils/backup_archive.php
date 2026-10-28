@@ -35,10 +35,14 @@ function backup_add_tree(ZipArchive $zip, string $sourceRoot, string $archiveRoo
 
 function backup_create_archive(string $databaseFile, string $archiveFile, bool $full, string $key = ''): void
 {
+    if ($full && trim($key) === '') {
+        throw new RuntimeException('Full backups require BACKUP_ENCRYPTION_KEY.');
+    }
     $zip = new ZipArchive();
     if ($zip->open($archiveFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
         throw new RuntimeException('Could not create backup archive.');
     }
+    $open = true;
     try {
         if (!$zip->addFile($databaseFile, 'database.sql.gz')) {
             throw new RuntimeException('Could not add database dump to backup archive.');
@@ -60,8 +64,16 @@ function backup_create_archive(string $databaseFile, string $archiveFile, bool $
             backup_add_tree($zip, '/var/www/src/uploads', 'uploads', $key);
             backup_add_tree($zip, '/var/www/config', 'config', $key);
         }
-    } finally {
-        $zip->close();
+        if (!$zip->close()) {
+            throw new RuntimeException('Could not finalize backup archive.');
+        }
+        $open = false;
+    } catch (Throwable $error) {
+        if ($open) {
+            @$zip->close();
+        }
+        @unlink($archiveFile);
+        throw $error;
     }
 }
 

@@ -40,6 +40,20 @@ function portal_integration_flag_enabled(string $name): bool
     return getenv($name) === 'true';
 }
 
+/** Only the exact signed API path may dispatch a server integration command. */
+function portal_integration_route_key(string $requestPath, string $page): ?string
+{
+    if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints|draft-quotes)$#D', $requestPath, $match) !== 1) {
+        return null;
+    }
+    $pricing = $match[2] === 'pricing-hints';
+    if ($page !== ($pricing ? 'api-integration-pricing-hints' : 'api-integration-draft-quotes')) {
+        return null;
+    }
+    $flag = $pricing ? 'APP_PORTAL_PRICING_PREVIEW_ENABLED' : 'APP_PORTAL_DRAFT_QUOTES_ENABLED';
+    return portal_integration_flag_enabled($flag) ? $match[1] : null;
+}
+
 function portal_integration_failure(int $status, string $code): never
 {
     header('Content-Type: application/json; charset=UTF-8');

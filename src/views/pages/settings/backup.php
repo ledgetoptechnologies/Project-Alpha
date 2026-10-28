@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../config/app.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/cron_state.php';
+require_once __DIR__ . '/../../../utils/acl.php';
 
 // Get existing database-only and full backups.
 $backupsDir = '/var/www/backups';
@@ -287,7 +288,7 @@ unset($_SESSION['flash_backup']);
                     <option value="database" <?php echo $backupMode === 'database' ? 'selected' : ''; ?>>Database only</option>
                     <option value="full" <?php echo $backupMode === 'full' ? 'selected' : ''; ?>>Full: database, uploads, and configuration</option>
                 </select>
-                <span class="help-text" style="display:block; margin-top:0.35rem; font-size:0.8rem;">Set BACKUP_ENCRYPTION_KEY on both web and cron services to encrypt archive contents.</span>
+                <span class="help-text" style="display:block; margin-top:0.35rem; font-size:0.8rem;">Full backups require BACKUP_ENCRYPTION_KEY on both web and cron services. Keep the key separately for restores.</span>
             </div>
 
             <div class="form-group" style="margin:0;">
@@ -324,6 +325,7 @@ unset($_SESSION['flash_backup']);
 
     <hr>
 
+    <?php if (acl_user_role($pdo, (int)($_SESSION['user']['id'] ?? 0)) === 'admin'): ?>
     <h4>Restore from Backup</h4>
     <form method="POST" action="/?page=settings-backup" class="backup-form" enctype="multipart/form-data">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
@@ -357,6 +359,7 @@ unset($_SESSION['flash_backup']);
         </button>
         <span class="warning-text">Warning: This will overwrite all current data. Make a backup first!</span>
     </form>
+    <?php endif; ?>
 
     <hr>
 

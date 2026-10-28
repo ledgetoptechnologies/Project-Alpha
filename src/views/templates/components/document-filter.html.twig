@@ -196,18 +196,20 @@ document.querySelectorAll('[data-autocomplete="client"]').forEach(input => {
                     suggestionsDiv.style.display = 'none';
                     return;
                 }
-                suggestionsDiv.innerHTML = list.map(x => 
-                    `<div data-id="${x.id}" data-name="${x.name}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6">${x.name}</div>`
-                ).join('');
-                Array.from(suggestionsDiv.children).forEach(el => {
+                suggestionsDiv.replaceChildren();
+                list.forEach(x => {
+                    const el = document.createElement('div');
+                    el.style.cssText = 'padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6';
+                    el.textContent = String(x.name ?? '');
                     el.addEventListener('click', function() {
-                        input.value = this.dataset.name;
+                        input.value = String(x.name ?? '');
                         selectedName = input.value.trim();
                         if (hiddenInput) {
-                            hiddenInput.value = this.dataset.id;
+                            hiddenInput.value = String(x.id ?? '');
                         }
                         suggestionsDiv.style.display = 'none';
                     });
+                    suggestionsDiv.appendChild(el);
                 });
                 suggestionsDiv.style.display = 'block';
             })

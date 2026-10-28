@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/tax_lookup.php';
+require_once __DIR__ . '/../../utils/tax_import_chunk_limits.php';
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
@@ -169,7 +170,11 @@ function taxImportResolveChunkSource(string $field, string $token, array $extens
     if (!is_array($meta) || empty($meta['complete'])) {
         throw new Exception('Chunked tax import upload is not complete yet.');
     }
-    if (($meta['session_hash'] ?? '') !== hash('sha256', session_id()) || ($meta['field'] ?? '') !== $field) {
+    if ((int)($meta['updated_at'] ?? 0) < time() - TAX_IMPORT_CHUNK_TTL_SECONDS) {
+        throw new Exception('Chunked tax import upload has expired. Upload the file again.');
+    }
+    if (($meta['session_hash'] ?? '') !== hash('sha256', session_id()) || ($meta['field'] ?? '') !== $field
+        || (int)($meta['user_id'] ?? 0) !== (int)($_SESSION['user']['id'] ?? 0)) {
         throw new Exception('Chunked tax import upload does not match this session.');
     }
 

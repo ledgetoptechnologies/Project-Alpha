@@ -114,6 +114,19 @@ final class MileageBillingTest extends TestCase
         self::assertStringContainsString('INTERVAL 90 DAY',$purge);
     }
 
+    public function testOnlyStatusCanUseGetOnTrackingApi(): void
+    {
+        self::assertTrue(mileage_tracking_method_allowed('GET', 'status'));
+        foreach (['start', 'points', 'stop', 'discard'] as $action) {
+            self::assertFalse(mileage_tracking_method_allowed('GET', $action));
+            self::assertTrue(mileage_tracking_method_allowed('POST', $action));
+        }
+        self::assertFalse(mileage_tracking_method_allowed('PUT', 'status'));
+        $api = file_get_contents(dirname(__DIR__, 2) . '/src/controllers/financial/mileage_tracking_api.php');
+        self::assertStringContainsString('mileage_tracking_method_allowed($method,$action)', (string)$api);
+        self::assertStringContainsString("if(\$method==='POST')", (string)$api);
+    }
+
     public function testMileageScreensDoNotUseDeductionOrReimbursementLabels(): void
     {
         $root=dirname(__DIR__,2);

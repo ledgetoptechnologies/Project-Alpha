@@ -50,7 +50,10 @@ if (strtolower($method) === 'stripe') {
     header('Location: /?page=payments/payments-create&error=' . urlencode('Permission denied'));
     exit;
   }
-  header('Location: /?page=stripe-charge&invoice_id=' . $invoice_id . '&amount=' . $amount);
+  // Keep the already CSRF-verified POST when handing off to checkout creation.
+  $_POST['invoice_id'] = $invoice_id;
+  $_POST['return_url'] = '/?page=payments/payments-create';
+  require __DIR__ . '/stripe/stripe_charge.php';
   exit;
 }
 

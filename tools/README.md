@@ -45,6 +45,12 @@ container image instead of the local PHP installation.
 | `migrate_receipts_to_expenses.php` | Migrate legacy receipt records into expenses |
 | `run_scheduled_audits.php` | Legacy standalone audit scheduler |
 
+The database backup and restore helpers require the deployment `.env` file.
+They create owner-only backup files and directories. When
+`BACKUP_ENCRYPTION_KEY` is configured, they stream dumps directly into GPG;
+the pre-restore safety copy is encrypted too. Keep the backup key separately
+from the archives.
+
 The current Docker deployment runs scheduled audits through `src/cron/process_audit_schedules.php` at 06:00 UTC. Do not install `run_scheduled_audits.php` as an additional scheduler unless you intentionally want a separate legacy path.
 
 ## General Rules

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
 require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
+require_once __DIR__ . '/../../../utils/project_notes_access.php';
 // TODo: Change the Details Button in the project list view to "Preview" and then add button called "Details" That will open up a new page with all the details of the project.
 $client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
 $prefix = trim($_GET['project_prefix'] ?? '');
@@ -21,7 +22,8 @@ $sql='SELECT j.id job_id,j.job_code project_code,j.client_id,j.project_id,j.crea
              (SELECT COUNT(*) FROM invoices i WHERE i.job_id=j.id) invoices_count
       FROM jobs j JOIN clients c ON c.id=j.client_id
       LEFT JOIN projects p ON p.id=j.project_id
-      LEFT JOIN project_meta pm ON pm.project_code=j.job_code
+      LEFT JOIN project_meta pm ON pm.project_code=j.job_code AND pm.client_id=j.client_id
+        AND NOT EXISTS (SELECT 1 FROM jobs other_job WHERE other_job.job_code=j.job_code AND other_job.id<>j.id)
       WHERE '.implode(' AND ',$where).'
       ORDER BY j.created_at DESC,j.id DESC';
 $rows=$pdo->prepare($sql);
@@ -179,14 +181,17 @@ if ($selected !== '') {
       <div>
         <?php if ($selected !== '' && $selectedRow): ?>
           <?php
-          $pn2 = $pdo->prepare('SELECT notes FROM project_meta WHERE project_code=?');
-          $pn2->execute([$selected]);
-          $selNotes = (string)$pn2->fetchColumn();
+          $selNotes = '';
+          if (project_notes_authorized_job($pdo, $selected, (int)$_SESSION['user']['id'], (int)$selectedRow['client_id'])) {
+            $pn2 = $pdo->prepare('SELECT notes FROM project_meta WHERE project_code=? AND client_id=?');
+            $pn2->execute([$selected, (int)$selectedRow['client_id']]);
+            $selNotes = (string)$pn2->fetchColumn();
+          }
           $signedContracts = [];
           $has_signed = (bool)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='contracts' AND COLUMN_NAME='signed_pdf_path'")->fetchColumn();
           if ($has_signed) {
-            $signed = $pdo->prepare("SELECT id, doc_number, signed_pdf_path, status FROM contracts WHERE project_code=? AND signed_pdf_path IS NOT NULL ORDER BY created_at DESC");
-            $signed->execute([$selected]);
+            $signed = $pdo->prepare("SELECT id, doc_number, signed_pdf_path, status FROM contracts WHERE project_code=? AND client_id=? AND signed_pdf_path IS NOT NULL ORDER BY created_at DESC");
+            $signed->execute([$selected, (int)$selectedRow['client_id']]);
             $signedContracts = $signed->fetchAll();
           }
           ?>

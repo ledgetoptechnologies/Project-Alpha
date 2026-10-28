@@ -70,6 +70,10 @@ try {
         $inviteStmt = $pdo->prepare('SELECT * FROM client_onboarding_invitations WHERE id=? FOR UPDATE');
         $inviteStmt->execute([$invitationId]);
         $invite = $inviteStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$invite || !client_onboarding_session_matches($invite)) {
+            client_onboarding_clear_session();
+            throw new RuntimeException('This onboarding session is no longer available.');
+        }
     }
     if (!$invite || ($invite['status'] ?? '') !== 'pending' || strtotime((string)$invite['expires_at']) < time()) {
         throw new RuntimeException('This onboarding session is no longer available.');
@@ -84,7 +88,7 @@ try {
     $pdo->prepare('UPDATE client_onboarding_invitations SET status="submitted", consumed_at=NOW() WHERE id=? AND status="pending"')->execute([$invitationId]);
     $pdo->commit();
 
-    unset($_SESSION['client_onboarding_invitation_id']);
+    client_onboarding_clear_session();
     audit_log($pdo, 'client_onboarding.submitted', 'client_onboarding_submission', $submissionId ?: null, [
         'organization_id' => (int)$invite['organization_id'],
         'invitation_id' => $invitationId,

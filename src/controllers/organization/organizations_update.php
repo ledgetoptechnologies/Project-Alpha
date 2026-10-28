@@ -1,6 +1,7 @@
 <?php
 // src/controllers/organization/organizations_update.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/organization_schema.php';
 require_once __DIR__ . '/../../utils/address_book.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
@@ -28,6 +29,7 @@ if ($id <= 0 || $name === '') {
     header('Location: /?page=organization/organizations-edit&id=' . $id . '&error=Invalid%20input');
     exit;
 }
+require_record_ownership($pdo, 'organizations', $id);
 if ($generalEmail !== '' && (mb_strlen($generalEmail) > 255 || !filter_var($generalEmail, FILTER_VALIDATE_EMAIL))) {
     header('Location: /?page=organization/organizations-edit&id=' . $id . '&error=' . rawurlencode('Enter a valid general email address.'));
     exit;

@@ -107,8 +107,14 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
         var t=this.value.trim(); if(!t){sug.style.display='none';sug.innerHTML='';return;}
         fetch('/?page=clients-search&term='+encodeURIComponent(t)).then(r=>r.json()).then(list=>{
           if(!Array.isArray(list)||list.length===0){sug.style.display='none';sug.innerHTML='';return;}
-          sug.innerHTML = list.map(x=>`<div data-id="${x.id}" data-name="${x.name}" style=\"padding:8px 10px;cursor:pointer\">${x.name}</div>`).join('');
-          Array.from(sug.children).forEach(el=>{ el.addEventListener('click', function(){ input.value=this.dataset.name; hid.value=this.dataset.id; sug.style.display='none'; }); });
+          sug.replaceChildren();
+          list.forEach(x=>{
+            const el = document.createElement('div');
+            el.style.cssText = 'padding:8px 10px;cursor:pointer';
+            el.textContent = String(x.name ?? '');
+            el.addEventListener('click', function(){ input.value=String(x.name ?? ''); hid.value=String(x.id ?? ''); sug.style.display='none'; });
+            sug.appendChild(el);
+          });
           sug.style.display='block';
         }).catch(()=>{sug.style.display='none'});
       });

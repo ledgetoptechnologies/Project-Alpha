@@ -63,6 +63,10 @@ if ($client_id <= 0 || empty($item)) {
     header('Location: /?page=invoice/invoices-create&error=Invalid%20input');
     exit;
 }
+if (!can_access_record($pdo, 'clients', $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
+    header('Location: /?page=invoice/invoices-create&error=Client%20unavailable');
+    exit;
+}
 if ($recipientPresentationMode === PA_GENERAL_RECIPIENT_MODE) {
     // This is intentionally not a client-less invoice: the selected client remains
     // the internal accounting owner, but no recipient data may leave the system.

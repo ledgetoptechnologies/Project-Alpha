@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/portal_projection_hooks.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_revision.php';
 require_once __DIR__ . '/../../utils/api_v2_directory_management.php';
+require_once __DIR__ . '/../../utils/client_record_authorization.php';
 if (api_v2_directory_management_guard($pdo,'client','archive')) { header('Location: /?page=client/clients-list&directory_managed=1'); exit; }
 
 $id = (int)($_POST['id'] ?? 0);
@@ -31,6 +32,9 @@ try {
   $client = $st->fetch(PDO::FETCH_ASSOC);
   if (!$client) {
     throw new DomainException('Client not found while preparing the archive.');
+  }
+  if (!pa_client_record_mutation_allowed($pdo, (int)($_SESSION['user']['id'] ?? 0), $client['created_by'] ?? null)) {
+    throw new DomainException('You do not have access to archive this client.');
   }
   // 1) Archive client basic row
   $affectedPrincipalWorkspaces=(new App\Services\ClientArchivePortalStateService())->archive(

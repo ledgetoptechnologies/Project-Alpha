@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+function mileage_tracking_method_allowed(string $method, string $action): bool
+{
+    return $method === 'POST' || ($method === 'GET' && $action === 'status');
+}
+
 function mileage_financial_treatment_for_relationship(string $relationship): string
 {
     return match ($relationship) {

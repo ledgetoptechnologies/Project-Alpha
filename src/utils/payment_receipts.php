@@ -90,13 +90,14 @@ function payment_receipt_issue(
         $token = bin2hex(random_bytes(32));
         $number = 'R-' . str_pad((string)$paymentId, 6, '0', STR_PAD_LEFT);
         $pdo->prepare(
-            'INSERT INTO payment_receipts (payment_id,invoice_id,receipt_number,public_token,amount,email_to)
-             VALUES (?,?,?,?,?,?)'
+            'INSERT INTO payment_receipts (payment_id,invoice_id,receipt_number,public_token,expires_at,amount,email_to)
+             VALUES (?,?,?,?,?,?,?)'
         )->execute([
             $paymentId,
             $payment['invoice_id'] ?: null,
             $number,
             $token,
+            (new DateTimeImmutable('now'))->modify('+1 year')->format('Y-m-d H:i:s'),
             (float)$payment['amount'],
             filter_var((string)$payment['email'], FILTER_VALIDATE_EMAIL) ? $payment['email'] : null,
         ]);
@@ -109,7 +110,8 @@ function payment_receipt_issue(
     }
 
     $url = '';
-    if (!empty($appConfig['public_links_in_email'])) {
+    if (!empty($appConfig['public_links_in_email']) && empty($receipt['revoked'])
+        && !empty($receipt['expires_at']) && (strtotime((string)$receipt['expires_at']) ?: 0) > time()) {
         $url = invoice_public_base_url($appConfig) . '/?page=payment-receipt&token=' . rawurlencode((string)$receipt['public_token']);
     }
     $invoiceLabel = !empty($payment['invoice_id']) ? ' for invoice ' . pa_invoice_label_from_row($payment) : '';

@@ -1,6 +1,12 @@
 <?php
 
 require_once __DIR__ . '/logger.php';
+require_once __DIR__ . '/canonical_origin.php';
+
+function password_reset_canonical_origin(array $appConfig): ?string
+{
+    return app_canonical_https_origin($appConfig);
+}
 
 function password_reset_normalize_token(string $token): string
 {

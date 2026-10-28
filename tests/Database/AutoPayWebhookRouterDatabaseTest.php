@@ -21,7 +21,7 @@ final class AutoPayWebhookRouterDatabaseTest extends TestCase
         $this->temporary=sys_get_temp_dir().'/pa-webhook-router-'.bin2hex(random_bytes(12));
         foreach(['controllers/webhook','utils','config','services'] as $dir)mkdir($this->temporary.'/'.$dir,0700,true);
         $source=dirname(__DIR__,2).'/src/';
-        foreach(['controllers/webhook/stripe_webhooks.php','utils/webhook_logger.php','utils/autopay_enrollment.php','utils/autopay_beta.php','config/db.php'] as $file)copy($source.$file,$this->temporary.'/'.$file);
+        foreach(['controllers/webhook/stripe_webhooks.php','utils/webhook_logger.php','utils/stripe_webhook_signature.php','utils/client_ip.php','utils/rate_limiter.php','utils/autopay_enrollment.php','utils/autopay_beta.php','config/db.php'] as $file)copy($source.$file,$this->temporary.'/'.$file);
         // Setup-only fixture: unrelated money handlers must not execute here.
         file_put_contents($this->temporary.'/utils/stripe_financial_events.php','<?php');
         file_put_contents($this->temporary.'/config/app.php','<?php $appConfig=["_stripe_secret_key"=>"sk_test_SYNTHETIC","_stripe_webhook_secret"=>"whsec_synthetic_router"];');

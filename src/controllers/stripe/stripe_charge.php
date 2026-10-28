@@ -3,6 +3,12 @@
 // Creates a Stripe Checkout session for admin to process card payment
 // Used when merchant wants to charge a card manually (e.g., customer on phone)
 
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    exit('Checkout creation requires POST.');
+}
+
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../services/StripeService.php';
@@ -12,9 +18,20 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/payment_methods.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/canonical_origin.php';
 
-$invoiceId = (int)($_POST['invoice_id'] ?? $_GET['invoice_id'] ?? 0);
-$returnUrl = $_POST['return_url'] ?? $_GET['return_url'] ?? '';
+if (!csrf_validate()) {
+    http_response_code(403);
+    exit('Invalid request token.');
+}
+$actorId = (int)($_SESSION['user']['id'] ?? 0);
+if ($actorId <= 0 || !user_can($pdo, $actorId, 'billing.manage', 0)) {
+    http_response_code(403);
+    exit('Permission denied.');
+}
+
+$invoiceId = (int)($_POST['invoice_id'] ?? 0);
+$returnToPaymentForm = ($_POST['return_url'] ?? '') === '/?page=payments/payments-create';
 
 if ($invoiceId <= 0) {
     header('Location: /?page=home&error=' . urlencode('Invalid invoice'));
@@ -22,10 +39,6 @@ if ($invoiceId <= 0) {
 }
 
 try {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_validate()) {
-        throw new Exception('Invalid request. Please refresh and try again.');
-    }
-
     if (!can_access_record($pdo, 'invoices', $invoiceId, (int)($_SESSION['user']['id'] ?? 0))) {
         throw new Exception('Permission denied');
     }
@@ -95,16 +108,10 @@ try {
         ? "Invoice {$invoiceLabel} - {$checkoutRecipient} (includes $" . number_format($surchargeAmount, 2) . " processing fee)"
         : "Invoice {$invoiceLabel} - {$checkoutRecipient}";
     
-    // Build URLs
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '' && !empty($appConfig['app_host'])) {
-        $host = (string)$appConfig['app_host'];
+    $baseUrl = app_canonical_https_origin($appConfig);
+    if ($baseUrl === null) {
+        throw new RuntimeException('Configure the canonical HTTPS app host before creating a Stripe checkout.');
     }
-    if ($host === '') {
-        $host = 'localhost';
-    }
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-    $baseUrl = $scheme . '://' . $host;
     
     $successUrl = $baseUrl . '/?page=invoice/invoice-details&id=' . $invoiceId . '&payment=success&session_id={CHECKOUT_SESSION_ID}';
     $cancelUrl = $baseUrl . '/?page=invoice/invoice-details&id=' . $invoiceId . '&payment=cancelled';
@@ -157,7 +164,9 @@ try {
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[StripeCharge] Error: ' . $e->getMessage());
-    $errorUrl = $returnUrl ?: '/?page=invoice/invoice-details&id=' . $invoiceId;
+    $errorUrl = $returnToPaymentForm
+        ? '/?page=payments/payments-create'
+        : '/?page=invoice/invoice-details&id=' . $invoiceId;
     header('Location: ' . $errorUrl . '&stripe_error=' . urlencode($e->getMessage()));
     exit;
 }

@@ -3,17 +3,19 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/acl.php';
+require_once __DIR__ . '/../../utils/expense_schedule_authorization.php';
 
 $requestedType = ($_POST['report_type'] ?? 'audit') === 'expense' ? 'expense' : 'audit';
 $redirectPage = $requestedType === 'expense' ? 'financial/expense-report' : 'financial/audit';
 csrf_verify_post_or_redirect($redirectPage);
 
 $action = (string)($_POST['action'] ?? 'create');
+$userId = (int)($_SESSION['user']['id'] ?? 0);
 $organizationId = request_client_org_id();
 $scheduleOrgId = $organizationId > 0 ? $organizationId : null;
 $requiredPermission = $requestedType === 'expense' ? 'financial.manage' : 'financial.audit';
-if (($_SESSION['user']['role'] ?? '') !== 'admin'
-    && !user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), $requiredPermission, 0)) {
+if ($action === 'create' && (!user_can($pdo, $userId, $requiredPermission, 0)
+    || !user_can($pdo, $userId, 'financial.export', 0))) {
     require_once __DIR__ . '/../../utils/acl_middleware.php';
     deny_response($redirectPage);
 }
@@ -34,6 +36,9 @@ try {
         ), static fn($email) => filter_var($email, FILTER_VALIDATE_EMAIL) !== false), 0, 5)));
         if (!$emails) {
             throw new RuntimeException('At least one valid recipient email is required.');
+        }
+        if ($requestedType === 'expense' && !pa_expense_schedule_recipients_allowed($pdo, $userId, $emails)) {
+            throw new RuntimeException('Expense schedule recipients must match your account email.');
         }
 
         $accountingBasis = ($_POST['accounting_basis'] ?? 'cash') === 'accrual' ? 'accrual' : 'cash';
@@ -60,13 +65,14 @@ try {
 
         $stmt = $pdo->prepare(
             'INSERT INTO audit_schedules
-             (organization_id,report_type,frequency,date_range_type,accounting_basis,email_addresses,
+             (organization_id,created_by,report_type,frequency,date_range_type,accounting_basis,email_addresses,
               include_invoices,include_unpaid_invoices,include_contracts,include_quotes,generate_csv,
               include_pdfs,filters,next_run_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         );
         $stmt->execute([
             $scheduleOrgId,
+            $userId,
             $requestedType,
             $frequency,
             $dateRangeType,
@@ -90,13 +96,22 @@ try {
     if ($id <= 0) {
         throw new RuntimeException('Invalid schedule.');
     }
-    $existing = $pdo->prepare('SELECT report_type FROM audit_schedules WHERE id=?');
+    $existing = $pdo->prepare('SELECT report_type, created_by, is_active FROM audit_schedules WHERE id=?');
     $existing->execute([$id]);
-    $storedType = $existing->fetchColumn();
-    if ($storedType === false) {
+    $stored = $existing->fetch(PDO::FETCH_ASSOC);
+    if (!$stored) {
         throw new RuntimeException('Schedule not found.');
     }
+    $storedType = (string)$stored['report_type'];
     $redirectPage = $storedType === 'expense' ? 'financial/expense-report' : 'financial/audit';
+    $storedPermission = $storedType === 'expense' ? 'financial.manage' : 'financial.audit';
+    if (!user_can($pdo, $userId, $storedPermission, 0)) {
+        throw new RuntimeException('You do not have permission to manage this schedule.');
+    }
+    if (!in_array(acl_user_role($pdo, $userId), ['admin', 'owner', 'staff'], true)
+        && (int)($stored['created_by'] ?? 0) !== $userId) {
+        throw new RuntimeException('You do not have access to this schedule.');
+    }
 
     if ($action === 'delete') {
         $pdo->prepare('DELETE FROM audit_schedules WHERE id=?')->execute([$id]);
@@ -104,6 +119,9 @@ try {
         exit;
     }
     if ($action === 'toggle') {
+        if (empty($stored['is_active']) && !user_can($pdo, $userId, 'financial.export', 0)) {
+            throw new RuntimeException('Report export permission is required to activate a schedule.');
+        }
         $pdo->prepare('UPDATE audit_schedules SET is_active=NOT is_active WHERE id=?')
             ->execute([$id]);
         header('Location: /?page=' . $redirectPage . '&schedule_updated=1');

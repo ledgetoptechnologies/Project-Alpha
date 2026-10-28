@@ -229,7 +229,7 @@ $moduleRoutes = [
 ];
 require_once __DIR__ . '/../src/utils/portal_integration_security.php';
 $portalIntegrationMatch = [];
-if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints|draft-quotes)/?$#D', $requestPath, $portalIntegrationMatch) === 1) {
+if (preg_match('#^/api/v2/integrations/([a-z0-9][a-z0-9_-]{1,63})/(pricing-hints|draft-quotes)$#D', $requestPath, $portalIntegrationMatch) === 1) {
     $isPricingIntegration = $portalIntegrationMatch[2] === 'pricing-hints';
     $integrationFlag = $isPricingIntegration
         ? 'APP_PORTAL_PRICING_PREVIEW_ENABLED'
@@ -438,6 +438,12 @@ require_once __DIR__ . '/../src/config/bootstrap.php';
 // (e.g. api-clients-search); 'api-keys' is a UI page, not an API endpoint.
 // Slash-prefixed 'settings/' routes are AJAX/JSON handlers.
 $isServerOnlyIntegration = in_array($page, ['api-integration-pricing-hints','api-integration-draft-quotes'], true);
+if ($isServerOnlyIntegration) {
+    $routeKey = portal_integration_route_key($requestPath, $page);
+    if ($routeKey === null || !hash_equals($routeKey, (string)($_GET['_integration_key'] ?? ''))) {
+        portal_integration_failure(404, 'NOT_FOUND');
+    }
+}
 if ($isServerOnlyIntegration && trim((string)($_SERVER['HTTP_ORIGIN'] ?? '')) !== '') {
     require_once __DIR__.'/../src/utils/api_response.php';
     try{(new App\Services\PortalIntegrationAuditService())->recordCommand($pdo,(string)($_GET['_integration_key']??''),0,$page==='api-integration-pricing-hints'?App\Services\PortalIntegrationContract::PRICING_SCOPE:App\Services\PortalIntegrationContract::DRAFT_SCOPE,'denied',api_request_id(),'BROWSER_ORIGIN_DENIED');}
@@ -564,7 +570,7 @@ if ($page === 'logout') {
 
 // Allow unauthenticated access only to explicit public pages
 // NOTE: serve-upload enforces granular access itself (public images/logos only; PDFs & subdirs require auth)
-$publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
+$publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-doc', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
 
 // Toggle to disable auth checks in development/testing
 $authDisabled = filter_var(getenv('AUTH_DISABLED') ?: getenv('APP_AUTH_DISABLED') ?: '', FILTER_VALIDATE_BOOLEAN);
@@ -717,20 +723,21 @@ if (!empty($_SESSION['user'])) {
 
 // A recovery that explicitly reset TOTP must finish enrollment after the
 // temporary password has been replaced and before any other application use.
+require_once __DIR__ . '/../src/utils/auth_gate_checks.php';
 if (!empty($_SESSION['user']) && !in_array($page, $publicPages, true)) {
     $allowedForTotpReenroll = ['2fa-setup', '2fa-setup-action', 'logout', 'logout-confirm', 'session-status'];
     if (!in_array($page, $allowedForTotpReenroll, true)) {
         try {
-            $totpStmt = $pdo->prepare('SELECT force_password_reset, totp_reenroll_required FROM users WHERE id = ?');
-            $totpStmt->execute([(int)$_SESSION['user']['id']]);
-            $recoveryState = $totpStmt->fetch(PDO::FETCH_ASSOC);
-            if ((int)($recoveryState['force_password_reset'] ?? 0) === 0
-                && (int)($recoveryState['totp_reenroll_required'] ?? 0) === 1) {
+            $userId = (int)$_SESSION['user']['id'];
+            if (!pa_auth_recovery_flag($pdo, $userId, 'force_password_reset')
+                && pa_auth_recovery_flag($pdo, $userId, 'totp_reenroll_required')) {
                 header('Location: /?page=2fa-setup&required=1&recovery=1');
                 exit;
             }
         } catch (Throwable $e) {
-            error_log('[security] TOTP reenrollment gate failed: ' . $e->getMessage());
+            error_log('[security] TOTP reenrollment gate failed: ' . get_class($e));
+            http_response_code(503);
+            exit('Authentication state unavailable');
         }
     }
 }
@@ -741,13 +748,15 @@ if (!empty($_SESSION['user']) && !in_array($page, $publicPages, true)) {
     if (!in_array($page, $allowedForForceReset, true)) {
         try {
             require_once __DIR__ . '/../src/config/db.php';
-            $fpStmt = $pdo->prepare('SELECT force_password_reset FROM users WHERE id = ?');
-            $fpStmt->execute([(int)$_SESSION['user']['id']]);
-            if ((int)$fpStmt->fetchColumn() === 1) {
+            if (pa_auth_recovery_flag($pdo, (int)$_SESSION['user']['id'], 'force_password_reset')) {
                 header('Location: /?page=account&force=1');
                 exit;
             }
-        } catch (Throwable $e) { /* allow through if check fails */ }
+        } catch (Throwable $e) {
+            error_log('[security] Password recovery gate failed: ' . get_class($e));
+            http_response_code(503);
+            exit('Authentication state unavailable');
+        }
     }
 }
 
@@ -839,6 +848,8 @@ try {
     acl_middleware($pdo, $page);
 } catch (Throwable $e) {
     @error_log('[acl] middleware failed: ' . $e->getMessage());
+    http_response_code(503);
+    exit('Authorization unavailable');
 }
 
 if ($page === 'settings/dropbox-oauth') {
@@ -1161,6 +1172,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'on-demand-invoice-generate',
 
         // Invoices / payments
+        // Stripe authenticates its callbacks in the controller. Unverified
+        // requests must not consume a quota shared with genuine callbacks.
+        'stripe-webhook',
+        'stripe-webhook-legacy',
         'invoice/invoice-create',
         'invoice/invoice-action',
         'invoice/invoices-create',
@@ -1853,7 +1868,7 @@ if ($page === 'settings/backup-download') {
     exit;
 }
 
-// Stripe charge endpoint (supports both GET and POST)
+// Stripe charge endpoint enforces POST, CSRF, and billing permission itself.
 if ($page === 'stripe-charge') {
     require_once __DIR__ . '/../src/controllers/stripe/stripe_charge.php';
     exit;
@@ -1930,6 +1945,10 @@ if ($page === 'public-project') {
 }
 if ($page === 'public-project-file') {
     require_once __DIR__ . '/../src/controllers/public_view/public_project_file.php';
+    exit;
+}
+if ($page === 'public-project-doc') {
+    require_once __DIR__ . '/../src/controllers/public_view/public_project_doc.php';
     exit;
 }
 if ($page === 'legal/tos-accept') {

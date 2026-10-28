@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../services/StripeService.php';
 require_once __DIR__ . '/../../utils/StripeFeeCalculator.php';
 require_once __DIR__ . '/../../utils/payment_methods.php';
 require_once __DIR__ . '/../../utils/general_recipient_invoices.php';
+require_once __DIR__ . '/../../utils/stripe_success_policy.php';
 
 header('Content-Type: text/html; charset=UTF-8');
 
@@ -40,7 +41,12 @@ try {
         throw new Exception('Link not found');
     }
 
-    if (in_array((string)$linkRow['document_type'], ['invoice', 'project_invoice'], true) && empty($linkRow['expire_when_paid'])) {
+    if (!pa_stripe_success_link_valid($linkRow, time())) {
+        throw new Exception('Link has expired');
+    }
+
+    if (in_array((string)$linkRow['document_type'], ['invoice', 'project_invoice'], true)
+        && empty($linkRow['expire_when_paid']) && empty($linkRow['expires_at'])) {
         try {
             $pdo->exec("ALTER TABLE public_links ADD COLUMN expire_when_paid TINYINT(1) NOT NULL DEFAULT 0");
         } catch (Throwable $e) {
@@ -49,15 +55,16 @@ try {
             $pdo->exec("ALTER TABLE public_links MODIFY COLUMN expires_at DATETIME NULL");
             $up = $pdo->prepare('UPDATE public_links SET expire_when_paid=1, expires_at=NULL WHERE token=? AND revoked=0 AND expires_at IS NULL AND document_type IN ("invoice","project_invoice")');
             $up->execute([$token]);
-            $linkRow['expire_when_paid'] = 1;
-            $linkRow['expires_at'] = null;
+            $reloaded = $pdo->prepare('SELECT document_type, document_id, expires_at, revoked, expire_when_paid FROM public_links WHERE token=? LIMIT 1');
+            $reloaded->execute([$token]);
+            $linkRow = $reloaded->fetch(PDO::FETCH_ASSOC) ?: throw new Exception('Link not found');
         } catch (Throwable $e) {
             // Keep validating against the existing expiration if the schema cannot be adjusted here.
         }
     }
     
-    // Check if revoked
-    if ((int)($linkRow['revoked'] ?? 0) === 1) {
+    // Recheck the persisted link state after any migration attempt.
+    if (!pa_stripe_success_link_valid($linkRow, time())) {
         throw new Exception('Link has expired');
     }
     
@@ -147,16 +154,12 @@ try {
     $surchargeAmount = max(0.0, (float)($surchargeInfo['client_pays'] ?? 0));
     $checkoutTotal = $amountDue + $surchargeAmount;
     
-    // Build URLs
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '' && !empty($appConfig['app_host'])) {
-        $host = (string)$appConfig['app_host'];
+    // Payment return URLs must never use a request-supplied Host header.
+    require_once __DIR__ . '/../../utils/canonical_origin.php';
+    $baseUrl = app_canonical_https_origin($appConfig);
+    if ($baseUrl === null) {
+        throw new RuntimeException('Configure the canonical HTTPS app host before creating a Stripe checkout.');
     }
-    if ($host === '') {
-        $host = 'localhost';
-    }
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-    $baseUrl = $scheme . '://' . $host;
     
     $docNumber = $invoice['doc_number'] ?? $invoiceId;
     $documentLabel = $documentType === 'project_invoice'
@@ -189,6 +192,8 @@ try {
                 && ($existing['payment_status'] ?? '') === 'unpaid'
                 && (int)($existing['amount_total'] ?? 0) === $expectedCents
                 && $existingInvoiceId === $invoiceId
+                && hash_equals($successUrl, (string)($existing['success_url'] ?? ''))
+                && hash_equals($cancelUrl, (string)($existing['cancel_url'] ?? ''))
                 && !empty($existing['url'])) {
                 header('Location: ' . $existing['url']);
                 exit;
@@ -204,7 +209,8 @@ try {
         }
     }
 
-    $idempotencyKey = 'pa-' . str_replace('_', '-', $documentType) . '-' . $invoiceId . '-' . $expectedCents . '-' . date('YmdH');
+    $returnUrlFingerprint = substr(hash('sha256', $successUrl . "\n" . $cancelUrl), 0, 16);
+    $idempotencyKey = 'pa-' . str_replace('_', '-', $documentType) . '-' . $invoiceId . '-' . $expectedCents . '-' . date('YmdH') . '-' . $returnUrlFingerprint;
     $checkoutMetadata = $documentType === 'project_invoice'
         ? [
             'pa_project_invoice_id' => (string)$invoiceId,

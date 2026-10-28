@@ -38,6 +38,9 @@ CRON_LOG=/var/www/config/logs/cron/cron.log
 # Purge sensitive finalized GPS route points after 90 days - daily at 2:30 AM
 30 2 * * * root . /etc/environment && php /var/www/src/cron/purge_mileage_tracking_points.php >> $CRON_LOG 2>&1
 
+# Purge webhook attempt metadata after 30 days - daily at 2:45 AM
+45 2 * * * root . /etc/environment && php /var/www/src/cron/purge_webhook_event_log.php >> $CRON_LOG 2>&1
+
 # Bound generic portal replay/rate security state (48-hour buckets, 24-hour receipts).
 * * * * * root . /etc/environment && php /var/www/src/cron/prune_portal_integration_security.php >> $CRON_LOG 2>&1
 

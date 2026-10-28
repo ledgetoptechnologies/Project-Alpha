@@ -106,11 +106,14 @@ final class ApiV2ApprovedRouteDefaultsTest extends TestCase
         }
     }
 
-    public function testStandaloneComposeDoesNotRequireAnEnvironmentFileOrHostVariables(): void
+    public function testStandaloneComposeRequiresOnlyDeploymentDatabasePasswords(): void
     {
         $compose = (string) file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
         self::assertDoesNotMatchRegularExpression('/^\\s*env_file\\s*:/m', $compose);
-        self::assertDoesNotMatchRegularExpression('/\\$\\{[^}]*\\?[^}]*\\}/', $compose);
+        preg_match_all('/\$\{([^}:?]+):\?[^}]+\}/', $compose, $requiredVariables);
+        $names = array_values(array_unique($requiredVariables[1]));
+        sort($names);
+        self::assertSame(['MYSQL_PASSWORD', 'MYSQL_ROOT_PASSWORD'], $names);
         self::assertDoesNotMatchRegularExpression('/^\\s*-\\s*[^#\\r\\n]*\\.env(?::|$)/m', $compose);
         self::assertStringContainsString('services:', $compose);
         self::assertStringContainsString('ghcr.io/ledgetoptechnologies/project-alpha:latest', $compose);

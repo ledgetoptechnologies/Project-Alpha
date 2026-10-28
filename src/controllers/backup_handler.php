@@ -10,6 +10,12 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../utils/backup_archive.php';
+require_once __DIR__ . '/../utils/acl.php';
+
+if (acl_user_role($pdo, (int)($_SESSION['user']['id'] ?? 0)) !== 'admin') {
+    http_response_code(403);
+    exit('Only an installation administrator can manage backups.');
+}
 
 $action = $_POST['action'] ?? '';
 $backupsDir = '/var/www/backups';
@@ -201,6 +207,14 @@ switch ($action) {
         $retentionDays = (int)($_POST['retention_days'] ?? 10);
         $backupHour = (int)($_POST['backup_hour'] ?? 2);
         $backupMode = ($_POST['backup_mode'] ?? 'database') === 'full' ? 'full' : 'database';
+        if ($backupMode === 'full' && backup_archive_key() === '') {
+            $_SESSION['flash_backup'] = [
+                'type' => 'error',
+                'message' => 'Set BACKUP_ENCRYPTION_KEY on web and cron before enabling full backups.',
+            ];
+            header('Location: ' . $settingsUrl);
+            exit;
+        }
         $backupTimezone = (string)($appConfig['timezone'] ?? date_default_timezone_get() ?: 'UTC');
         if (!in_array($backupTimezone, DateTimeZone::listIdentifiers(), true)) {
             $backupTimezone = 'UTC';
@@ -237,6 +251,10 @@ switch ($action) {
         exit;
 
     case 'restore':
+        if (acl_user_role($pdo, (int)($_SESSION['user']['id'] ?? 0)) !== 'admin') {
+            http_response_code(403);
+            exit('Only an installation administrator can restore a backup.');
+        }
         $backupFile = $_POST['backup_file'] ?? '';
         $uploadFile = $_FILES['backup_upload'] ?? [];
         $confirmed = ($_POST['confirm_restore'] ?? '') === 'yes';

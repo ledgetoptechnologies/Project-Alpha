@@ -229,6 +229,7 @@ function pa_settings_registry(): array
                     'description' => 'Configure, create, download, and restore backups.',
                     'tab' => 'backup',
                     'permission' => 'settings.manage',
+                    'roles' => ['admin'],
                     'keywords' => 'backup restore retention download database files',
                     'form_mode' => 'self',
                 ],

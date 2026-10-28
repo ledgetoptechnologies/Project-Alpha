@@ -231,7 +231,7 @@ final class ApiV2ProjectLifecycleMySqlTest extends TestCase
             INSERT INTO api_v2_applications VALUES(3,'223e4567-e89b-42d3-a456-426614174000','test'),(4,'423e4567-e89b-42d3-a456-426614174000','second test');
             INSERT INTO api_v2_history_identity VALUES(1,'123e4567-e89b-42d3-a456-426614174000','323e4567-e89b-42d3-a456-426614174000');
             INSERT INTO api_v2_directory_authorization_state VALUES(3,0),(4,0);
-            INSERT INTO api_keys VALUES(7,'api.capabilities.read',3,NULL);INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
+            INSERT INTO api_keys VALUES(7,'api.capabilities.read projects.lifecycle.complete projects.lifecycle.cancel projects.lifecycle.archive projects.lifecycle.restore',3,NULL);INSERT INTO app_config VALUES(0,'contract_settlement_enabled','0');
             INSERT INTO app_config VALUES(0,'portal_authoritative_hooks_enabled','0');
             INSERT INTO projects(id,public_id,client_id,organization_id,name,description,status,completed_at,source_version,public_project_enabled,estimated_start,estimated_end,updated_at) VALUES(1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',NULL,NULL,'MySQL Project',NULL,'overdue',NULL,'v1',1,'2026-01-01','2026-01-02',NULL);");
         $migration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0100_project_lifecycle_api_foundation.sql');

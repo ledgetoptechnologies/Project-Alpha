@@ -180,7 +180,7 @@ The cron service handles:
 - Stripe reconciliation after missed webhooks or downtime
 - Contract and public-link expiration
 - Scheduled financial audits
-- Rotating database-only or full backups, with optional environment-key encryption
+- Rotating database-only or full backups; full backups require environment-key encryption
 
 See [Cron Service](https://github.com/ledgetoptechnologies/Project-Alpha/blob/main/cron/README.md) for the installed schedule, which uses the configured Project Alpha timezone.
 

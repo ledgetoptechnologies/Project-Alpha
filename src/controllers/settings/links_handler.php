@@ -3,12 +3,17 @@
 
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../utils/csrf.php';
+require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/link_provider_config.php';
 require_once __DIR__ . '/../../utils/resolver_link_policy.php';
 
 if (empty($_SESSION['user'])) {
     http_response_code(401);
     exit('Authentication required');
+}
+if (!user_can($pdo, (int)$_SESSION['user']['id'], 'settings.manage', 0)) {
+    http_response_code(403);
+    exit('You do not have permission to change installation settings.');
 }
 
 if (!csrf_validate()) {
