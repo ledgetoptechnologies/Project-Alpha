@@ -25,6 +25,16 @@ final class SecurityHardeningTest extends TestCase
         $_SESSION = [];
     }
 
+    public function testPasswordResetLinksRequireAConfiguredHttpsOrigin(): void
+    {
+        self::assertSame('https://alpha.example.test', password_reset_canonical_origin(['app_host' => 'https://alpha.example.test/']));
+        foreach (['http://alpha.example.test', 'alpha.example.test', 'https://user:pass@alpha.example.test',
+            'https://alpha.example.test/redirect', 'https://alpha.example.test?next=evil', 'https://bad_host.test'] as $host) {
+            self::assertNull(password_reset_canonical_origin(['app_host' => $host]), $host);
+        }
+        self::assertStringNotContainsString('HTTP_HOST', $this->read('src/controllers/auth/reset_request.php'));
+    }
+
     protected function tearDown(): void
     {
         $_SESSION = [];

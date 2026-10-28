@@ -24,6 +24,11 @@ if (!password_reset_email_is_configured($appConfig)) {
   header('Location: /?page=reset-password&error=' . urlencode('Password reset email is not configured. Contact an administrator or use the Docker recovery command.'));
   exit;
 }
+$resetOrigin = password_reset_canonical_origin($appConfig);
+if ($resetOrigin === null) {
+  header('Location: /?page=reset-password&error=' . urlencode('A canonical HTTPS app host must be configured before reset emails can be sent.'));
+  exit;
+}
 
 // Always respond with generic message, but only generate token if user exists
 $uid = 0;
@@ -87,15 +92,7 @@ if ($uid > 0) {
     // Compose email
     $brand = (string)($appConfig['brand_name'] ?? 'Project Alpha');
 
-    $configuredHost = trim((string)($appConfig['app_host'] ?? ''));
-    if ($configuredHost !== '' && preg_match('#^https?://#i', $configuredHost)) {
-      $baseUrl = rtrim($configuredHost, '/');
-    } else {
-      $scheme = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')) ? 'https' : 'http';
-      $host = $configuredHost !== '' ? $configuredHost : ($_SERVER['HTTP_HOST'] ?? 'localhost');
-      $baseUrl = $scheme . '://' . rtrim((string)$host, '/');
-    }
-    $link = $baseUrl . '/?page=reset-verify&email=' . rawurlencode($email);
+    $link = $resetOrigin . '/?page=reset-verify&email=' . rawurlencode($email);
 
     $subject = $brand . ' password reset';
     $html = '<p>Here is your one-time reset code (valid for 5 minutes):</p>'
