@@ -108,11 +108,11 @@ $projectInvoices = [];
 if (!empty($project['public_project_can_view_documents'])) {
     $files = pa_project_public_visible_files($pdo, $projectId);
 
-    $quoteStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM quotes WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
+    $quoteStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM quotes WHERE project_id = ? AND status NOT IN ("draft", "rejected", "denied") ORDER BY created_at DESC LIMIT 50');
     $quoteStmt->execute([$projectId]);
     $quotes = $quoteStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $contractStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM contracts WHERE project_id = ? ORDER BY created_at DESC LIMIT 50');
+    $contractStmt = $pdo->prepare('SELECT id, doc_number, status, total, created_at FROM contracts WHERE project_id = ? AND status NOT IN ("draft", "denied", "cancelled", "void") ORDER BY created_at DESC LIMIT 50');
     $contractStmt->execute([$projectId]);
     $contracts = $contractStmt->fetchAll(PDO::FETCH_ASSOC);
 }

@@ -224,8 +224,8 @@ function pa_project_public_document_eligible(PDO $pdo, array $project, string $t
         return false;
     }
     $status = strtolower((string)($doc['status'] ?? ''));
-    if ($type === 'quote') return $status !== 'rejected';
-    if ($type === 'contract') return !in_array($status, ['denied', 'cancelled', 'void'], true);
+    if ($type === 'quote') return !in_array($status, ['draft', 'rejected', 'denied'], true);
+    if ($type === 'contract') return !in_array($status, ['draft', 'denied', 'cancelled', 'void'], true);
     if ($type === 'invoice' && !in_array($status, ['sent', 'unpaid', 'partial', 'overdue'], true)) return false;
     if (in_array($status, ['draft', 'void'], true) || empty($doc['finalized_at'])) return false;
     if ($type === 'invoice') {

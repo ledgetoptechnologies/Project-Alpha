@@ -22,16 +22,20 @@ final class PublicProjectDocumentReadOnlyTest extends TestCase
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->exec("CREATE TABLE contracts (id INTEGER PRIMARY KEY, project_id INTEGER, status TEXT);
-            INSERT INTO contracts VALUES (7,1,'pending'),(8,2,'pending'),(9,1,'void');
+            INSERT INTO contracts VALUES (7,1,'pending'),(8,2,'pending'),(9,1,'void'),(12,1,'draft');
             CREATE TABLE invoices (id INTEGER PRIMARY KEY, project_id INTEGER, status TEXT, finalized_at TEXT, collection_mode TEXT);
             INSERT INTO invoices VALUES (10,1,'sent','2026-01-01','direct'),(11,1,'draft',NULL,'direct');
             CREATE TABLE quotes (id INTEGER PRIMARY KEY, project_id INTEGER, status TEXT);
+            INSERT INTO quotes VALUES (13,1,'draft'),(14,1,'pending');
             CREATE TABLE project_invoices (id INTEGER PRIMARY KEY, project_id INTEGER, status TEXT, finalized_at TEXT);");
         $project = ['id' => 1, 'public_project_can_view_documents' => 1, 'public_project_can_view_invoices' => 0];
 
         self::assertTrue(pa_project_public_document_eligible($pdo, $project, 'contract', 7));
         self::assertFalse(pa_project_public_document_eligible($pdo, $project, 'contract', 8));
         self::assertFalse(pa_project_public_document_eligible($pdo, $project, 'contract', 9));
+        self::assertFalse(pa_project_public_document_eligible($pdo, $project, 'contract', 12));
+        self::assertFalse(pa_project_public_document_eligible($pdo, $project, 'quote', 13));
+        self::assertTrue(pa_project_public_document_eligible($pdo, $project, 'quote', 14));
         self::assertFalse(pa_project_public_document_eligible($pdo, $project, 'invoice', 10));
         $project['public_project_can_view_invoices'] = 1;
         self::assertTrue(pa_project_public_document_eligible($pdo, $project, 'invoice', 10));
