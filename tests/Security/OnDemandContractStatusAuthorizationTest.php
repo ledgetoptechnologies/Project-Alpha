@@ -40,14 +40,27 @@ final class OnDemandContractStatusAuthorizationTest extends TestCase
         pa_on_demand_contract_change_status($pdo, 10, 1, 'active', 'paused');
     }
 
+    public function testUnsignedPausedContractCannotBeResumed(): void
+    {
+        $pdo = $this->database();
+        $pdo->exec("UPDATE contracts SET status='paused',signed_pdf_path=NULL WHERE id=10");
+        try {
+            pa_on_demand_contract_change_status($pdo, 10, 1, 'paused', 'active');
+            self::fail('Unsigned contract was resumed.');
+        } catch (DomainException $error) {
+            self::assertSame('Upload signed contract first.', $error->getMessage());
+        }
+        self::assertSame('paused', $this->contractStatus($pdo));
+    }
+
     private function database(): PDO
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->exec("CREATE TABLE users (id INTEGER PRIMARY KEY, role TEXT);
             INSERT INTO users VALUES (1, 'member'), (2, 'member');
-            CREATE TABLE contracts (id INTEGER PRIMARY KEY, created_by INTEGER, contract_type TEXT, status TEXT);
-            INSERT INTO contracts VALUES (10, 1, 'on_demand', 'active');");
+            CREATE TABLE contracts (id INTEGER PRIMARY KEY, created_by INTEGER, contract_type TEXT, status TEXT, signed_pdf_path TEXT);
+            INSERT INTO contracts VALUES (10, 1, 'on_demand', 'active', 'signed.pdf');");
         return $pdo;
     }
 
