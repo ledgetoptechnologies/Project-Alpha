@@ -223,16 +223,14 @@ if ($hasClientAutocomplete || $hasProjectAutocomplete):
                         return;
                     }
                     
-                    clientSug.innerHTML = list.map(x => 
-                        '<div data-id="' + x.id + '" data-name="' + x.name + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6">' + 
-                        x.name + 
-                        '</div>'
-                    ).join('');
-                    
-                    Array.from(clientSug.children).forEach(el => {
+                    clientSug.replaceChildren();
+                    list.forEach(x => {
+                        const el = document.createElement('div');
+                        el.style.cssText = 'padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6';
+                        el.textContent = String(x.name ?? '');
                         el.addEventListener('click', function() {
-                            clientInput.value = this.dataset.name;
-                            clientHid.value = this.dataset.id;
+                            clientInput.value = String(x.name ?? '');
+                            clientHid.value = String(x.id ?? '');
                             clientSug.style.display = 'none';
                         });
                         
@@ -243,6 +241,7 @@ if ($hasClientAutocomplete || $hasProjectAutocomplete):
                         el.addEventListener('mouseleave', function() {
                             this.style.background = '#fff';
                         });
+                        clientSug.appendChild(el);
                     });
                     
                     clientSug.style.display = 'block';
@@ -278,17 +277,15 @@ if ($hasClientAutocomplete || $hasProjectAutocomplete):
                         return;
                     }
                     
-                    projectSug.innerHTML = list.map(x => 
-                        '<div data-name="' + x.name + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6">' + 
-                        x.name + 
-                        (x.client_name ? ' · ' + x.client_name : '') +
-                        (x.organization_name ? ' · ' + x.organization_name : '') +
-                        '</div>'
-                    ).join('');
-                    
-                    Array.from(projectSug.children).forEach(el => {
+                    projectSug.replaceChildren();
+                    list.forEach(x => {
+                        const el = document.createElement('div');
+                        el.style.cssText = 'padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6';
+                        el.textContent = String(x.name ?? '') +
+                            (x.client_name ? ' · ' + x.client_name : '') +
+                            (x.organization_name ? ' · ' + x.organization_name : '');
                         el.addEventListener('click', function() {
-                            projectInput.value = this.dataset.name;
+                            projectInput.value = String(x.name ?? '');
                             projectSug.style.display = 'none';
                         });
                         
@@ -299,6 +296,7 @@ if ($hasClientAutocomplete || $hasProjectAutocomplete):
                         el.addEventListener('mouseleave', function() {
                             this.style.background = '#fff';
                         });
+                        projectSug.appendChild(el);
                     });
                     
                     projectSug.style.display = 'block';
