@@ -2,7 +2,8 @@ name: Docker
 
 on:
   push:
-    branches: [main]
+    branches:
+    - main
 
 concurrency:
   group: docker-${{ github.ref_name }}
@@ -13,7 +14,7 @@ env:
 
 jobs:
   build-and-push:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
