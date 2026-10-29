@@ -2,14 +2,15 @@ name: Docker
 
 on:
   push:
-    branches: ["dev", "main"]
-    tags: ['v*.*.*']
+    branches:
+    - main
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   build-and-push:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
