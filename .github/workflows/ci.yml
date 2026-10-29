@@ -1,16 +1,16 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main, staging, dev]
   push:
-    branches: [dev]
+    branches:
+    - main
 
 permissions:
   contents: read
 
 jobs:
   smoke-test:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
