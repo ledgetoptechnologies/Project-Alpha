@@ -1,11 +1,13 @@
 name: Deploy to Staging
 
+# Hosted staging retired: branch iteration now runs locally.
+# Keep every job disabled so merging this historical file cannot reactivate SSH deployment.
 on:
-  push:
-    branches: [staging]
+  workflow_dispatch: null
 
 jobs:
   deploy:
+    if: ${{ github.ref == 'refs/heads/main' && false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

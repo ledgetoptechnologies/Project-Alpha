@@ -2,15 +2,11 @@ name: Docker Cron
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+    - main
     paths:
-      - 'cron/**'
-      - '.github/workflows/docker-cron.yml'
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - 'cron/**'
-      - '.github/workflows/docker-cron.yml'
+    - cron/**
+    - .github/workflows/docker-cron.yml
 
 env:
   REGISTRY: docker.io
@@ -18,6 +14,7 @@ env:
 
 jobs:
   build-cron:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
