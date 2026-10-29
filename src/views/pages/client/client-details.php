@@ -164,6 +164,7 @@ $addressLines = array_values(array_filter([
     </aside>
 
     <main class="client-view__main">
+      <?php include __DIR__ . '/../../components/client_autopay_management.php'; ?>
       <div class="client-card" id="assigned-services">
         <?php
         $portalServiceAssignmentSubjectType = empty($client['organization_id']) ? 'standalone_client' : 'client';

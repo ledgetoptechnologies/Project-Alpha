@@ -29,8 +29,14 @@ try {
             $stripe=StripeService::fromAppConfig($appConfig);
             $result=pa_autopay_enroll($pdo,$context,$_SESSION,$_POST,$appConfig,fn($method,$endpoint,$data,$key)=>$stripe->autoPayRequest($method,$endpoint,$data,$key));
             header('Location: '.$result['url'],true,303);exit;
-        } elseif($action==='revoke'){
-            pa_autopay_revoke($pdo,$client,$_SESSION,(int)($_POST['authorization_id']??0));$message='Authorization revoked. Payments already processing may still complete.';
+        } elseif(in_array($action,['revoke','revoke_all'],true)){
+            if(($_POST['confirm_disable']??'')!=='1')throw new DomainException('Confirm that you want to turn off automatic payments.');
+            $authorizationId=$action==='revoke_all'?0:(int)($_POST['authorization_id']??0);
+            if($action==='revoke' && $authorizationId<=0)throw new DomainException('Choose the authorization you want to turn off.');
+            pa_autopay_revoke($pdo,$client,$_SESSION,$authorizationId);
+            $message=$action==='revoke_all'
+                ?'AutoPay is off for all agreements and future invoices on this client account. Payments already submitted may still complete. Invoices remain due and can be paid manually.'
+                :'AutoPay is off for this billing scope. Other authorizations may still cover your invoices. Payments already submitted may still complete.';
         } else throw new DomainException('Choose a valid action.');
     }
 }catch(DomainException $e){$error=$e->getMessage();}catch(Throwable $e){$error='AutoPay could not be updated. Please try again later.';}
@@ -61,6 +67,21 @@ $fields.='<input type="hidden" name="manage" value="'.$esc($manage).'">';
 <form method="post"><?= $fields ?><button name="action" value="send_code">Send verification code</button></form>
 <form method="post"><?= $fields ?><label>Verification code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" required></label><button name="action" value="verify">Verify email</button></form>
 <?php else: ?>
+<?php
+$s=$pdo->prepare('SELECT id,scope,contract_id,status,method_type FROM autopay_enrollments WHERE client_id=? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status IN ("active","pending") ORDER BY id DESC');
+$s->execute([$client['id'],getenv('AUTOPAY_INSTALLATION_ID'),getenv('AUTOPAY_STRIPE_ACCOUNT_ID')]);$authorizations=$s->fetchAll(PDO::FETCH_ASSOC);
+?>
+<h2>Manage automatic payments</h2>
+<?php if($authorizations): ?>
+<p>Turn off all AutoPay to stop future automatic collection for every agreement and invoice on this client account. Payments already submitted may still complete. Turning off AutoPay does not cancel your agreement or any invoice balance.</p>
+<form method="post" class="authorization"><?= $fields ?>
+<label><input type="checkbox" name="confirm_disable" value="1" required> I want to turn off all automatic payments for this client account.</label>
+<p><button name="action" value="revoke_all">Turn off all AutoPay</button></p>
+</form>
+<?php else: ?><p class="notice notice-status">AutoPay is off. There are no active or pending authorizations for this client account. Payments already submitted may still complete.</p><?php endif; ?>
+<?php foreach($authorizations as $auth): ?>
+<form method="post" class="authorization"><?= $fields ?><input type="hidden" name="authorization_id" value="<?= (int)$auth['id'] ?>"><p><strong><?= $esc($auth['scope']==='agreement'?'Agreement #'.$auth['contract_id']:'All future invoices') ?></strong><br><?= $esc(ucfirst($auth['status'])) ?> · <?= $esc($auth['method_type']==='us_bank_account'?'US bank account (ACH)':'Card') ?></p><label><input type="checkbox" name="confirm_disable" value="1" required> Turn off this billing scope only. Other authorizations may still apply.</label><p><button name="action" value="revoke">Turn off this billing scope</button></p></form>
+<?php endforeach ?>
 <?php if(pa_autopay_enabled($appConfig)): ?>
 <h2>Choose your automatic payments</h2>
 <form method="post"><?= $fields ?>
@@ -73,9 +94,6 @@ $fields.='<input type="hidden" name="manage" value="'.$esc($manage).'">';
 <p class="help">Existing invoices are not charged by this setup. Bank verification must complete before AutoPay becomes active. To replace a saved method, complete a new setup; the previous authorization stays active until the replacement succeeds.</p>
 <button name="action" value="setup">Continue to Stripe</button></form>
 <?php else: ?><p>New automatic payments are paused. You can still revoke an existing authorization.</p><?php endif; ?>
-<?php $s=$pdo->prepare('SELECT id,scope,contract_id,status,method_type FROM autopay_enrollments WHERE client_id=? AND installation_id=? AND processor_account_id=? AND status IN ("active","pending") ORDER BY id DESC');$s->execute([$client['id'],getenv('AUTOPAY_INSTALLATION_ID'),getenv('AUTOPAY_STRIPE_ACCOUNT_ID')]);foreach($s->fetchAll(PDO::FETCH_ASSOC) as $auth): ?>
-<form method="post" class="authorization"><?= $fields ?><input type="hidden" name="authorization_id" value="<?= (int)$auth['id'] ?>"><p><strong><?= $esc($auth['scope']==='agreement'?'Agreement #'.$auth['contract_id']:'All future invoices') ?></strong><br><?= $esc(ucfirst($auth['status'])) ?> · <?= $esc($auth['method_type']==='us_bank_account'?'US bank account (ACH)':'Card') ?></p><button name="action" value="revoke">Revoke authorization</button></form>
-<?php endforeach ?>
 <?php endif;endif ?>
 </main>
 </body>
