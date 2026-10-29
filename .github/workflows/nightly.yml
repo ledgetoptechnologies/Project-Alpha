@@ -2,8 +2,8 @@ name: Nightly build
 
 on:
   schedule:
-    - cron: "0 3 * * *" # 3:00 AM UTC nightly
-  workflow_dispatch:
+  - cron: 0 3 * * *
+  workflow_dispatch: null
 
 permissions:
   contents: read
@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   prepare:
+    if: ${{ github.ref == 'refs/heads/main' }}
     name: Prepare
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +44,7 @@ jobs:
           composer dump-autoload --optimize
 
   static-analysis:
+    if: ${{ github.ref == 'refs/heads/main' }}
     name: Static analysis
     runs-on: ubuntu-latest
     needs: prepare
@@ -71,6 +73,7 @@ jobs:
         run: vendor/bin/phpstan analyse src --level=max || true
 
   tests:
+    if: ${{ github.ref == 'refs/heads/main' }}
     name: Unit tests
     runs-on: ubuntu-latest
     needs: prepare
@@ -96,6 +99,7 @@ jobs:
         run: vendor/bin/phpunit --colors=always
 
   scorecard:
+    if: ${{ github.ref == 'refs/heads/main' }}
     name: OpenSSF Scorecard
     runs-on: ubuntu-latest
     needs: [static-analysis, tests]
@@ -126,7 +130,7 @@ jobs:
   docker:
     name: Docker build (nightly)
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'Bkoltz' }} # avoid forks pushing
+    if: ${{ github.ref == 'refs/heads/main' && (github.repository_owner == 'Bkoltz') }}
     needs: [static-analysis, tests]
     steps:
       - name: Harden runner egress
@@ -162,7 +166,7 @@ jobs:
     name: Notify on failure
     runs-on: ubuntu-latest
     needs: [static-analysis, tests, scorecard, docker]
-    if: ${{ failure() }}
+    if: ${{ github.ref == 'refs/heads/main' && (failure()) }}
     steps:
       - name: Send failure notice
         run: |

@@ -2,12 +2,14 @@ name: Gitleaks Secret Scan
 
 on:
   push:
-  pull_request:
+    branches:
+    - main
   schedule:
-    - cron: "0 4 * * *"   # daily at 4 AM UTC
+  - cron: 0 4 * * *
 
 jobs:
   gitleaks:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
