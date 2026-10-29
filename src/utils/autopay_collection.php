@@ -13,6 +13,8 @@ function pa_autopay_table(string $type): string
 function pa_autopay_assert_payment_available(PDO $pdo, int $id, string $type='invoice'): void
 {
     pa_autopay_table($type);
+    require_once __DIR__ . '/check_reports.php';
+    pa_check_report_assert_available($pdo, $type, $id);
     // Upgrades without migration 112 remain usable while this disabled feature is absent.
     require_once __DIR__ . '/invoice_lifecycle.php';
     if (!invoice_table_has_column($pdo,'autopay_collections','state')) return;
@@ -26,8 +28,10 @@ function pa_autopay_assert_payment_available(PDO $pdo, int $id, string $type='in
 /** Reserve before Checkout I/O so reopening/finalizing cannot race session creation. */
 function pa_autopay_reserve_checkout(PDO $pdo,array $document,array $config,string $type='invoice'): void
 {
-    if(!pa_autopay_enabled($config))return;
+    require_once __DIR__ . '/check_reports.php';
+    if(!pa_autopay_enabled($config) && !pa_check_report_available($pdo))return;
     if(!$pdo->inTransaction())throw new LogicException('Checkout reservation requires its document lock.');
+    pa_autopay_assert_payment_available($pdo,(int)$document['id'],$type);
     if(empty($document['finalized_at']) || !in_array($document['status'],['unpaid','sent','partial','overdue'],true))throw new DomainException('Finalize the invoice before payment.');
     $existing=(string)($document['stripe_session_id']??'');
     if(str_starts_with($existing,'pa_checkout_pending_'))throw new DomainException('A payment session is being prepared or needs review. Please retry after it is resolved.');
@@ -39,7 +43,7 @@ function pa_autopay_reserve_checkout(PDO $pdo,array $document,array $config,stri
 }
 
 /** Serialize statement creation, then lock parent before child like payment allocation. */
-function pa_autopay_lock_parent_for_invoice_mutation(PDO $pdo,int $invoiceId): void
+function pa_autopay_lock_parent_for_invoice_mutation(PDO $pdo,int $invoiceId,bool $checkAvailability=true): void
 {
     if(!$pdo->inTransaction())throw new LogicException('Invoice mutation requires a transaction.');
     $suffix=$pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
@@ -52,7 +56,7 @@ function pa_autopay_lock_parent_for_invoice_mutation(PDO $pdo,int $invoiceId): v
     $parent=(int)($s->fetchColumn()?:0);
     if($parent){
         $s=$pdo->prepare('SELECT id FROM project_invoices WHERE id=?'.$suffix);$s->execute([$parent]);
-        pa_autopay_assert_payment_available($pdo,$parent,'project_invoice');
+        if ($checkAvailability) pa_autopay_assert_payment_available($pdo,$parent,'project_invoice');
     }
     $s=$pdo->prepare('SELECT project_id FROM invoices WHERE id=?'.$suffix);$s->execute([$invoiceId]);
     if((int)($s->fetchColumn()?:0)!==$project)throw new DomainException('The invoice project changed. Reload before adjusting this invoice.');
@@ -97,6 +101,10 @@ function pa_autopay_enqueue_document(PDO $pdo,string $type,int $id,array $config
     if (!in_array($source,['manual_create','manual_finalize','on_demand_send','contract_complete','recurring_auto','project_finalize'],true)) return null;
     $table=pa_autopay_table($type);
     $s=$pdo->prepare("SELECT * FROM {$table} WHERE id=? FOR UPDATE");$s->execute([$id]);$invoice=$s->fetch(PDO::FETCH_ASSOC);
+    require_once __DIR__ . '/check_reports.php';
+    // Rejection releases manual payment only; it must not create a surprise debit.
+    if(pa_check_report_lookup($pdo,$type,$id))return null;
+    pa_check_report_assert_available($pdo,$type,$id);
     if($invoice && $type==='project_invoice')$invoice['client_id']=$invoice['primary_client_id'];
     if (!$invoice || empty($invoice['client_id']) || empty($invoice['finalized_at']) || !in_array($invoice['status'],['unpaid','sent','overdue','partial'],true)
         || ($invoice['collection_mode']??'direct')!=='direct' || !empty($invoice['stripe_session_id'])
@@ -140,7 +148,10 @@ function pa_autopay_run_one(PDO $pdo,array $config,?callable $transport=null): a
         $s=$pdo->prepare('SELECT * FROM autopay_collections WHERE id=? FOR UPDATE');$s->execute([$row['id']]);$row=$s->fetch(PDO::FETCH_ASSOC);
         if(!in_array($row['state'],['pending','processing'],true) || $row['financial_hold'] || (!empty($row['lease_until']) && strtotime($row['lease_until'])>=time()) || (!empty($row['next_attempt_at']) && strtotime($row['next_attempt_at'])>time())){$pdo->commit();return ['status'=>'busy'];}
         $s=$pdo->prepare('SELECT * FROM autopay_enrollments WHERE id=? FOR UPDATE');$s->execute([$row['authorization_id']]);$auth=$s->fetch(PDO::FETCH_ASSOC);
-        $valid=$invoice && $auth && $auth['status']==='active' && empty($auth['revoked_at']) && !empty($auth['verified_at']) && !$auth['livemode']
+        require_once __DIR__ . '/check_reports.php';
+        $checkBlocked = pa_check_report_lookup($pdo,$row['document_type'],(int)$row['document_id']) !== null;
+        try { pa_check_report_assert_available($pdo,$row['document_type'],(int)$row['document_id']); } catch (DomainException $e) { $checkBlocked = true; }
+        $valid=!$checkBlocked && $invoice && $auth && $auth['status']==='active' && empty($auth['revoked_at']) && !empty($auth['verified_at']) && !$auth['livemode']
             && (int)$auth['client_id']===(int)$invoice['client_id'] && (int)$row['client_id']===(int)$invoice['client_id']
             && $auth['installation_id']===(string)getenv('AUTOPAY_INSTALLATION_ID') && $auth['processor_account_id']===(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID')
             && $row['installation_id']===$auth['installation_id'] && $row['processor_account_id']===$auth['processor_account_id']

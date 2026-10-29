@@ -181,7 +181,7 @@ function project_invoice_notification_process(
             }
         }
         if ($reason === null && $autoPayNotice !== '' && in_array((string)$row['notification_type'], ['due_7', 'overdue_weekly'], true)) {
-            $reason = 'Automatic payment is reserved; do not request another payment.';
+            $reason = 'A payment is reserved or awaiting review; do not request another payment.';
         }
         if ($reason !== null) {
             $pdo->prepare(
@@ -222,7 +222,7 @@ function project_invoice_notification_process(
                 . '<p>Outstanding balance: <strong>$' . number_format((float)$row['balance_due'], 2) . '</strong></p>'
                 . '<p>Payment terms: Net ' . $termDays . ' (due ' . date('F j, Y', strtotime($due)) . ')</p>'
                 . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View project invoice</a></p>' : '');
-            if ($autoPayNotice !== '') $body .= '<p><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
+            if ($autoPayNotice !== '') $body .= '<p><strong>Payment status:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
             $contentLinkClientIds = !empty($currentRecipient['id']) ? [(int)$currentRecipient['id']] : [];
             $body .= invoice_content_links_html(invoice_content_links_for_project_invoice($pdo, (int)$row['project_invoice_id'], $appConfig, $contentLinkClientIds));
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array

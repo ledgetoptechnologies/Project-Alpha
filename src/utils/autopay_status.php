@@ -2,10 +2,16 @@
 declare(strict_types=1);
 require_once __DIR__ . '/invoice_lifecycle.php';
 
-/** Read reservations even when collection has been disabled during an incident. */
+/** Read payment reservations even when collection has been disabled. */
 function pa_autopay_pending_notice(PDO $pdo, int $id, string $type = 'invoice'): string
 {
     if (!in_array($type, ['invoice', 'project_invoice'], true)) throw new InvalidArgumentException('Invalid document type.');
+    require_once __DIR__ . '/check_reports.php';
+    try {
+        pa_check_report_assert_available($pdo, $type, $id);
+    } catch (DomainException $heldCheck) {
+        return 'A mailed check is awaiting receipt or staff review. Please contact us before making another payment. This invoice is not paid until receipt is confirmed.';
+    }
     if (!invoice_table_has_column($pdo, 'autopay_collections', 'state')) return '';
     $query = $pdo->prepare('SELECT state,financial_hold FROM autopay_collections WHERE document_type=? AND document_id=?');
     $query->execute([$type, $id]);

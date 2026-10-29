@@ -552,6 +552,8 @@ function project_invoice_create_for_period_result(PDO $pdo, int $projectId, stri
         $total = 0.0;
         $includedCount = 0;
         foreach ($children as $child) {
+            require_once __DIR__ . '/check_reports.php';
+            pa_check_report_assert_available($pdo, 'invoice', (int)$child['id']);
             $due = max(0.0, (float)$child['total'] - (float)$child['paid']);
             if ($due > 0.005) {
                 $total += $due;

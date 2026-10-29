@@ -253,7 +253,7 @@ function invoice_notification_process(
             }
         }
         if ($reason === null && $autoPayNotice !== '' && in_array($type, ['due_7', 'overdue_weekly'], true)) {
-            $reason = 'Automatic payment is reserved; do not request another payment.';
+            $reason = 'A payment is reserved or awaiting review; do not request another payment.';
         }
         if ($reason !== null) {
             invoice_notification_suppress($pdo, $id, $reason);
@@ -293,7 +293,7 @@ function invoice_notification_process(
                 . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View, print, or save the invoice as PDF</a></p>' : '');
 
             $body .= invoice_content_links_html(invoice_content_links_for_invoice($pdo, (int)$row['invoice_id'], $appConfig));
-            if ($autoPayNotice !== '') $body .= '<p><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
+            if ($autoPayNotice !== '') $body .= '<p><strong>Payment status:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
             $attachment = document_pdf_attachment($pdo, $appConfig, 'invoice', (int)$row['invoice_id'], (string)$doc);
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array
                 => EmailService::sendEmail($to, $subject, $body, $options);

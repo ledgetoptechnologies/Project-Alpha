@@ -566,6 +566,8 @@ if ($page === 'logout') {
 // NOTE: serve-upload enforces granular access itself (public images/logos only; PDFs & subdirs require auth)
 $publicPages = ['login', 'session-status', 'serve-upload', 'reset-password', 'reset-verify', 'reset-new', 'reset-request', 'reset-update', '2fa-verify', '2fa-verify-action', 'passkey-options', 'passkey-complete', 'public-autopay', 'public-doc', 'public-doc-pdf', 'public-redirect', 'public-project', 'public-project-upload', 'public-project-file', 'payment-receipt', 'client-onboarding', 'client-onboarding-submit', 'public-quote-action', 'public-contract-sign', 'stripe-checkout', 'stripe-success', 'stripe-webhook', 'stripe-webhook-legacy', 'legal/terms-of-service', 'legal/privacy-policy', 'legal/acceptable-use-policy', 'legal/dmca-policy', 'legal/data-retention-policy', 'account-deleted'];
 
+$publicPages[] = 'public-check-payment';
+
 // Toggle to disable auth checks in development/testing
 $authDisabled = filter_var(getenv('AUTH_DISABLED') ?: getenv('APP_AUTH_DISABLED') ?: '', FILTER_VALIDATE_BOOLEAN);
 $appEnv = strtolower(trim((string)(getenv('APP_ENV') ?: 'production')));
@@ -1170,6 +1172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'invoice/invoices-mark-paid',
         'invoice/invoice-finalize',
         'invoice/autopay-cancel',
+        'invoice/pending-check-action',
         'invoice/invoice-reopen',
         'invoice/invoice-void',
         'invoice/invoice-reenable',
@@ -1580,6 +1583,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_once __DIR__ . '/../src/controllers/invoice/autopay_cancel.php';
         exit;
     }
+    if ($page === 'invoice/pending-check-action') {
+        require_once __DIR__ . '/../src/controllers/invoice/pending_check_action.php';
+        exit;
+    }
     if ($page === 'invoice/invoice-reopen') {
         require_once __DIR__ . '/../src/controllers/invoice/invoice_reopen.php';
         exit;
@@ -1893,6 +1900,11 @@ if ($page === 'logout-confirm') {
 }
 if ($page === 'invoice-autopay-preview') {
     require __DIR__ . '/../src/controllers/invoice/autopay_preview.php';
+    exit;
+}
+
+if ($page === 'public-check-payment') {
+    require __DIR__ . '/../src/controllers/public_view/public_check_payment.php';
     exit;
 }
 

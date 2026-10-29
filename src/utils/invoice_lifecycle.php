@@ -214,6 +214,7 @@ function invoice_expire_active_checkout(PDO $pdo, string $table, int $id, array 
 
 function invoice_effective_paid_total(PDO $pdo, int $invoiceId): float
 {
+    if ($pdo->inTransaction()) return invoice_effective_paid_cents($pdo, $invoiceId) / 100;
     invoice_ensure_payments_schema($pdo);
     $stmt = $pdo->prepare('
         SELECT COALESCE(SUM(GREATEST(amount - refunded_amount - disputed_amount, 0)), 0)
@@ -222,6 +223,25 @@ function invoice_effective_paid_total(PDO $pdo, int $invoiceId): float
     ');
     $stmt->execute([$invoiceId]);
     return (float)$stmt->fetchColumn();
+}
+
+/** Read after the invoice lock: a previous RR snapshot may predate a waiting payment. */
+function invoice_effective_paid_cents(PDO $pdo, int $invoiceId): int
+{
+    invoice_ensure_payments_schema($pdo);
+    require_once __DIR__ . '/stripe_invoice_payment_amounts.php';
+    $suffix = $pdo->inTransaction() && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $stmt = $pdo->prepare('SELECT GREATEST(amount-refunded_amount-disputed_amount,0) AS effective_amount FROM payments WHERE invoice_id=? AND status="succeeded" ORDER BY id' . $suffix);
+    $stmt->execute([$invoiceId]);
+    $paid = 0;
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $amount) {
+        // Preserve SUM's handling of legacy null reversal fields.
+        if ($amount === null) continue;
+        $cents = stripe_invoice_payment_metadata_cents(['amount'=>(string)$amount], ['amount']) ?? 0;
+        if ($cents > PHP_INT_MAX - $paid) throw new OverflowException('Payment total exceeds the supported amount.');
+        $paid += $cents;
+    }
+    return $paid;
 }
 
 function invoice_status_for_balance(float $total, float $paid): array
@@ -239,7 +259,8 @@ function invoice_status_for_balance(float $total, float $paid): array
 
 function invoice_refresh_payment_totals(PDO $pdo, int $invoiceId, bool $revokePaidPublicLinks = true): array
 {
-    $totalStmt = $pdo->prepare('SELECT total,status FROM invoices WHERE id = ?');
+    $suffix = $pdo->inTransaction() && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    $totalStmt = $pdo->prepare('SELECT total,status FROM invoices WHERE id = ?' . $suffix);
     $totalStmt->execute([$invoiceId]);
     $invoice = $totalStmt->fetch(PDO::FETCH_ASSOC) ?: [];
     $total = (float)($invoice['total'] ?? 0);
@@ -346,6 +367,8 @@ function invoice_record_locked_payment(
     }
 
     try {
+        require_once __DIR__ . '/autopay_collection.php';
+        pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
         $where = 'id = ?';
         $params = [$invoiceId];
         if ($activeOrgId !== null) {

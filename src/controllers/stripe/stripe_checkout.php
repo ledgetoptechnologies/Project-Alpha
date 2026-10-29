@@ -92,6 +92,7 @@ try {
     // Serialize the collection decision with original issuance and the AutoPay worker.
     require_once __DIR__ . '/../../utils/autopay_collection.php';
     $pdo->beginTransaction();
+    if ($documentType === 'invoice') pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
     // Get invoice details
     $invSt = $documentType === 'project_invoice'
         ? $pdo->prepare('SELECT pi.*,p.name AS project_name,p.name AS client_name,NULL AS client_email FROM project_invoices pi JOIN projects p ON p.id=pi.project_id WHERE pi.id=? FOR UPDATE')
