@@ -1,12 +1,12 @@
 name: Gitleaks Secret Scanning
 on:
   push:
-    branches: [main, dev]
-  pull_request:
-    branches: [main]
+    branches:
+    - main
 
 jobs:
   gitleaks:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
