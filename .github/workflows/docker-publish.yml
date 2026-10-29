@@ -2,9 +2,9 @@ name: Docker
 
 on:
   push:
-    branches: ["dev", "main"]
-    tags: ['v*.*.*']
-  workflow_dispatch:
+    branches:
+    - main
+  workflow_dispatch: null
 
 concurrency:
   group: docker-${{ github.ref_name }}
@@ -15,6 +15,7 @@ env:
 
 jobs:
   build-and-push:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
