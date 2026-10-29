@@ -5,6 +5,8 @@ require_once __DIR__ . '/../utils/crypto.php';
 
 final class EmailMessage
 {
+    public bool $presentationApplied = false;
+
     public function __construct(
         public string $to,
         public string $subject,

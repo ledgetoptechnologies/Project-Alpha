@@ -125,7 +125,6 @@ class EmailService {
         $attachments = is_array($options['attachments'] ?? null) ? $options['attachments'] : [];
         $isHtml     = (bool)($options['is_html'] ?? true);
         $messageId = trim((string)($options['message_id'] ?? ''));
-        $body       = self::applyAutomatedNotice($body, $isHtml, $appConfig);
 
         if (!$pdo instanceof PDO) {
             return [false, 'Outgoing email is unavailable because the database is not connected.'];

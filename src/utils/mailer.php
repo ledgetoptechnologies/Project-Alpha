@@ -54,6 +54,8 @@ function mailer_send(
     try {
         $mail = new PHPMailer(true);
 
+        $mail->CharSet = 'UTF-8';
+
         // Transport
         if (!empty($cfg['host'])) {
             $mail->isSMTP();
