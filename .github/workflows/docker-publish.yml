@@ -7,13 +7,10 @@ name: Docker
 
 on:
   schedule:
-    - cron: '33 23 * * *'
+  - cron: 33 23 * * *
   push:
-    branches: [ "main" ]
-    # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main" ]
+    branches:
+    - main
 
 env:
   REGISTRY: docker.io
@@ -22,6 +19,7 @@ env:
 
 jobs:
   build:
+    if: ${{ github.ref == 'refs/heads/main' }}
 
     runs-on: ubuntu-latest
     permissions:
