@@ -227,13 +227,15 @@ function project_invoice_notification_process(
             $body .= invoice_content_links_html(invoice_content_links_for_project_invoice($pdo, (int)$row['project_invoice_id'], $appConfig, $contentLinkClientIds));
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array
                 => EmailService::sendEmail($to, $subject, $body, $options);
-            [$ok, $error] = $send((string)$currentRecipient['email'], $subject, $body, [
+            require_once __DIR__ . '/autopay_invoice_email.php';
+            [$ok, $error] = pa_autopay_deliver_invoice_email($pdo, $appConfig, (string)$currentRecipient['email'], $subject, $body, [
                 'attachments' => [$attachment],
                 'document_type' => 'project_invoice',
+                'invoice_notice' => true,
                 'document_id' => (int)$row['project_invoice_id'],
                 'document_revision' => (int)($row['revision_number'] ?? 1),
                 'message_key' => 'project-invoice-notification:' . $id,
-            ]);
+            ], $send);
             if (!$ok) {
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }

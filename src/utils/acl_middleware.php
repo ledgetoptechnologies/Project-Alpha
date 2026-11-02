@@ -184,6 +184,7 @@ function page_permission_map(): array
         'invoice/invoices-mark-paid' => 'invoices.mark_paid',
         'invoice/invoice-finalize'  => 'invoices.send',
         'invoice/autopay-cancel'    => 'invoices.send',
+        'invoice/autopay-review-resolve' => 'invoices.send',
         'invoice/pending-check-action' => 'invoices.mark_paid',
         'invoice/invoice-reopen'    => 'invoices.edit',
         'invoice/invoice-void'      => 'invoices.void',

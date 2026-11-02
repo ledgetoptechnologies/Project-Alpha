@@ -16,7 +16,7 @@ final class AutoPayCollectionDatabaseTest extends TestCase
     private array $users=[];
     private array $environment=[];
     private mixed $oldConfig;
-    private array $config=['_stripe_secret_key'=>'sk_test_SYNTHETIC','workforce_currency'=>'USD'];
+    private array $config=['_stripe_secret_key'=>'sk_test_SYNTHETIC','workforce_currency'=>'USD','app_host'=>'https://example.invalid','timezone'=>'UTC'];
     protected function setUp():void
     {
         try{$this->pdo=migration_connection();$this->pdo->query('SELECT id FROM autopay_collections LIMIT 0');$this->pdo->query('SELECT effective_from FROM autopay_enrollments LIMIT 0');}
@@ -32,6 +32,7 @@ final class AutoPayCollectionDatabaseTest extends TestCase
     {
         if(isset($this->pdo)){
             if($this->pdo->inTransaction())$this->pdo->rollBack();
+            if($this->client && pa_autopay_review_available($this->pdo))$this->pdo->prepare('DELETE r FROM autopay_invoice_reviews r JOIN autopay_collections c ON c.id=r.collection_id WHERE c.client_id=?')->execute([$this->client]);
             foreach($this->projectInvoices as $id){$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="project_invoice" AND document_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM project_invoices WHERE id=?')->execute([$id]);}
             foreach($this->invoices as $id){$this->pdo->prepare('DELETE FROM stripe_refunds WHERE payment_id IN (SELECT id FROM payments WHERE invoice_id=?)')->execute([$id]);$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="invoice" AND document_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM payments WHERE invoice_id=?')->execute([$id]);$this->pdo->prepare('DELETE FROM invoices WHERE id=?')->execute([$id]);}
             foreach($this->projects as $id)$this->pdo->prepare('DELETE FROM projects WHERE id=?')->execute([$id]);
@@ -49,7 +50,18 @@ final class AutoPayCollectionDatabaseTest extends TestCase
     }
     private function enqueue(int $id,string $source='manual_finalize'):?int
     {
-        $this->pdo->beginTransaction();try{$result=pa_autopay_enqueue_invoice($this->pdo,$id,$this->config,null,$source);$this->pdo->commit();return $result;}catch(Throwable $e){$this->pdo->rollBack();throw $e;}
+        $this->pdo->beginTransaction();try{$result=pa_autopay_enqueue_invoice($this->pdo,$id,$this->config,null,$source);$this->pdo->commit();}catch(Throwable $e){$this->pdo->rollBack();throw $e;}
+        // These accounting/reconciliation tests start after a successfully sent
+        // invoice notice has aged through its review window. The dedicated
+        // AutoPayInvoiceReviewDatabaseTest exercises the delivery boundary itself.
+        if($result!==null)$this->matureInvoiceReview($id);
+        return $result;
+    }
+    private function matureInvoiceReview(int $invoice,string $type='invoice'):void
+    {
+        require_once dirname(__DIR__,2).'/src/utils/autopay_review.php';
+        $notice=pa_autopay_prepare_invoice_notice($this->pdo,$type,$invoice,$this->config,'never@example.invalid');
+        if($notice!==null){$clock=$this->config+['_autopay_review_now'=>new DateTimeImmutable('-8 days',new DateTimeZone('UTC'))];self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo,$notice,'never@example.invalid',null,$clock));}
     }
     private function row(int $id):array{$s=$this->pdo->prepare('SELECT * FROM autopay_collections WHERE id=?');$s->execute([$id]);return $s->fetch(PDO::FETCH_ASSOC);}
     private function intent(array $row,string $status='processing'):array
@@ -190,8 +202,9 @@ PHP;
         $invoice=$this->invoice();$id=$this->enqueue($invoice);$this->pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE id=?')->execute([$this->authorization]);
         self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Revoked mandate'))['status']);
         $this->pdo->prepare('UPDATE autopay_enrollments SET status="active",revoked_at=NULL WHERE id=?')->execute([$this->authorization]);
-        $invoice=$this->invoice();$this->enqueue($invoice);$this->pdo->prepare('UPDATE invoices SET total=110,balance_due=110 WHERE id=?')->execute([$invoice]);
-        self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Changed amount'))['status']);
+        $invoice=$this->invoice();$changed=$this->enqueue($invoice);$this->pdo->prepare('UPDATE invoices SET total=110,balance_due=110 WHERE id=?')->execute([$invoice]);
+        self::assertSame('held',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Changed amount'))['status']);
+        self::assertSame(0,(int)$this->row($changed)['attempt_count']);self::assertNull($this->row($changed)['stripe_payment_intent_id']);
     }
     public function testSettlementIsCanonicalDuplicateSafeAndOlderFailureCannotUndoSuccess():void
     {
@@ -268,6 +281,7 @@ PHP;
         $this->pdo->prepare('INSERT INTO project_invoices(project_id,primary_client_id,billing_period_start,billing_period_end,total,balance_due,finalized_at,finalization_source) VALUES (?,?,CURDATE(),CURDATE(),100,100,NOW(),"project_finalize")')->execute([$project,$this->client]);$id=(int)$this->pdo->lastInsertId();$this->projectInvoices[]=$id;
         $this->pdo->prepare('INSERT INTO project_invoice_items(project_invoice_id,invoice_id,invoice_total,amount_due_at_generation) VALUES (?,?,100,100)')->execute([$id,$child]);
         $this->pdo->beginTransaction();$collection=pa_autopay_enqueue_project_invoice($this->pdo,$id,$this->config,null,'project_finalize');$this->pdo->commit();self::assertNotNull($collection);
+        $this->matureInvoiceReview($id,'project_invoice');
         $this->pdo->exec('INSERT INTO clients(name) VALUES ("Synthetic other payer")');$other=(int)$this->pdo->lastInsertId();$this->otherClients[]=$other;
         $this->pdo->prepare('UPDATE invoices SET client_id=? WHERE id=?')->execute([$other,$child]);
         self::assertSame('failed',pa_autopay_run_one($this->pdo,$this->config,fn()=>self::fail('Foreign client charge'))['status']);

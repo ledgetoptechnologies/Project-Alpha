@@ -297,13 +297,15 @@ function invoice_notification_process(
             $attachment = document_pdf_attachment($pdo, $appConfig, 'invoice', (int)$row['invoice_id'], (string)$doc);
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array
                 => EmailService::sendEmail($to, $subject, $body, $options);
-            [$ok, $error] = $send($currentEmail, $subject, $body, [
+            require_once __DIR__ . '/autopay_invoice_email.php';
+            [$ok, $error] = pa_autopay_deliver_invoice_email($pdo, $appConfig, $currentEmail, $subject, $body, [
                 'attachments' => [$attachment],
                 'document_type' => 'invoice',
+                'invoice_notice' => true,
                 'document_id' => (int)$row['invoice_id'],
                 'invoice_id' => (int)$row['invoice_id'],
                 'message_key' => 'invoice-notification:' . $id,
-            ]);
+            ], $send);
             if (!$ok) {
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }

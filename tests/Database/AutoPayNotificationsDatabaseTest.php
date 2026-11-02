@@ -32,11 +32,22 @@ final class AutoPayNotificationsDatabaseTest extends TestCase {
     }
     public function testProcessingSuppressesReminderAndNeverCreatesReceipt():void {
         $sent=[];$sender=static function(...$args)use(&$sent){$sent[]=$args;return [true,''];};
-        $this->state('pending');self::assertStringContainsString('queued',pa_autopay_pending_notice($this->pdo,$this->invoice));$this->state('processing');
+        $this->state('pending');self::assertStringContainsString('seven-day review',pa_autopay_pending_notice($this->pdo,$this->invoice));$this->state('processing');
         self::assertStringContainsString('processing',pa_autopay_pending_notice($this->pdo,$this->invoice));
         self::assertSame(0,pa_autopay_deliver_notifications($this->pdo,$this->config,$sender)['sent']);
         $due=$this->pdo->query('SELECT due_date FROM invoices WHERE id='.$this->invoice)->fetchColumn();invoice_notification_enqueue($this->pdo,$this->invoice,'due_7','due:'.$due,'payer@example.invalid');
         $stats=invoice_notification_process($this->pdo,$this->config,$sender,null,10,$this->invoice);self::assertSame(1,$stats['suppressed']);self::assertSame([],$sent);
+    }
+
+    public function testClientInvoiceOptOutNeverSendsAPaymentFailureNotice():void {
+        $this->pdo->prepare('UPDATE autopay_collections SET state="failed",last_error="Client opted out of automatic payment." WHERE id=?')->execute([$this->collection]);
+        $sent=[];$sender=static function(...$args)use(&$sent){$sent[]=$args;return [true,''];};
+        self::assertSame(0,pa_autopay_deliver_notifications($this->pdo,$this->config,$sender)['sent']);
+        $query=$this->pdo->prepare('SELECT COUNT(*) FROM autopay_notifications WHERE collection_id=?');$query->execute([$this->collection]);
+        self::assertSame(0,(int)$query->fetchColumn());
+        $this->pdo->prepare('INSERT INTO autopay_notifications(collection_id,kind) VALUES (?,"failed")')->execute([$this->collection]);
+        self::assertSame(1,pa_autopay_deliver_notifications($this->pdo,$this->config,$sender)['suppressed']);
+        self::assertSame([],$sent);
     }
     public function testFailureAndActionNoticesAreDurablyDeduplicated():void {
         $sent=[];$sender=static function(...$args)use(&$sent){$sent[]=$args;return [true,''];};

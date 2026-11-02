@@ -47,6 +47,7 @@ final class MailedCheckReportsDatabaseTest extends TestCase
             }
             foreach ($this->invoices as $id) {
                 $this->pdo->prepare('DELETE FROM mailed_check_reports WHERE document_type="invoice" AND document_id=?')->execute([$id]);
+                if(invoice_table_has_column($this->pdo,'autopay_invoice_reviews','generation'))$this->pdo->prepare('DELETE r FROM autopay_invoice_reviews r JOIN autopay_collections c ON c.id=r.collection_id WHERE c.document_type="invoice" AND c.document_id=?')->execute([$id]);
                 $this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="invoice" AND document_id=?')->execute([$id]);
                 $this->pdo->prepare('DELETE FROM payments WHERE invoice_id=?')->execute([$id]);
                 $this->pdo->prepare('DELETE FROM invoices WHERE id=?')->execute([$id]);
@@ -259,6 +260,7 @@ final class MailedCheckReportsDatabaseTest extends TestCase
         } finally {
             if ($this->pdo->inTransaction()) $this->pdo->rollBack();
             if ($authorization) {
+                if(invoice_table_has_column($this->pdo,'autopay_invoice_reviews','generation'))$this->pdo->prepare('DELETE r FROM autopay_invoice_reviews r JOIN autopay_collections c ON c.id=r.collection_id WHERE c.authorization_id=?')->execute([$authorization]);
                 $this->pdo->prepare('DELETE FROM autopay_collections WHERE authorization_id=?')->execute([$authorization]);
                 $this->pdo->prepare('DELETE FROM autopay_enrollments WHERE id=?')->execute([$authorization]);
             }

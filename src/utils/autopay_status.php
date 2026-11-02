@@ -16,6 +16,12 @@ function pa_autopay_pending_notice(PDO $pdo, int $id, string $type = 'invoice'):
     $query = $pdo->prepare('SELECT state,financial_hold FROM autopay_collections WHERE document_type=? AND document_id=?');
     $query->execute([$type, $id]);
     $collection = $query->fetch(PDO::FETCH_ASSOC);
+    if(($collection['state']??'')==='pending' && empty($collection['financial_hold'])){
+        require_once __DIR__.'/autopay_review.php';
+        $review=pa_autopay_invoice_review_state($pdo,$type,$id);
+        if(!$review || $review['review_status']==='awaiting_delivery')return 'AutoPay is waiting for successful delivery of this invoice and your seven-day review period. This invoice is not paid yet.';
+        if($review['review_status']==='scheduled' && $review['scheduled_at'])return 'AutoPay is scheduled on or after '.(new DateTimeImmutable($review['scheduled_at'],new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($review['timezone']))->format('M j, Y g:i A T').'. You can review, skip AutoPay for this invoice, or ask a billing question using the link in your invoice email. This invoice is not paid yet.';
+    }
     return match (!empty($collection['financial_hold']) ? 'held' : ($collection['state'] ?? '')) {
         'pending' => 'Your authorized automatic payment is queued. Please do not pay this invoice again. A receipt will be sent after payment succeeds.',
         'processing' => 'Your automatic payment is processing. Please do not pay this invoice again. A receipt will be sent after payment succeeds.',

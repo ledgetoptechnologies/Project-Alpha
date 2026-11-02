@@ -130,7 +130,10 @@ function pa_autopay_enqueue_document(PDO $pdo,string $type,int $id,array $config
     $key='pa-autopay-'.hash('sha256',$auth['installation_id'].':'.$auth['processor_account_id'].':'.$type.':'.$id);
     $s=$pdo->prepare('INSERT INTO autopay_collections(document_type,document_id,authorization_id,client_id,amount_cents,currency,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,idempotency_key,source,created_by,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())');
     $s->execute([$type,$id,$auth['id'],$invoice['client_id'],$amount,$currency,$auth['processor_account_id'],$auth['installation_id'],$auth['stripe_customer_id'],$auth['payment_method_id'],$auth['method_type'],$key,$source,$actor]);
-    return (int)$pdo->lastInsertId();
+    $collectionId=(int)$pdo->lastInsertId();
+    require_once __DIR__.'/autopay_review.php';
+    pa_autopay_review_create($pdo,$collectionId,$type,$invoice,$config);
+    return $collectionId;
 }
 
 /** One short reservation transaction; the network request always happens after commit. */
@@ -147,6 +150,13 @@ function pa_autopay_run_one(PDO $pdo,array $config,?callable $transport=null): a
         if($invoice && $row['document_type']==='project_invoice')$invoice['client_id']=$invoice['primary_client_id'];
         $s=$pdo->prepare('SELECT * FROM autopay_collections WHERE id=? FOR UPDATE');$s->execute([$row['id']]);$row=$s->fetch(PDO::FETCH_ASSOC);
         if(!in_array($row['state'],['pending','processing'],true) || $row['financial_hold'] || (!empty($row['lease_until']) && strtotime($row['lease_until'])>=time()) || (!empty($row['next_attempt_at']) && strtotime($row['next_attempt_at'])>time())){$pdo->commit();return ['status'=>'busy'];}
+        require_once __DIR__.'/autopay_review.php';
+        if(!$invoice || !pa_autopay_review_worker_ready($pdo,$row,$invoice,$config)){
+            if(!$invoice)$pdo->prepare('UPDATE autopay_collections SET state="held",next_attempt_at=NULL,last_error="Invoice is unavailable; staff review required." WHERE id=?')->execute([$row['id']]);
+            $reviewState=$pdo->prepare('SELECT state FROM autopay_collections WHERE id=?');$reviewState->execute([$row['id']]);
+            $state=(string)$reviewState->fetchColumn();
+            $pdo->commit();return ['status'=>$state==='pending'?'review':$state,'id'=>(int)$row['id']];
+        }
         $s=$pdo->prepare('SELECT * FROM autopay_enrollments WHERE id=? FOR UPDATE');$s->execute([$row['authorization_id']]);$auth=$s->fetch(PDO::FETCH_ASSOC);
         require_once __DIR__ . '/check_reports.php';
         $checkBlocked = pa_check_report_lookup($pdo,$row['document_type'],(int)$row['document_id']) !== null;
@@ -260,7 +270,7 @@ function pa_autopay_cancel_collection(PDO $pdo,int $id,array $config,?callable $
         $table=pa_autopay_table($candidate['document_type']);$s=$pdo->prepare("SELECT id FROM {$table} WHERE id=? FOR UPDATE");$s->execute([$candidate['document_id']]);
         $s=$pdo->prepare('SELECT * FROM autopay_collections WHERE id=? FOR UPDATE');$s->execute([$id]);$row=$s->fetch(PDO::FETCH_ASSOC);
         if(!empty($row['financial_hold']))throw new DomainException('A refund or dispute must be reconciled before this collection can be released.');
-        if($row['state']==='pending' && (int)$row['attempt_count']===0){$pdo->prepare('UPDATE autopay_collections SET state="failed",next_attempt_at=NULL,last_error="Canceled before submission." WHERE id=?')->execute([$id]);$pdo->commit();return;}
+        if(in_array($row['state'],['pending','held'],true) && (int)$row['attempt_count']===0 && empty($row['stripe_payment_intent_id']) && empty($row['lease_token']) && empty($row['lease_until'])){$pdo->prepare('UPDATE autopay_collections SET state="failed",next_attempt_at=NULL,last_error="Canceled before submission." WHERE id=?')->execute([$id]);$pdo->commit();return;}
         if($row['state']!=='requires_action' || empty($row['stripe_payment_intent_id']))throw new DomainException('This collection must be reconciled with Stripe before another payment can be accepted.');
         $pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}

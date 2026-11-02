@@ -10,7 +10,7 @@ function pa_autopay_deliver_notifications(PDO $pdo,array $config,?callable $send
     if(!invoice_table_has_column($pdo,'autopay_notifications','kind'))return $stats;
     $installation=(string)getenv('AUTOPAY_INSTALLATION_ID');$account=(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID');
     if(!preg_match('/^[a-zA-Z0-9_-]{8,64}$/D',$installation)||!preg_match('/^acct_[a-zA-Z0-9]+$/D',$account))return $stats;
-    $scan=$pdo->prepare('INSERT IGNORE INTO autopay_notifications(collection_id,kind) SELECT id,CASE state WHEN "succeeded" THEN "receipt" ELSE state END FROM autopay_collections WHERE state IN ("succeeded","failed","requires_action") AND COALESCE(last_error,"") NOT LIKE "Canceled%" AND (?="" OR installation_id=?) AND (?="" OR processor_account_id=?)');$scan->execute([$installation,$installation,$account,$account]);
+    $scan=$pdo->prepare('INSERT IGNORE INTO autopay_notifications(collection_id,kind) SELECT id,CASE state WHEN "succeeded" THEN "receipt" ELSE state END FROM autopay_collections WHERE state IN ("succeeded","failed","requires_action") AND COALESCE(last_error,"") NOT LIKE "Canceled%" AND COALESCE(last_error,"")<>"Client opted out of automatic payment." AND (?="" OR installation_id=?) AND (?="" OR processor_account_id=?)');$scan->execute([$installation,$installation,$account,$account]);
     $sender??=[EmailService::class,'sendEmail'];
     for($i=0;$i<max(0,min(100,$limit));$i++){
         $pdo->beginTransaction();
@@ -18,7 +18,7 @@ function pa_autopay_deliver_notifications(PDO $pdo,array $config,?callable $send
             $claim=$pdo->prepare('SELECT n.*,c.document_type,c.document_id,c.authorization_id,c.client_id,c.stripe_payment_intent_id,c.state,c.installation_id,c.processor_account_id FROM autopay_notifications n JOIN autopay_collections c ON c.id=n.collection_id WHERE n.status IN ("pending","sending") AND n.next_attempt_at<=NOW() AND (n.lease_until IS NULL OR n.lease_until<NOW()) AND (?="" OR c.installation_id=?) AND (?="" OR c.processor_account_id=?) ORDER BY n.id LIMIT 1 FOR UPDATE');$claim->execute([$installation,$installation,$account,$account]);$row=$claim->fetch(PDO::FETCH_ASSOC);
             if(!$row){$pdo->commit();break;}
             $expected=$row['kind']==='receipt'?'succeeded':$row['kind'];
-            $cancel=$pdo->prepare('SELECT last_error FROM autopay_collections WHERE id=?');$cancel->execute([$row['collection_id']]);$canceled=str_starts_with((string)$cancel->fetchColumn(),'Canceled');
+            $cancel=$pdo->prepare('SELECT last_error FROM autopay_collections WHERE id=?');$cancel->execute([$row['collection_id']]);$cancelReason=(string)$cancel->fetchColumn();$canceled=str_starts_with($cancelReason,'Canceled') || $cancelReason==='Client opted out of automatic payment.';
             if($row['state']!==$expected||($row['kind']!=='receipt'&&$canceled)){$pdo->prepare('UPDATE autopay_notifications SET status="suppressed",last_error="Collection outcome changed before delivery." WHERE id=?')->execute([$row['id']]);$pdo->commit();$stats['suppressed']++;continue;}
             $lease=bin2hex(random_bytes(16));$pdo->prepare('UPDATE autopay_notifications SET status="sending",attempts=attempts+1,lease_token=?,lease_until=DATE_ADD(NOW(),INTERVAL 10 MINUTE) WHERE id=?')->execute([$lease,$row['id']]);$pdo->commit();
         }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}

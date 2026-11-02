@@ -1172,6 +1172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'invoice/invoices-mark-paid',
         'invoice/invoice-finalize',
         'invoice/autopay-cancel',
+        'invoice/autopay-review-resolve',
         'client/autopay-disable',
         'invoice/pending-check-action',
         'invoice/invoice-reopen',
@@ -1582,6 +1583,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($page === 'invoice/autopay-cancel') {
         require_once __DIR__ . '/../src/controllers/invoice/autopay_cancel.php';
+        exit;
+    }
+    if ($page === 'invoice/autopay-review-resolve') {
+        require_once __DIR__ . '/../src/controllers/invoice/autopay_review_resolve.php';
         exit;
     }
     if ($page === 'client/autopay-disable') {

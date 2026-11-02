@@ -65,6 +65,7 @@ $rows = $pdo->prepare($sql); $rows->execute($p); $rows = $rows->fetchAll(PDO::FE
     </div>
   </div>
   <?php require __DIR__ . '/../../components/pending_check_list.php'; ?>
+  <?php require __DIR__ . '/../../components/autopay_review_queue.php'; ?>
   <?php if (!empty($_GET['saved'])): ?>
     <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Payment saved.</div>
   <?php endif; ?>
