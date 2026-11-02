@@ -118,6 +118,17 @@ class EmailService {
             return [false, 'Invalid recipient email'];
         }
 
+        if (!empty($options['invoice_notice']) && empty($options['_autopay_review_handled']) && $pdo instanceof PDO) {
+            require_once __DIR__ . '/../utils/autopay_invoice_email.php';
+            try {
+                return pa_autopay_deliver_invoice_email($pdo, $appConfig, $to, $subject, $body, $options,
+                    static fn(string $recipient, string $title, string $content, array $prepared): array => self::sendEmail($recipient, $title, $content, $prepared));
+            } catch (Throwable $error) {
+                error_log('[autopay] Invoice notice preparation requires review.');
+                return [false, 'The invoice AutoPay notice could not be prepared. Review the invoice before sending.'];
+            }
+        }
+
         $cfg        = self::getSmtpConfig($appConfig);
         $fromEmail  = trim((string)($options['from_email'] ?? self::getFromEmail($appConfig, $cfg)));
         $fromName   = trim((string)($options['from_name']  ?? self::getFromName($appConfig)));
@@ -125,7 +136,6 @@ class EmailService {
         $attachments = is_array($options['attachments'] ?? null) ? $options['attachments'] : [];
         $isHtml     = (bool)($options['is_html'] ?? true);
         $messageId = trim((string)($options['message_id'] ?? ''));
-        $body       = self::applyAutomatedNotice($body, $isHtml, $appConfig);
 
         if (!$pdo instanceof PDO) {
             return [false, 'Outgoing email is unavailable because the database is not connected.'];

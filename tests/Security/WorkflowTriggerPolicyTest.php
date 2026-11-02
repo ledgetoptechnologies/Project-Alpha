@@ -6,7 +6,7 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkflowTriggerPolicyTest extends TestCase
 {
-    private const SCAN_GUARD = "    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'";
+    private const SCAN_GUARD = "    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')";
 
     /** Accept only the repository's explicit trigger syntax, never inline bypasses. */
     private function validTriggers(string $source, bool $allowSchedule = false): bool
@@ -24,7 +24,7 @@ final class WorkflowTriggerPolicyTest extends TestCase
                 continue;
             }
             if (preg_match('/^  \S/', $line)) {
-                if (!preg_match('/^  (push|pull_request|schedule):$/', $line, $eventMatch)
+                if (!preg_match('/^  (push|schedule):$/', $line, $eventMatch)
                     || isset($seen[$eventMatch[1]])) {
                     return false;
                 }
@@ -45,7 +45,7 @@ final class WorkflowTriggerPolicyTest extends TestCase
             && (!isset($seen['schedule']) || ($cron && str_contains($source, self::SCAN_GUARD . "\n")));
     }
 
-    public function testEveryActiveWorkflowLimitsPushesToMainAndRetainsPrChecks(): void
+    public function testEveryActiveWorkflowRunsOnlyOnMainAndRetainsMainSecurityChecks(): void
     {
         $directory = dirname(__DIR__, 2) . '/.github/workflows';
         $files = array_merge(glob($directory . '/*.yml'), glob($directory . '/*.yaml'));
@@ -54,13 +54,14 @@ final class WorkflowTriggerPolicyTest extends TestCase
             $name = basename($file);
             $source = str_replace("\r\n", "\n", (string)file_get_contents($file));
             self::assertTrue($this->validTriggers($source, $name === 'codeql.yml'), $name);
+            self::assertStringNotContainsString("  pull_request:\n", $source, $name);
+            self::assertStringNotContainsString("  pull_request_target:\n", $source, $name);
             if ($name === 'docker-publish.yml') {
-                self::assertStringNotContainsString("  pull_request:\n", $source);
                 self::assertStringContainsString(
                     "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n", $source
                 );
-            } else {
-                self::assertStringContainsString("  pull_request:\n", $source, $name);
+            } elseif ($name !== 'codeql.yml') {
+                self::assertStringContainsString("    if: github.ref == 'refs/heads/main' && github.event_name == 'push'\n", $source, $name);
             }
             if ($name === 'codeql.yml') {
                 self::assertStringContainsString("  schedule:\n    - cron: '0 4 * * 1'", $source);
@@ -76,6 +77,8 @@ final class WorkflowTriggerPolicyTest extends TestCase
             "  push:\n    branches: [dev]\n",
             "  push:\n    branches: [main, dev]\n",
             "  push:\n    branches: [main]\n    tags: ['v*']\n",
+            "  push:\n    branches: [main]\n  pull_request:\n",
+            "  push:\n    branches: [main]\n  pull_request_target:\n",
             "  push:\n    branches: [main]\n  workflow_dispatch:\n",
             "  pull_request:\n  push: {branches: [dev]}\n",
             "  push:\n    branches: [main]\n  workflow_dispatch: {}\n",

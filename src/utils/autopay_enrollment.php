@@ -53,31 +53,55 @@ function pa_autopay_verify_code(PDO $pdo,array $client,int $id,string $code,stri
 
 function pa_autopay_enroll(PDO $pdo,array $context,array $session,array $input,array $config,callable $transport): array {
     if (!pa_autopay_enabled($config) || !pa_autopay_authority($context['client'],$session)) throw new DomainException('Verify your email before managing AutoPay.');
-    $scope=(string)($input['scope']??'agreement');$contractId=$scope==='agreement'?(int)$context['contract_id']:null;
-    if (!in_array($scope,['agreement','business'],true) || ($scope==='agreement'&&!$contractId) || empty($input['consent']) || ($scope==='business'&&empty($input['business_consent']))) throw new DomainException('Choose the billing scope and explicitly authorize future automatic payments.');
+    $scope=(string)($input['scope']??'business');$contractId=null;
+    if ($scope!=='business' || empty($input['consent']) || empty($input['business_consent'])) throw new DomainException('Explicitly authorize AutoPay for all future invoices on your client account.');
     $method=(string)($input['method_type']??'us_bank_account');if(!in_array($method,['card','us_bank_account'],true))throw new DomainException('Choose card or US bank account.');
     $client=$context['client'];$installation=(string)getenv('AUTOPAY_INSTALLATION_ID');$account=(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID');
-    $request=bin2hex(random_bytes(16));
-    $customer=$transport('POST','customers',['name'=>$client['name'],'email'=>$client['email'],'metadata'=>['pa_client_id'=>(string)$client['id'],'pa_autopay_installation_id'=>$installation]],'autopay-customer-'.$request);
-    if(empty($customer['id']) || !empty($customer['livemode']))throw new DomainException('Stripe test customer could not be verified.');
-    $consent=$scope==='agreement'?'I authorize off-session automatic payment of future finalized invoices for this recurring agreement using the payment method saved with Stripe.':'I authorize off-session automatic payment of all future finalized invoices for my client account with this business using the payment method saved with Stripe.';
+    $base=rtrim((string)($config['app_host']??$config['base_url']??''),'/');
+    if($base!==''&&!str_contains($base,'://'))$base='https://'.$base;
+    if(!preg_match('#^https?://#',$base))throw new DomainException('Application URL is not configured.');
+    $return=$base.'/?page=public-autopay&'.(!empty($input['review'])?'review='.rawurlencode((string)$input['review']):(!empty($input['manage'])?'manage='.rawurlencode((string)$input['manage']):'token='.rawurlencode((string)$input['token'])));
+    $consent='I authorize off-session automatic payment of all future finalized invoices for my client account with this business, including regular, on-demand and recurring work, using the method saved with Stripe. An invoice email will show the amount and scheduled charge date, with at least seven calendar days to review after successful delivery and no earlier than its due date. I may skip an invoice, question it to hold collection, or turn off all AutoPay.';
+    // Reserve consent before network I/O. Even a first-ever setup is then
+    // visible to Turn off AutoPay while Stripe is handling the request.
     $pdo->beginTransaction();
     try {
         $s=$pdo->prepare('SELECT email FROM clients WHERE id=? FOR UPDATE');$s->execute([$client['id']]);
         if($s->fetchColumn()!==$client['email'])throw new DomainException('The client email changed. Verify the current email again.');
-        $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND status="pending"')->execute([$client['id'],$scope,$contractId,$installation,$account]);
-        $pdo->prepare('INSERT INTO autopay_enrollments(client_id,contract_id,scope,processor_account_id,installation_id,stripe_customer_id,method_type,consent_version,consent_text,verified_email,consent_at,consent_proof) VALUES (?,?,?,?,?,?,?,"2026-10-v1",?,?,NOW(),?)')->execute([$client['id'],$contractId,$scope,$account,$installation,$customer['id'],$method,$consent,$client['email'],hash('sha256',json_encode($session['autopay_verified']))]);
+        $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status="pending"')->execute([$client['id'],$scope,$contractId,$installation,$account]);
+        $pdo->prepare('INSERT INTO autopay_enrollments(client_id,contract_id,scope,processor_account_id,installation_id,stripe_customer_id,method_type,consent_version,consent_text,verified_email,consent_at,consent_proof) VALUES (?,?,?,?,?,?,?,"2026-11-review-v1",?,?,NOW(),?)')->execute([$client['id'],$contractId,$scope,$account,$installation,'',$method,$consent,$client['email'],hash('sha256',json_encode($session['autopay_verified']))]);
         $id=(int)$pdo->lastInsertId();$pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
-    $metadata=['pa_autopay_authorization_id'=>(string)$id,'pa_client_id'=>(string)$client['id'],'pa_autopay_installation_id'=>$installation,'pa_autopay_account_id'=>$account];
-    $base=rtrim((string)($config['app_host']??$config['base_url']??''),'/');
-    if($base!==''&&!str_contains($base,'://'))$base='https://'.$base;
-    if(!preg_match('#^https?://#',$base))throw new DomainException('Application URL is not configured.');
-    $return=$base.'/?page=public-autopay&'.(!empty($input['manage'])?'manage='.rawurlencode((string)$input['manage']):'token='.rawurlencode((string)$input['token']));
-    $checkout=$transport('POST','checkout/sessions',['mode'=>'setup','currency'=>'usd','customer'=>$customer['id'],'payment_method_types'=>[$method],'success_url'=>$return.'&setup_return=1','cancel_url'=>$return,'metadata'=>$metadata,'setup_intent_data'=>['metadata'=>$metadata]],'autopay-setup-'.$id);
-    if(empty($checkout['id']) || !empty($checkout['livemode']) || !preg_match('#^https://checkout\.stripe\.com/#',(string)($checkout['url']??'')))throw new DomainException('Stripe setup could not be verified.');
-    $pdo->prepare('UPDATE autopay_enrollments SET checkout_session_id=? WHERE id=?')->execute([$checkout['id'],$id]);
-    return $checkout;
+    try {
+        $customer=$transport('POST','customers',['name'=>$client['name'],'email'=>$client['email'],'metadata'=>['pa_client_id'=>(string)$client['id'],'pa_autopay_installation_id'=>$installation]],'autopay-customer-'.bin2hex(random_bytes(16)));
+        if(empty($customer['id']) || !empty($customer['livemode']))throw new DomainException('Stripe test customer could not be verified.');
+        pa_autopay_bind_pending_setup($pdo,$client,$id,$installation,$account,'stripe_customer_id',(string)$customer['id']);
+        $metadata=['pa_autopay_authorization_id'=>(string)$id,'pa_client_id'=>(string)$client['id'],'pa_autopay_installation_id'=>$installation,'pa_autopay_account_id'=>$account];
+        $checkout=$transport('POST','checkout/sessions',['mode'=>'setup','currency'=>'usd','customer'=>$customer['id'],'payment_method_types'=>[$method],'success_url'=>$return.'&setup_return=1','cancel_url'=>$return,'metadata'=>$metadata,'setup_intent_data'=>['metadata'=>$metadata]],'autopay-setup-'.$id);
+        if(empty($checkout['id']) || !empty($checkout['livemode']) || !preg_match('#^https://checkout\.stripe\.com/#',(string)($checkout['url']??'')))throw new DomainException('Stripe setup could not be verified.');
+        pa_autopay_bind_pending_setup($pdo,$client,$id,$installation,$account,'checkout_session_id',(string)$checkout['id']);
+        return $checkout;
+    }catch(Throwable $e){
+        // A failed or revoked setup must not remain eligible for a late webhook.
+        // Keep older active consent and existing processing payments untouched.
+        try{$pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE id=? AND client_id=? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status="pending"')->execute([$id,$client['id'],$installation,$account]);}catch(Throwable $cleanupError){error_log('[autopay] Pending setup requires review.');}
+        throw $e;
+    }
+}
+
+/** Recheck the reserved consent after each network call, without holding locks across I/O. */
+function pa_autopay_bind_pending_setup(PDO $pdo,array $client,int $id,string $installation,string $account,string $column,string $value): void {
+    if(!in_array($column,['stripe_customer_id','checkout_session_id'],true))throw new LogicException('Invalid setup binding.');
+    $pdo->beginTransaction();
+    try {
+        $s=$pdo->prepare('SELECT email FROM clients WHERE id=? FOR UPDATE');$s->execute([$client['id']]);
+        if($s->fetchColumn()!==$client['email'])throw new DomainException('The client email changed. Verify the current email again.');
+        $s=$pdo->prepare('SELECT status FROM autopay_enrollments WHERE id=? AND client_id=? AND installation_id=? AND processor_account_id=? AND livemode=0 FOR UPDATE');
+        $s->execute([$id,$client['id'],$installation,$account]);
+        if($s->fetchColumn()!=='pending')throw new DomainException('AutoPay authorizations changed. Verify your email and start setup again.');
+        $pdo->prepare("UPDATE autopay_enrollments SET {$column}=? WHERE id=? AND status=\"pending\"")->execute([$value,$id]);
+        $pdo->commit();
+    }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
 
 /** Called only after signature validation; independently retrieve Stripe objects. */
@@ -95,7 +119,7 @@ function pa_autopay_setup_event(PDO $pdo,array $event,array $config,callable $tr
         if($currentEmail!==$auth['verified_email'] || ($intent['id']??'')!==($object['id']??'') || ($method['id']??'')!==($intent['payment_method']??'') || ($auth['method_type']==='us_bank_account'&&empty($intent['mandate'])))throw new DomainException('AutoPay setup verification mismatch.');
         $m=$intent['metadata']??[];
         if(($intent['status']??'')!=='succeeded' || ($intent['usage']??'')!=='off_session' || ($intent['livemode']??true)!==false || ($method['livemode']??true)!==false || ($intent['customer']??'')!==$auth['stripe_customer_id'] || ($method['customer']??'')!==$auth['stripe_customer_id'] || ($method['type']??'')!==$auth['method_type'] || (string)($m['pa_autopay_authorization_id']??'')!==(string)$id || (string)($m['pa_client_id']??'')!==(string)$auth['client_id'] || ($m['pa_autopay_installation_id']??'')!==$auth['installation_id'] || ($m['pa_autopay_account_id']??'')!==$auth['processor_account_id'] || $auth['installation_id']!==(string)getenv('AUTOPAY_INSTALLATION_ID') || $auth['processor_account_id']!==(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID'))throw new DomainException('AutoPay setup binding mismatch.');
-        $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND id<>? AND status IN ("active","pending")')->execute([$auth['client_id'],$auth['scope'],$auth['contract_id'],$auth['installation_id'],$auth['processor_account_id'],$id]);
+        $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND livemode=0 AND id<>? AND status IN ("active","pending")')->execute([$auth['client_id'],$auth['scope'],$auth['contract_id'],$auth['installation_id'],$auth['processor_account_id'],$id]);
         $last4=(string)($method[$method['type']]['last4']??'');if(!preg_match('/^[0-9]{4}$/D',$last4))$last4=null;
         $pdo->prepare('UPDATE autopay_enrollments SET status="active",payment_method_id=?,setup_intent_id=?,last4=?,verified_at=NOW(),effective_from=NOW(),management_token=COALESCE(management_token,?) WHERE id=?')->execute([$method['id'],$intent['id'],$last4,bin2hex(random_bytes(32)),$id]);
         $pdo->prepare('INSERT IGNORE INTO autopay_enrollment_notifications(enrollment_id) VALUES (?)')->execute([$id]);
@@ -105,11 +129,29 @@ function pa_autopay_setup_event(PDO $pdo,array $event,array $config,callable $tr
 
 function pa_autopay_revoke(PDO $pdo,array $client,array $session,int $id): void {
     if(!pa_autopay_authority($client,$session))throw new DomainException('Verify your email before managing AutoPay.');
+    pa_autopay_revoke_authorization($pdo,$client,$id);
+}
+
+/** Caller must establish verified client or staff authority. Zero disables all scopes. */
+function pa_autopay_revoke_authorization(PDO $pdo,array $client,int $id): bool {
+    $installation=(string)getenv('AUTOPAY_INSTALLATION_ID');
+    $account=(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID');
+    if($id<0 || !preg_match('/^[a-zA-Z0-9_-]{8,64}$/D',$installation)
+        || !preg_match('/^acct_[a-zA-Z0-9]+$/D',$account))throw new DomainException('AutoPay management is unavailable.');
     $pdo->beginTransaction();
     try {
         $s=$pdo->prepare('SELECT email FROM clients WHERE id=? FOR UPDATE');$s->execute([$client['id']]);if($s->fetchColumn()!==$client['email'])throw new DomainException('Verify the current client email again.');
-        $s=$pdo->prepare('SELECT * FROM autopay_enrollments WHERE id=? AND client_id=? AND installation_id=? AND processor_account_id=? FOR UPDATE');$s->execute([$id,$client['id'],getenv('AUTOPAY_INSTALLATION_ID'),getenv('AUTOPAY_STRIPE_ACCOUNT_ID')]);$auth=$s->fetch(PDO::FETCH_ASSOC);
-        if($auth)$pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND status IN ("pending","active")')->execute([$client['id'],$auth['scope'],$auth['contract_id'],$auth['installation_id'],$auth['processor_account_id']]);
-        $pdo->commit();
+        if($id===0) {
+            $s=$pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status IN ("pending","active")');
+            $s->execute([$client['id'],$installation,$account]);
+        } else {
+            $s=$pdo->prepare('SELECT * FROM autopay_enrollments WHERE id=? AND client_id=? AND installation_id=? AND processor_account_id=? AND livemode=0 FOR UPDATE');
+            $s->execute([$id,$client['id'],$installation,$account]);$auth=$s->fetch(PDO::FETCH_ASSOC);
+            if(!$auth)throw new DomainException('This AutoPay authorization is unavailable.');
+            $s=$pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status IN ("pending","active")');
+            $s->execute([$client['id'],$auth['scope'],$auth['contract_id'],$installation,$account]);
+        }
+        $changed=$s->rowCount()>0;
+        $pdo->commit();return $changed;
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }

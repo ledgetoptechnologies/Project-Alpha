@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/EmailProviders.php';
+require_once __DIR__ . '/EmailPresentation.php';
 require_once __DIR__ . '/../utils/email_identity.php';
 
 final class EmailProviderManager
@@ -53,6 +54,8 @@ final class EmailProviderManager
             $message->fromName = trim((string)($connection['sender_name'] ?? '')) ?: $message->fromName;
         }
 
+        EmailPresentation::apply($message, $this->appConfig);
+
         $messageKey = trim((string)($context['message_key'] ?? ''));
         if ($messageKey === '') {
             $messageKey = 'msg-' . bin2hex(random_bytes(16));
@@ -60,7 +63,7 @@ final class EmailProviderManager
         $message->messageId ??= '<' . hash('sha256', $messageKey) . '@project-alpha.local>';
         $reservation = $this->reserveDelivery($messageKey, (int)$connection['id'], $message, $context);
         if ($reservation['status'] === 'sent') {
-            return new SendResult(true, 'Already sent');
+            return new SendResult(true, 'Already sent', null, null, $reservation['id']);
         }
         if ($reservation['status'] === 'in_progress') {
             return new SendResult(false, 'Delivery is already in progress');
@@ -197,7 +200,9 @@ final class EmailProviderManager
             );
             $statement->execute([
                 $messageKey, $connectionId, $documentType, $context['document_id'] ?? null,
-                $context['document_revision'] ?? null, $message->to, $message->subject,
+                // The log has a 500-character column; keep the full subject in
+                // the outbound message even when its automation prefix adds length.
+                $context['document_revision'] ?? null, $message->to, mb_substr($message->subject, 0, 500),
             ]);
             return ['status' => 'reserved', 'id' => (int)$this->pdo->lastInsertId()];
         } catch (PDOException $error) {

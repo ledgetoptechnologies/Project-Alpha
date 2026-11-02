@@ -253,7 +253,7 @@ function invoice_notification_process(
             }
         }
         if ($reason === null && $autoPayNotice !== '' && in_array($type, ['due_7', 'overdue_weekly'], true)) {
-            $reason = 'Automatic payment is reserved; do not request another payment.';
+            $reason = 'A payment is reserved or awaiting review; do not request another payment.';
         }
         if ($reason !== null) {
             invoice_notification_suppress($pdo, $id, $reason);
@@ -293,17 +293,19 @@ function invoice_notification_process(
                 . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View, print, or save the invoice as PDF</a></p>' : '');
 
             $body .= invoice_content_links_html(invoice_content_links_for_invoice($pdo, (int)$row['invoice_id'], $appConfig));
-            if ($autoPayNotice !== '') $body .= '<p><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
+            if ($autoPayNotice !== '') $body .= '<p><strong>Payment status:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
             $attachment = document_pdf_attachment($pdo, $appConfig, 'invoice', (int)$row['invoice_id'], (string)$doc);
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array
                 => EmailService::sendEmail($to, $subject, $body, $options);
-            [$ok, $error] = $send($currentEmail, $subject, $body, [
+            require_once __DIR__ . '/autopay_invoice_email.php';
+            [$ok, $error] = pa_autopay_deliver_invoice_email($pdo, $appConfig, $currentEmail, $subject, $body, [
                 'attachments' => [$attachment],
                 'document_type' => 'invoice',
+                'invoice_notice' => true,
                 'document_id' => (int)$row['invoice_id'],
                 'invoice_id' => (int)$row['invoice_id'],
                 'message_key' => 'invoice-notification:' . $id,
-            ]);
+            ], $send);
             if (!$ok) {
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }
