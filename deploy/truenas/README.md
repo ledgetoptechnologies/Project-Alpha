@@ -38,7 +38,7 @@ Eleven renderer scenarios and both Docker Compose configuration checks passed. F
 ## Before public submission
 
 1. Promote a complete tested source revision into all three public repositories and replace `0.0.0` together. Verify anonymous image pulls and supported `linux/amd64` manifests.
-2. Complete the upstream metadata/schema/port checks and a real disposable install, reboot, upgrade and restore. Port `31234` is a candidate and must pass the full upstream catalog's uniqueness check immediately before submission.
+2. Complete the remaining middleware-dependent and generated-metadata checks, catalog-wide port validation, and a real disposable install, reboot, upgrade and restore. The standalone questions and metadata JSON schema checks already passed. Port `31234` is a candidate and must pass the full upstream catalog's uniqueness check immediately before submission.
 3. Have the TrueNAS reviewer host approved icon/screenshots; the current icon points to the project source asset.
 4. Copy only the app directory into a fork of `truenas/apps`, regenerate metadata/library data using upstream tools, and include the reviewed Renovate grouping rule.
 5. Preserve MIT licensing from the reviewed source release.
