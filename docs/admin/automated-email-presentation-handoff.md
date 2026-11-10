@@ -21,7 +21,8 @@ Provider addresses, recipients, attachments, document links, message IDs, delive
 - A test-only MIME decoder was corrected to decode RFC 2047 Q-encoded spaces on this Windows PHP runtime.
 - PHP lint and whitespace checks passed.
 - Synthetic preview: `C:/Users/fstor/.codex/tmp/pa-email-clarity-20261110/receipt.html`.
-- Browser rendering and external inbox delivery are not claimed: the browser blocked local file URLs. Current SMTP integration and MySQL tests require their isolated environments and have not been rerun for this revision.
+- November 10 isolated staging SMTP run: 1 test / 33 assertions passed on the final code, including HTML/plain text, provider/issuer identity, Reply-To, original PDF bytes, and duplicate-send protection. Network was disabled; no client email was sent. One existing PHPMailer dynamic-property deprecation was reported on PHP 8.5.12. The matching-lock image was pinned to sha256:45be80ab85430ddaa2a8cbc74d48828fe741f75ba13b5a4aa17c680abcfbf422; the owned container was removed.
+- Browser rendering and external inbox delivery are not claimed: the browser blocked local file URLs. The MySQL subject-boundary tests have historical evidence below but were not rerun for this presentation-only revision.
 
 ## Prior evidence, not a fresh acceptance run
 
