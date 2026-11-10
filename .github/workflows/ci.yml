@@ -16,6 +16,9 @@ jobs:
       - name: Validate canonical Compose configuration
         run: docker compose config >/tmp/compose.yml
 
+      - name: Test catalog release guards without publishing
+        run: python3 -m unittest discover -s scripts/tests -p test_catalog_release.py
+
       - name: Validate portal-only Compose override
         run: docker compose -f docker-compose.yml -f docker-compose.portal-only.yml config --quiet
 

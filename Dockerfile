@@ -79,6 +79,7 @@ COPY php.ini /usr/local/etc/php/conf.d/php.ini
 COPY ./public/ /var/www/html/
 COPY ./src/ /var/www/src/
 COPY ./bin/ /var/www/bin/
+COPY LICENSE.md /var/www/LICENSE.md
 
 # Copy the destructive 0.5.0 baseline and immutable forward migrations.
 COPY ./database/baseline.sql /usr/local/share/app-migrations/baseline.sql
@@ -138,6 +139,7 @@ RUN chown -R www-data:www-data /var/www/vendor /var/www/tests /var/www/tools /va
 
 # ---------- Stage 3: Encrypted MySQL runtime ----------
 FROM mysql:8.4 AS db
+COPY LICENSE.md /usr/share/licenses/project-alpha/LICENSE.md
 
 USER root
 # The upstream image includes MySQL Shell (about 500 MB of optional Python
@@ -185,6 +187,7 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
 WORKDIR /var/www
 
 COPY --from=vendor /app/vendor /var/www/vendor
+COPY LICENSE.md /var/www/LICENSE.md
 COPY ./src/ /var/www/src/
 COPY ./database/migrations/ /var/www/database/migrations/
 COPY ./database/baseline.sql /usr/local/share/app-migrations/baseline.sql

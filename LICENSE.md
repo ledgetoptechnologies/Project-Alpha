@@ -1,10 +1,21 @@
-**License Grant:** Under this License, you are granted the right to install, self‑host, and use the software (Project-Alpha) free of charge for personal purposes or for extremely small business operations (5 or less Full Time Employees), provided that such use is strictly limited to non-commercial, non-business purposes.
-**Intellectual Property Rights:** All intellectual property rights, including trademarks, patents, copyrights, and trade secrets, belong to *Ledge Top Technologies LLC*.
-**Granting License:** The license granted herein is non-exclusive, revocable upon breach of the terms outlined herein, and does not grant any right to modify or redistribute the software for commercial purposes without prior written consent from the owner of Project-Alpha.
-**Restrictions:** You agree that you shall not reverse engineer, decompile, or disassemble the software without prior written consent from the owner of Project-Alpha.
-**Warranty Disclaimer:** The software is provided "as is" with no warranties, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement.
-**Limitation of Liability:** You agree that the owner of Project-Alpha shall not be liable for any damages, losses, costs, or expenses arising out of the use of the software or violation of this License Agreement, except for indirect, special, incidental, or consequential damages.
-**Indemnification:** You agree to indemnify and hold the owner of Project-Alpha harmless from any claims, losses, damages, liabilities, costs, or expenses arising out of your use of the software or violation of this License Agreement.
-**Termination:** This License Agreement may be terminated immediately by the owner of Project-Alpha in case of a breach or non-compliance by you. Such termination shall result in immediate suspension of access to the software and/or legal action at the discretion of the owner of Project-Alpha.
-**Governing Law and Jurisdiction:** This License Agreement shall be governed by and construed in accordance with the laws of the State of Wisconsin, without giving effect to any conflict of law principles that may require the application of the laws of a different jurisdiction. In the event of a breach, the user shall be responsible for any legal fees incurred by Ledge Top Technologies LLC in enforcing its rights under this agreement.
-**Acceptance of Terms:** By installing, self‑hosting, and using Project-Alpha, you agree to be bound by the terms and conditions outlined herein.
+MIT License
+
+Copyright (c) 2026 Ledge Top Technologies LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

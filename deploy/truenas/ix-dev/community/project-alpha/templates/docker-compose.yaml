@@ -1,0 +1,100 @@
+{% set tpl = ix_lib.base.render.Render(values) %}
+{# All images are promoted as one release. Reject a partial Renovate update. #}
+{% set version = values.images.web_image.tag.split('@')[0] %}
+{% do tpl.funcs.must_match_regex(version, '^[0-9]+\.[0-9]+\.[0-9]+$') %}
+{% for key in ['cron_image', 'db_image'] %}
+  {% if values.images[key].tag.split('@')[0] != version %}
+    {% do tpl.funcs.fail('Web, cron and database images must use the same release version') %}
+  {% endif %}
+{% endfor %}
+{% if values.project_alpha.db_password == values.project_alpha.db_root_password %}
+  {% do tpl.funcs.fail('Application and database administrator passwords must differ') %}
+{% endif %}
+{% for password in [values.project_alpha.db_password, values.project_alpha.db_root_password] %}
+  {% if password|length < 20 %}
+    {% do tpl.funcs.fail('Database passwords must contain at least 20 characters') %}
+  {% endif %}
+{% endfor %}
+{% set paths = [] %}
+{% for name in ['config', 'uploads', 'backups', 'database', 'mysql_keyring'] %}
+  {% set path = tpl.funcs.get_host_path(values.storage[name]) %}
+  {% for previous in paths %}
+    {% if path == previous or path.startswith(previous.rstrip('/') ~ '/') or previous.startswith(path.rstrip('/') ~ '/') %}
+      {% do tpl.funcs.fail('Persistent storage locations must not overlap or contain one another') %}
+    {% endif %}
+  {% endfor %}
+  {% do paths.append(path) %}
+{% endfor %}
+
+{% set db = tpl.add_container(values.consts.db_container_name, 'db_image') %}
+{% set migrate = tpl.add_container(values.consts.migrate_container_name, 'web_image') %}
+{% set web = tpl.add_container(values.consts.web_container_name, 'web_image') %}
+{% set worker = tpl.add_container(values.consts.worker_container_name, 'web_image') %}
+{% set cron = tpl.add_container(values.consts.cron_container_name, 'cron_image') %}
+
+{# Match existing upstream entrypoints; do not invent unsupported non-root startup. #}
+{% for c in [db, migrate, web, cron] %}
+  {% do c.set_user(0, 0) %}
+{% endfor %}
+{% do worker.set_user(33, 33) %}
+{% do db.add_caps(['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETUID', 'SETGID', 'SYS_CHROOT']) %}
+{% do web.add_caps(['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETUID', 'SETGID', 'NET_BIND_SERVICE', 'KILL']) %}
+{% do migrate.add_caps(['DAC_OVERRIDE', 'FOWNER']) %}
+{% do cron.add_caps(['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETUID', 'SETGID']) %}
+
+{% for c in [db, migrate, web, worker, cron] %}
+  {% do c.environment.add_env('MYSQL_DATABASE', values.consts.db_name) %}
+  {% do c.environment.add_env('MYSQL_USER', values.consts.db_user) %}
+  {% do c.environment.add_env('MYSQL_PASSWORD', values.project_alpha.db_password) %}
+{% endfor %}
+{% for c in [migrate, web, worker, cron] %}
+  {% do c.environment.add_env('DB_HOST', values.consts.db_container_name) %}
+  {% do c.environment.add_env('DB_PORT', 3306) %}
+  {% do c.environment.add_env('APP_ENV', 'production') %}
+{% endfor %}
+{% for c in [db, migrate] %}
+  {% do c.environment.add_env('MYSQL_ROOT_PASSWORD', values.project_alpha.db_root_password) %}
+{% endfor %}
+{% do migrate.environment.add_env('MYSQL_ENCRYPTION_REQUIRED', true) %}
+{% do migrate.set_command(['/usr/local/bin/migrate.sh']) %}
+{% do migrate.restart.set_policy('no') %}
+{% do migrate.healthcheck.disable() %}
+{% do migrate.add_storage('/var/www/backups', values.storage.backups) %}
+{% do migrate.depends.add_dependency(values.consts.db_container_name, 'service_healthy') %}
+
+{% do db.add_storage('/var/lib/mysql', values.storage.database) %}
+{% do db.add_storage('/var/lib/mysql-keyring', values.storage.mysql_keyring) %}
+{% do db.healthcheck.use_built_in() %}
+
+{% for c in [web, worker, cron] %}
+  {% do c.add_storage('/var/www/config', values.storage.config) %}
+  {% do c.add_storage('/var/www/src/uploads', values.storage.uploads) %}
+  {% do c.add_storage('/var/www/backups', values.storage.backups) %}
+  {% do c.depends.add_dependency(values.consts.migrate_container_name, 'service_completed_successfully') %}
+{% endfor %}
+{% for c in [web, cron] %}
+  {% do c.environment.add_env('AUTOPAY_BETA_ENABLED', false) %}
+  {% do c.environment.add_env('BACKUP_ENCRYPTION_KEY', values.project_alpha.backup_encryption_key) %}
+{% endfor %}
+{% do web.environment.add_env('APP_AUTH_DISABLED', false) %}
+{% do web.environment.add_env('WEBAUTHN_ORIGIN', values.project_alpha.webauthn_origin) %}
+{% do web.environment.add_env('TRUSTED_PROXIES', values.project_alpha.trusted_proxies) %}
+{% do web.add_port(values.network.web_port, {'container_port': 80}) %}
+{% do web.healthcheck.set_custom_test(['CMD', 'php', '-r', "exit(@file_get_contents('http://127.0.0.1/health/ready')!==false?0:1);"]) %}
+{% do web.healthcheck.set_start_period(30) %}
+
+{% do worker.set_command(['php', '/var/www/bin/worker.php']) %}
+{% do worker.environment.add_env('WORKER_SLEEP_SECONDS', 5) %}
+{% do worker.depends.add_dependency(values.consts.web_container_name, 'service_healthy') %}
+{% do worker.healthcheck.set_custom_test(['CMD', 'php', '-r', "exit(str_contains((string)@file_get_contents('/proc/1/cmdline'), '/var/www/bin/worker.php')?0:1);"]) %}
+{% do cron.environment.add_env('BACKUP_RETENTION_DAYS', values.project_alpha.backup_retention_days) %}
+{% do cron.depends.add_dependency(values.consts.web_container_name, 'service_healthy') %}
+{% do cron.healthcheck.set_custom_test(['CMD', 'php', '-r', "exit(trim((string)@file_get_contents('/proc/1/comm'))==='cron'?0:1);"]) %}
+{% do cron.healthcheck.set_start_period(120) %}
+{% do tpl.portals.add(values.network.web_port) %}
+{% do tpl.notes.add_info('Complete first-run administrator setup in Project Alpha. Set the public Application Domain and HTTPS before client links or payment webhooks.') %}
+{% do tpl.notes.add_info('Back up database, MySQL keyring, application configuration, uploads and backup archives together. Host-path data is not covered by TrueNAS app rollback snapshots.') %}
+{% if version == '0.0.0' %}
+  {% do tpl.notes.add_warning('PREPARATION ONLY: release images, catalog artwork and live installation acceptance are pending. Do not deploy this candidate.') %}
+{% endif %}
+{{ tpl.render() | tojson }}
