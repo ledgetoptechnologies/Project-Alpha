@@ -1,36 +1,32 @@
-# Automated email presentation handoff
+# Automated email clarity handoff
 
-Project Alpha emails now identify automated delivery in the inbox and at the top of the message. The shared layout uses a centered card, company identity, prominent automation label, subject heading, and reply guidance before the existing content.
+## Current change (November 10, 2026)
 
-## Behavior
+This branch separates automated email presentation from PR #237 and its AutoPay/migration dependencies. Base: `9972dbdf` on `origin/main`. No database migration or workflow change is included.
 
-- Subjects receive one `[Automated]` prefix. The existing optional no-reply setting adds `NO-REPLY |` to the effective sender name and displays the configured notice prominently.
-- Without the no-reply setting, the sender shows `AUTOMATED |`. Automation identification remains visible even when the optional notice is off.
-- Documents with an issuer Reply-To retain that address and show `AUTOMATED |` with accurate reply guidance. A no-reply warning would contradict the working contact address, so the custom no-reply notice is suppressed for those documents.
-- HTML and plain-text messages are supported. Existing content, links, recipients, transport addresses, attachments, message IDs, and delivery keys are retained. SMTP now explicitly uses UTF-8, matching Gmail MIME generation.
-- Presentation runs after provider and document issuer selection, before delivery reservation. The delivery log stores the presented subject, limited to its existing 500-character column; the actual outgoing subject remains complete.
+All outgoing messages through the shared email provider now receive:
+- One `[Automated]` subject prefix.
+- `NO-REPLY | Company` when the no-reply setting is enabled and there is no document Reply-To; otherwise `AUTOMATED | Company`.
+- A centered, bounded HTML card with a prominent yellow notice above the message title and content.
+- Explicit "Automated notification — please do not reply" wording for no-reply mail. Configured notice text is escaped and preserved.
+- Accurate reply guidance for documents with an issuer Reply-To. These preserve their reply address and do not claim replies are prohibited.
+- Leading automation guidance for plain-text messages.
 
-All messages delivered through the shared service receive the label, including manually initiated document emails. The label describes automated delivery, not who authored or finalized a document. No billing, payment, recipient selection, or scheduling behavior changes.
+Provider addresses, recipients, attachments, document links, message IDs, delivery keys and scheduling are unchanged. Presentation is applied after provider and issuer identity resolution, exactly once. SMTP uses UTF-8; the delivery log truncates only its stored subject to the existing column limit, never the outgoing subject.
 
-## Validation
+## Current validation
 
-| Check | Result |
-| --- | --- |
-| Local presentation, receipt, notification relay, issuer, public-link and integration foundation regressions | 41 tests, 225 assertions passed; one existing deprecation |
-| Actual staging SMTP pipeline | 1 test, 33 assertions passed; no failures, errors, or skips; one existing PHPMailer Timelimit deprecation |
-| Actual MySQL subject boundary regression | 2 tests, 24 assertions passed; old code reproduced both length failures |
-| Browser preview | Synthetic invoice card visually checked at the normal desktop viewport |
+- Focused presentation, receipt delivery, notification relay, issuer policy/snapshot and public-link regressions: 45 tests, 226 assertions, no failures/errors/skips.
+- Shared vendor dependencies were reused read-only, with a temporary bootstrap pointing application autoloading at this checkout. An initial run without this override hit missing issuer classes in the unrelated vendor owner's checkout; this was corrected and the entire selected suite rerun.
+- A test-only MIME decoder was corrected to decode RFC 2047 Q-encoded spaces on this Windows PHP runtime.
+- PHP lint and whitespace checks passed.
+- Synthetic preview: `C:/Users/fstor/.codex/tmp/pa-email-clarity-20261110/receipt.html`.
+- Browser rendering and external inbox delivery are not claimed: the browser blocked local file URLs. Current SMTP integration and MySQL tests require their isolated environments and have not been rerun for this revision.
 
-The staging run on `192.168.50.90` exercised EmailService, provider selection, presentation, delivery reservation and PHPMailer into a loopback SMTP capture. It verified HTML and plain text, provider and issuer sender names, Reply-To, original PDF bytes, delivered subject logging, and one delivery for a repeated stable message key. The trusted image had a matching Composer lock and networking disabled. Synthetic SQLite tables supplied provider, issuer, and delivery state. Separately, real MySQL verified ASCII and multibyte subject limits.
+## Prior evidence, not a fresh acceptance run
 
-No external inbox received test email. This validates SMTP and MIME, not real Gmail or Outlook rendering or external inbox deliverability. All six shared staging PA containers retained identical fingerprints. Shared configuration and deployments were unchanged; owned test containers, children, temporary remote sources and preview server were removed.
+The earlier presentation commit `7a9fbb4f` passed isolated loopback SMTP (1 test / 33 assertions), MySQL subject-boundary tests (2 / 24) and local regressions. This branch cherry-picks that independent commit and updates its notice styling and associated assertions. Those historical results do not validate the new styling in real Gmail/Outlook.
 
-## Integration
+## Release
 
-The branch is `codex/automated-email-presentation`, based on the locally committed mailed-check branch at `165b748d701f26b94a05030c400a64f80ddb283e`. The email commit introduces no migration and can be reviewed independently of the mailed-check feature.
-
-Publication remains local pending the previously identified main-only Actions coordination. Do not run PR or feature-branch Actions. Preserve the main-only workflow changes when integrating, coordinate other active branch owners, and keep the separate mailed-check migration numbering gate in its handoff. These email changes do not enable production AutoPay.
-
-For a repeat isolated staging run, use `scripts/run-automated-email-staging.sh` on a staging Docker host with `AUTOMATED_EMAIL_TEST_IMAGE` set to a trusted matching-lock PHP image. Use a source-only checkout without credentials or real configuration. The script guards ownership, disables networking, enforces resource limits, and removes its test container.
-
-Receipts are retained locally under `C:/Users/fstor/.codex/tmp/pa-automated-email-staging-receipts-20261029/`, `pa-email-local-regression-20261029.log`, and `pa-email-subject-boundary-{red,green}.log`. The synthetic desktop preview is `pa-email-preview-20261029/invoice-desktop.png` in that temporary evidence directory's parent.
+Review and merge through a PR, with local/staging verification before production deployment. Keep Actions main-only. This branch does not enable AutoPay, change receipt accounting, or modify production settings. When later integrating PR #237, retain this presentation version and reconcile duplicate email changes deliberately.

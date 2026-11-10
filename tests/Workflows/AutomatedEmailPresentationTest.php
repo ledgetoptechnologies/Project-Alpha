@@ -35,6 +35,9 @@ final class AutomatedEmailPresentationTest extends TestCase
         self::assertStringContainsString('Unmonitored mailbox. Contact our office for help.', $message->body);
         self::assertStringContainsString('automated', strtolower($message->body));
         self::assertNull($message->replyTo);
+        self::assertStringContainsString('<strong>Automated notification — please do not reply</strong>', $message->body);
+        self::assertStringContainsString('background-color:#fff4ce', $message->body);
+        self::assertLessThan(strpos($message->body, '<h1'), strpos($message->body, '<strong>Automated notification'));
     }
 
     public function testCreatorReplyAddressPreventsContradictoryNoReplyPresentation(): void
@@ -65,6 +68,19 @@ final class AutomatedEmailPresentationTest extends TestCase
         self::assertSame($presented, [$message->subject, $message->fromName, $message->body]);
         self::assertSame(1, substr_count($message->subject, '[Automated]'));
         self::assertTrue($message->presentationApplied);
+    }
+
+    public function testCustomNoticeCannotInjectMarkupAndPlainTextHasNoReplyHeading(): void
+    {
+        $config = ['email_no_reply_notice_enabled' => 1, 'email_no_reply_notice_text' => '<script>bad()</script> Contact our office.'];
+        $message = $this->message();
+        EmailPresentation::apply($message, $config);
+        self::assertStringNotContainsString('<script>', $message->body);
+        self::assertStringContainsString('&lt;script&gt;bad()&lt;/script&gt;', $message->body);
+        $plain = $this->message();
+        $plain->isHtml = false;
+        EmailPresentation::apply($plain, $config);
+        self::assertStringStartsWith('AUTOMATED NOTIFICATION — PLEASE DO NOT REPLY', $plain->body);
     }
 
     public function testExistingSubjectPrefixIsRecognizedWithoutCaseSensitivity(): void
@@ -159,6 +175,8 @@ final class AutomatedEmailPresentationTest extends TestCase
     private function header(string $mime, string $name): string
     {
         preg_match('/^' . preg_quote($name, '/') . ':([^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)/mi', $mime, $matches);
-        return trim(mb_decode_mimeheader((string)preg_replace('/\r?\n[ \t]+/', ' ', $matches[1] ?? '')));
+        $unfolded = (string)preg_replace('/\r?\n[ \t]+/', ' ', $matches[1] ?? '');
+        // Q-encoded MIME headers use underscores for spaces (RFC 2047).
+        return trim(iconv_mime_decode($unfolded, ICONV_MIME_DECODE_CONTINUE_ON_ERROR, 'UTF-8'));
     }
 }
