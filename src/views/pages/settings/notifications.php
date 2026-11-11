@@ -156,8 +156,8 @@
       <label style="display:flex;align-items:start;gap:10px;margin-bottom:12px">
         <input type="checkbox" name="email_no_reply_notice_enabled" value="1" <?php echo !empty($appConfig['email_no_reply_notice_enabled']) ? 'checked' : ''; ?> style="margin-top:3px">
         <div>
-          <div class="font-600">Add automated-message notice to outgoing emails</div>
-          <div style="font-size:13px;color:var(--muted)">Adds a short footer to system emails sent from PA.</div>
+          <div class="font-600">Mark outgoing emails as no-reply</div>
+          <div style="font-size:13px;color:var(--muted)">All system emails show an automated label and message header. Enable this to add NO-REPLY to the sender and show the notice below. Documents with a reply contact keep that address and explain where replies go.</div>
         </div>
       </label>
       <label style="display:block">
