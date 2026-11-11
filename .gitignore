@@ -33,6 +33,8 @@ backups.bak.pre-noenv-test/
 graphify-out/
 graphify-*.json
 .phpunit.cache/
+__pycache__/
+*.pyc
 .codex-worktrees/
 
 # The repository has one canonical Compose file. Host-specific variants stay local.

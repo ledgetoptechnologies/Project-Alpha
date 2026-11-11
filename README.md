@@ -102,6 +102,10 @@ Current boundaries include:
 - A host that can pull public images from `ghcr.io`
 - Ports and reverse-proxy configuration appropriate for your environment
 
+For the prepared public TrueNAS catalog package and the main-only release
+promotion workflow, see [TrueNAS catalog releases](docs/admin/truenas-catalog-release.md).
+The candidate is not yet published in the TrueNAS catalog.
+
 ### Start the published images
 
 1. Clone the repository:
@@ -256,6 +260,7 @@ Key guides:
 
 ## License
 
-The repository currently contains a legacy Project Alpha license in [LICENSE.md](LICENSE.md). A transition to GNU AGPLv3 is planned after contributor relicensing permission is documented. Until the license file is formally replaced, its current terms control use of the project.
+Project Alpha Community Edition is licensed under the [MIT License](LICENSE.md).
+Third-party dependencies retain their own licenses and notices.
 
 Copyright Ledge Top Technologies LLC.

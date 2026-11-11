@@ -1,0 +1,62 @@
+name: Prepare or promote catalog release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable release version (for example 1.2.3; no v prefix)
+        required: true
+        type: string
+      source_sha:
+        description: Full commit SHA already validated by main push workflows
+        required: true
+        type: string
+      publish:
+        description: Publish stable image tags (off means read-only preflight)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-alpha-catalog-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'ledgetoptechnologies/Project-Alpha' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate complete release and optionally publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_PUBLISH: ${{ inputs.publish }}
+        run: |
+          args=(--version "$RELEASE_VERSION" --source-sha "$RELEASE_SOURCE_SHA" --receipt release-receipt.json)
+          if [ "$RELEASE_PUBLISH" = true ]; then args+=(--publish); fi
+          python3 scripts/catalog_release.py "${args[@]}"
+      - name: Retain release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: catalog-release-receipt
+          path: release-receipt.json
+          if-no-files-found: warn

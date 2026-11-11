@@ -1,0 +1,13 @@
+{
+  "description": "Proposed addition to upstream truenas/apps packageRules; not installed or submitted",
+  "matchDatasources": [
+    "docker"
+  ],
+  "matchPackageNames": [
+    "ghcr.io/ledgetoptechnologies/project-alpha-web",
+    "ghcr.io/ledgetoptechnologies/project-alpha-cron",
+    "ghcr.io/ledgetoptechnologies/project-alpha-db"
+  ],
+  "groupName": "project-alpha-release",
+  "minimumGroupSize": 3
+}

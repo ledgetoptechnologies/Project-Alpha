@@ -1,0 +1,18 @@
+images:
+  web_image:
+    repository: ghcr.io/ledgetoptechnologies/project-alpha-web
+    tag: 0.0.0
+  cron_image:
+    repository: ghcr.io/ledgetoptechnologies/project-alpha-cron
+    tag: 0.0.0
+  db_image:
+    repository: ghcr.io/ledgetoptechnologies/project-alpha-db
+    tag: 0.0.0
+consts:
+  web_container_name: web
+  worker_container_name: worker
+  cron_container_name: cron
+  db_container_name: db
+  migrate_container_name: migrate
+  db_user: appuser
+  db_name: project_alpha

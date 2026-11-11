@@ -1,0 +1,49 @@
+resources:
+  limits:
+    cpus: 1
+    memory: 512
+project_alpha:
+  db_password: synthetic-app-password-000
+  db_root_password: synthetic-root-password-000
+  backup_encryption_key: synthetic-backup-key-0000000000000000
+  backup_retention_days: 10
+  trusted_proxies: 192.0.2.10
+  webauthn_origin: https://pa.example.test
+network:
+  web_port:
+    port_number: 31234
+    bind_mode: published
+    host_ips:
+    - 127.0.0.1
+storage:
+  config:
+    type: host_path
+    host_path_config:
+      path: /opt/tests/mnt/project-alpha-hostpath/config
+      create_host_path: true
+      acl_enable: false
+  uploads:
+    type: host_path
+    host_path_config:
+      path: /opt/tests/mnt/project-alpha-hostpath/uploads
+      create_host_path: true
+      acl_enable: false
+  backups:
+    type: host_path
+    host_path_config:
+      path: /opt/tests/mnt/project-alpha-hostpath/backups
+      create_host_path: true
+      acl_enable: false
+  database:
+    type: host_path
+    host_path_config:
+      path: /opt/tests/mnt/project-alpha-hostpath/database
+      create_host_path: true
+      acl_enable: false
+  mysql_keyring:
+    type: host_path
+    host_path_config:
+      path: /opt/tests/mnt/project-alpha-hostpath/mysql_keyring
+      create_host_path: true
+      acl_enable: false
+labels: []

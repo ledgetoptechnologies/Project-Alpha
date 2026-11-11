@@ -1,0 +1,50 @@
+resources:
+  limits:
+    cpus: 1
+    memory: 512
+project_alpha:
+  db_password: synthetic-app-password-000
+  db_root_password: synthetic-root-password-000
+  backup_encryption_key: ''
+  backup_retention_days: 10
+  trusted_proxies: ''
+  webauthn_origin: ''
+network:
+  web_port:
+    port_number: 31234
+    bind_mode: published
+    host_ips:
+    - 127.0.0.1
+storage:
+  config:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: config
+      create_host_path: true
+  uploads:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: uploads
+      create_host_path: true
+  backups:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: backups
+      create_host_path: true
+  database:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: database
+      create_host_path: true
+  mysql_keyring:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: mysql_keyring
+      create_host_path: true
+ix_volumes:
+  config: /opt/tests/mnt/project-alpha/config
+  uploads: /opt/tests/mnt/project-alpha/uploads
+  backups: /opt/tests/mnt/project-alpha/backups
+  database: /opt/tests/mnt/project-alpha/database
+  mysql_keyring: /opt/tests/mnt/project-alpha/mysql_keyring
+labels: []
