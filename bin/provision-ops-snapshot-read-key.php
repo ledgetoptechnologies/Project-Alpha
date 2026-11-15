@@ -4,8 +4,10 @@ declare(strict_types=1);
 require_once __DIR__.'/../src/migrations/migration_lib.php';
 require_once __DIR__.'/../src/services/OpsSnapshotReadKeyProvisioner.php';
 require_once __DIR__.'/../src/services/LocalOperatorKeyReceipt.php';
+require_once __DIR__.'/../src/services/EncryptedOpsSnapshotKeyReceipt.php';
 use App\Services\OpsSnapshotReadKeyProvisioner;
 use App\Services\LocalOperatorKeyReceipt;
+use App\Services\EncryptedOpsSnapshotKeyReceipt;
 
 try {
     OpsSnapshotReadKeyProvisioner::operator();
@@ -36,7 +38,7 @@ try {
     if(!hash_equals($values['reviewed-plan-sha256'],hash_file('sha256',$values['plan-file'])) || array_keys($plan)!==['version','provisioning','secretFile']
         || $plan['version']!==1 || !is_array($plan['provisioning']) || !is_string($plan['secretFile']))throw new RuntimeException('reviewed_plan_changed');
     OpsSnapshotReadKeyProvisioner::validateReviewedPlan($plan['provisioning']);
-    $vault=new LocalOperatorKeyReceipt($plan['secretFile']); $vault->lock(); $existed=$vault->exists();
+    $vault=new EncryptedOpsSnapshotKeyReceipt($plan['secretFile']); $vault->lock(); $existed=$vault->exists();
     if(!$existed && (isset($flags['--reconcile']) || isset($flags['--resume-prepared'])))throw new RuntimeException('existing_private_receipt_required');
     $material=$existed?$vault->material($plan):$vault->create($plan);
     $readOnly=isset($flags['--reconcile']) || ($existed && !isset($flags['--resume-prepared']));
@@ -45,6 +47,6 @@ try {
     $vault->journal(['at'=>gmdate('c'),'operation'=>$readOnly?'reconcile':'apply','result'=>$result]);
     echo json_encode($result,JSON_THROW_ON_ERROR).PHP_EOL; exit($result['state']==='not_committed'?3:0);
 } catch(Throwable) {
-    if(isset($vault) && $vault instanceof LocalOperatorKeyReceipt) { try { $vault->journal(['at'=>gmdate('c'),'state'=>'held_reconciliation_required']); } catch(Throwable) {} }
+    if(isset($vault) && $vault instanceof EncryptedOpsSnapshotKeyReceipt) { try { $vault->journal(['at'=>gmdate('c'),'state'=>'held_reconciliation_required']); } catch(Throwable) {} }
     fwrite(STDERR,"Staging snapshot key provisioning held; reconcile the private receipt before retrying.\n"); exit(1);
 }

@@ -4,8 +4,10 @@ declare(strict_types=1);
 // Synthetic, network-free Linux-root test runner; no application/vendor bootstrap.
 require_once dirname(__DIR__,2).'/src/services/OpsSnapshotReadKeyProvisioner.php';
 require_once dirname(__DIR__,2).'/src/services/LocalOperatorKeyReceipt.php';
+require_once dirname(__DIR__,2).'/src/services/EncryptedOpsSnapshotKeyReceipt.php';
 use App\Services\OpsSnapshotReadKeyProvisioner as Provisioner;
 use App\Services\LocalOperatorKeyReceipt as Receipt;
+use App\Services\EncryptedOpsSnapshotKeyReceipt as EncryptedReceipt;
 
 final class SnapshotLostAckPDO extends PDO
 {
@@ -47,7 +49,7 @@ function fixture(): SnapshotLostAckPDO
 function countRows(PDO $pdo,string $table): int { return (int)$pdo->query('SELECT COUNT(*) FROM '.$table)->fetchColumn(); }
 
 if(!function_exists('posix_geteuid') || posix_geteuid()!==0) {fwrite(STDERR,"Requires disposable Linux root CLI with PDO SQLite.\n");exit(2);}
-$_SESSION=[];$cases=[];
+$_SESSION=[];putenv(EncryptedReceipt::KEY_ENV.'='.base64_encode(str_repeat('k',32)));$cases=[];
 $cases['dry_run_no_write_or_secret']=function(): void {
     $db=fixture();$plan=(new Provisioner($db))->dryRun(input());check(countRows($db,'api_keys')===1 && countRows($db,'system_audit')===0);
     check($plan['scope']==='ops.sync.read' && $plan['contract']==='legacy_instance_scoped');check(!str_contains(json_encode($plan),'pa_live_'));
@@ -55,6 +57,13 @@ $cases['dry_run_no_write_or_secret']=function(): void {
 $cases['legacy_identity_not_v2_identity']=function(): void {
     $db=fixture();$service=new Provisioner($db);$service->dryRun(input());$wrong=input();$wrong['sourceInstanceId']='923e4567-e89b-42d3-a456-426614174000';
     refuses(fn()=>$service->dryRun($wrong),'legacy_source_identity_changed');
+};
+$cases['canonical_legacy_uuid_v1_supported_with_exact_equality_request_still_v4']=function(): void {
+    $db=fixture();$service=new Provisioner($db);$source='f47ac10b-58cc-11cf-a447-001122334455';$db->prepare('UPDATE sync_source_identity SET source_instance_id=?')->execute([$source]);$selected=input();$selected['sourceInstanceId']=$source;
+    $plan=$service->dryRun($selected);check($service->apply($plan,secret())['state']==='created');
+    $bad=$selected;$bad['requestId']=$source;refuses(fn()=>$service->dryRun($bad),'invalid_request');
+    foreach(['F47ac10b-58cc-11cf-a447-001122334455','f47ac10b-58cc-61cf-a447-001122334455','f47ac10b-58cc-11cf-7447-001122334455',$source.' ',str_replace('-','',$source)] as $invalid){$bad=$selected;$bad['sourceInstanceId']=$invalid;refuses(fn()=>$service->dryRun($bad),'invalid_request');}
+    $bad=$selected;$bad['sourceInstanceId']='f47ac10b-58cc-11cf-a447-001122334456';refuses(fn()=>$service->dryRun($bad),'legacy_source_identity_changed');
 };
 $cases['fixed_scope_unbound_audited_without_other_key_or_generations_changes']=function(): void {
     $db=fixture();$before=$db->query('SELECT * FROM api_keys WHERE id=7')->fetch(PDO::FETCH_ASSOC);$service=new Provisioner($db);$plan=$service->dryRun(input());$result=$service->apply($plan,secret());
@@ -122,9 +131,37 @@ $cases['unsafe_private_paths_refused']=function(): void {
     finally{unlink($dir.'/link');unlink($path);rmdir($dir);}
 };
 $cases['private_receipt_persists_before_database_apply_and_is_immutable']=function(): void {
-    $dir='/tmp/snapshot-receipt-'.bin2hex(random_bytes(4));mkdir($dir,0700);$db=fixture();$service=new Provisioner($db);$plan=['version'=>1,'provisioning'=>$service->dryRun(input()),'secretFile'=>$dir.'/key.json'];$vault=new Receipt($plan['secretFile']);$vault->lock();
-    try{$material=$vault->create($plan);$bytes=file_get_contents($plan['secretFile']);check((fileperms($plan['secretFile'])&0777)===0600);check(countRows($db,'api_keys')===1);$vault->journal(['state'=>'attempting']);$result=$service->apply($plan['provisioning'],$material['secret']);$vault->journal($result);check(file_get_contents($plan['secretFile'])===$bytes);check($vault->material($plan)===$material);refuses(fn()=>$vault->create($plan));$changed=$plan;$changed['version']=2;refuses(fn()=>$vault->material($changed),'private_receipt_request_mismatch');$second=new Receipt($plan['secretFile']);refuses(fn()=>$second->lock(),'request_in_progress');unset($second);}
+    $dir='/tmp/snapshot-receipt-'.bin2hex(random_bytes(4));mkdir($dir,0700);$db=fixture();$service=new Provisioner($db);$plan=['version'=>1,'provisioning'=>$service->dryRun(input()),'secretFile'=>$dir.'/key.json'];$vault=new EncryptedReceipt($plan['secretFile']);$vault->lock();
+    try{$material=$vault->create($plan);$bytes=file_get_contents($plan['secretFile']);check((fileperms($plan['secretFile'])&0777)===0600);check(!str_contains($bytes,$material['secret']) && !str_contains($bytes,'pa_live_'));check(countRows($db,'api_keys')===1);$vault->journal(['state'=>'attempting']);$result=$service->apply($plan['provisioning'],$material['secret']);$vault->journal($result);check(file_get_contents($plan['secretFile'])===$bytes);check($vault->material($plan)===$material);refuses(fn()=>$vault->create($plan));$changed=$plan;$changed['version']=2;refuses(fn()=>$vault->material($changed),'encrypted_receipt_unavailable');$second=new EncryptedReceipt($plan['secretFile']);refuses(fn()=>$second->lock(),'request_in_progress');unset($second);}
     finally{unset($vault);foreach(glob($dir.'/*')?:[] as $file)unlink($file);rmdir($dir);}
+};
+$cases['encrypted_receipt_missing_invalid_and_wrong_wrapping_keys_fail_closed']=function(): void {
+    $dir='/tmp/snapshot-key-tests-'.bin2hex(random_bytes(4));mkdir($dir,0700);$path=$dir.'/key.json';$plan=['reviewed'=>'synthetic'];$correct=base64_encode(str_repeat('k',32));
+    try{
+        $alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';$noncanonical=$correct;$noncanonical[42]=$alphabet[strpos($alphabet,$correct[42])+1];
+        foreach([null,'',base64_encode(str_repeat('k',31)),$correct."\n",str_repeat('a',44),$noncanonical] as $bad){if($bad===null)putenv(EncryptedReceipt::KEY_ENV);else putenv(EncryptedReceipt::KEY_ENV.'='.$bad);refuses(fn()=>new EncryptedReceipt($path),'encrypted_receipt_key_unavailable');check(!file_exists($path));}
+        putenv(EncryptedReceipt::KEY_ENV.'='.$correct);$vault=new EncryptedReceipt($path);$vault->lock();$vault->create($plan);unset($vault);$bytes=file_get_contents($path);
+        putenv(EncryptedReceipt::KEY_ENV.'='.base64_encode(str_repeat('w',32)));$wrong=new EncryptedReceipt($path);$wrong->lock();refuses(fn()=>$wrong->material($plan),'encrypted_receipt_unavailable');unset($wrong);check(file_get_contents($path)===$bytes);
+    }finally{putenv(EncryptedReceipt::KEY_ENV.'='.$correct);foreach(glob($dir.'/*')?:[] as $file)unlink($file);rmdir($dir);}
+};
+$cases['encrypted_receipt_plan_path_nonce_tag_ciphertext_and_format_tamper_refused']=function(): void {
+    $dir='/tmp/snapshot-tamper-'.bin2hex(random_bytes(4));mkdir($dir,0700);$path=$dir.'/key.json';$plan=['version'=>1,'input'=>['source'=>'synthetic']];$vault=new EncryptedReceipt($path);$vault->lock();$vault->create($plan);unset($vault);$bytes=file_get_contents($path);$original=json_decode($bytes,true);
+    try{
+        foreach(['nonce','tag','ciphertext','format','version','algorithm'] as $field){$changed=$original;if(in_array($field,['nonce','tag','ciphertext'],true)){$raw=base64_decode($changed[$field]);$raw[0]=chr(ord($raw[0])^1);$changed[$field]=base64_encode($raw);}else $changed[$field]=$field==='version'?2:'changed';file_put_contents($path,json_encode($changed));$check=new EncryptedReceipt($path);$check->lock();refuses(fn()=>$check->material($plan),'encrypted_receipt_unavailable');unset($check);}
+        file_put_contents($path,$bytes);$check=new EncryptedReceipt($path);$check->lock();refuses(fn()=>$check->material(['version'=>1,'input'=>['source'=>'other']]),'encrypted_receipt_unavailable');unset($check);
+        $copy=$dir.'/copy.json';copy($path,$copy);chmod($copy,0600);$check=new EncryptedReceipt($copy);$check->lock();refuses(fn()=>$check->material($plan),'encrypted_receipt_unavailable');unset($check);
+        file_put_contents($path,json_encode(['version'=>1,'plan'=>$plan,'secret'=>secret()]));$check=new EncryptedReceipt($path);$check->lock();refuses(fn()=>$check->material($plan),'encrypted_receipt_unavailable');refuses(fn()=>$check->create($plan),'encrypted_receipt_already_exists');unset($check);
+    }finally{foreach(glob($dir.'/*')?:[] as $file)unlink($file);rmdir($dir);}
+};
+$cases['encrypted_receipt_uses_fresh_gcm_nonces']=function(): void {
+    $dir='/tmp/snapshot-nonces-'.bin2hex(random_bytes(4));mkdir($dir,0700);$nonces=[];$tags=[];
+    try{foreach(['one','two'] as $name){$path=$dir.'/'.$name.'.json';$vault=new EncryptedReceipt($path);$vault->lock();$vault->create(['same'=>'review']);unset($vault);$envelope=Receipt::read($path);$nonces[]=$envelope['nonce'];$tags[]=$envelope['tag'];check(strlen(base64_decode($envelope['nonce']))===12 && strlen(base64_decode($envelope['tag']))===16);}check($nonces[0]!==$nonces[1] && $tags[0]!==$tags[1]);}
+    finally{foreach(glob($dir.'/*')?:[] as $file)unlink($file);rmdir($dir);}
+};
+$cases['encrypted_destructor_releases_lock_with_optional_sodium_cleanup']=function(): void {
+    $dir='/tmp/snapshot-cleanup-'.bin2hex(random_bytes(4));mkdir($dir,0700);$path=$dir.'/key.json';$plan=['review'=>'synthetic'];
+    try{$vault=new EncryptedReceipt($path);$vault->lock();$material=$vault->create($plan);unset($vault);$again=new EncryptedReceipt($path);$again->lock();check($again->material($plan)===$material);unset($again);}
+    finally{foreach(glob($dir.'/*')?:[] as $file)unlink($file);rmdir($dir);}
 };
 $passed=0;
 foreach($cases as $name=>$case){try{$case();$passed++;echo 'PASS '.$name.PHP_EOL;}catch(Throwable $error){fwrite(STDERR,'FAIL '.$name.': '.$error->getMessage().PHP_EOL);exit(1);}}

@@ -21,7 +21,9 @@ the server's approved secret keeper; never embed it in an iPad build.
 The operator must independently verify the actual installation, source ownership
 and intended staging account before preparing a plan. Use the **legacy**
 `sync_source_identity.source_instance_id`, not the separate API-v2 history source
-or application UUID. The tool compares that existing identity and the configured
+or application UUID. Legacy identities accept canonical lowercase UUID versions
+1-5, matching `SyncContractV2Service` and migration 0064's MySQL `UUID()` fallback
+(version 1); newly chosen request IDs must still be UUIDv4. The tool compares that existing identity and the configured
 Ops application key, locks them during issuance, and binds the reviewed public
 staging origin to the plan/audit. Only the two established Stage One/Stage Two
 origins are accepted. A supplied origin is an operator assertion; it does not
@@ -35,6 +37,35 @@ The tool never migrates or repairs schema. It reuses the installed
 the existing root-CLI/private-path contract, without invoking capabilities-key
 issuance. Their existing utility dependencies must be available in the reviewed
 installation. No new environment marker, backup or vault prerequisite is added.
+
+## Encrypted credential receipt and wrapping-key custody
+
+The snapshot CLI uses `EncryptedOpsSnapshotKeyReceipt`, which composes the existing
+root/private-path/lock/fsync/journal primitives but never calls their plaintext
+secret creation or loading methods. The operational receipt stores only an
+AES-256-GCM ciphertext envelope, with a fresh 12-byte nonce and 16-byte tag. The
+authenticated metadata binds format/version, algorithm, the exact reviewed plan
+and the canonical absolute secret-file path. A changed plan, path, key or envelope
+fails closed. Keep the same stable receipt mount/path for reconciliation.
+
+Apply and reconcile require a 32-byte wrapping key, encoded in canonical standard
+base64, inherited transiently as `PA_OPS_SNAPSHOT_RECEIPT_KEY_B64`. The approved
+operator transport supplies it privately to the PHP process; **never put its value
+in command-line arguments, shell history, Docker `-e NAME=VALUE` arguments, files,
+images, logs, Git or chat**. The Windows operator owns fresh key creation and
+CurrentUser DPAPI custody before operational apply. This source does not create
+a wrapping-key file, secret-custody service, vault or backup workflow. The key must
+be recoverable through that existing approved custody path for later reconcile.
+Clearing an in-memory property on object destruction is best effort; it does not
+claim to wipe the process environment, every copied PHP string or operator memory.
+
+Dry run neither needs nor loads the wrapping key and generates no snapshot
+secret. Missing or invalid wrapping material refuses apply/reconcile before any
+snapshot secret is generated or database row is changed. A valid but wrong key
+cannot authenticate an existing receipt. The previous plaintext receipt format is
+unsupported and held unchanged; it is never automatically migrated, overwritten
+or used to issue a replacement key. Metadata-only journals do not contain either
+the snapshot secret or wrapping material.
 
 Choose the destination's existing approved durable private receipt location:
 root-owned, parent mode 0700, files mode 0600, outside every webroot, with no
@@ -67,8 +98,9 @@ php bin/provision-ops-snapshot-read-key.php --apply \
   --confirm-create-staging-snapshot-key
 ```
 
-After metadata validation, a new immutable secret receipt is exclusively created,
-flushed and fsynced before any database mutation. An attempt journal is also
+After metadata and wrapping-key validation, a new immutable encrypted secret
+receipt is exclusively created, flushed, fsynced and authenticated from its durable
+bytes before any database mutation. An attempt journal is also
 durably created. A single database transaction locks the legacy source and public
 configuration rows, rechecks the reviewed configuration, inserts the fixed-scope
 unbound key and verifies its exact audit and stored scope/binding. Audit failure
@@ -103,8 +135,11 @@ php bin/provision-ops-snapshot-read-key.php --reconcile \
 Source-row locking serializes requests on MySQL even when their receipt paths
 differ. The deterministic request name and audit request UUID detect replay with
 different material. The local receipt lock rejects overlapping use of one file.
-Plaintext is available only from the original private receipt for the approved
-destination's secret mechanism; do not paste it into chat, logs or source control.
+Plaintext is available only in the approved operator process after authenticated
+decryption of the original receipt for the destination's supported private secret
+mechanism; do not paste it into chat, logs or source control. The same encrypted
+receipt is retained byte-for-byte through lost acknowledgements, replay and
+explicit resume.
 
 ## Validation
 
@@ -118,8 +153,9 @@ php tests/standalone/ops-snapshot-read-key.php
 It covers legacy/v2 identity distinction, fixed scope/null binding, unchanged
 existing keys/generations, source/app/config/plan substitution, revoked and
 tampered keys, audit failure, trigger-induced scope mutation, duplicate requests,
-lost commit acknowledgement, read-only reconciliation, private immutable receipts
-and path/locking refusal. Synthetic files are created only under its private test
+lost commit acknowledgement, read-only reconciliation, private immutable encrypted
+receipts, missing/invalid/wrong wrapping keys, plan/path/envelope tamper, fresh GCM
+nonce/tag lengths and path/locking refusal. Synthetic files are created only under its private test
 directory and removed at test completion.
 
 The additional standalone MySQL harness requires an already-created disposable
@@ -136,7 +172,11 @@ PA_TEST_DISPOSABLE_SNAPSHOT_KEYS=1 php tests/standalone/ops-snapshot-read-key-my
 This exercises MySQL JSON/audit and transaction behavior, lost commit
 acknowledgement, nontransactional-table refusal, complete CLI dry-run/reviewed
 apply/replay, prepared-receipt reconciliation/resume, secret-free output and
-concurrent independent CLI processes with different receipt paths for one request.
+concurrent independent CLI processes with different encrypted receipt paths for
+one request. It also proves missing-key apply generates no receipt/grant, dry run
+works without a key, wrong-key/tampered receipts add no grant, and old plaintext
+receipts are held unchanged even with explicit resume. Test wrapping keys are
+fake process-local fixture values, never operational credentials.
 It tests a minimal realistic key/audit/source/config schema, not a full installation
 migration or actual API authentication. Operator target verification, current
 installed dependency compatibility and owner staging acceptance remain necessary

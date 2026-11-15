@@ -26,7 +26,13 @@ final class OpsSnapshotReadKeyProvisioner
         $keys = ['requestId', 'sourceInstanceId', 'applicationKey', 'stagingOrigin'];
         if (count($input)!==count($keys) || array_diff($keys,array_keys($input))) throw new RuntimeException('invalid_request');
         foreach (['requestId','sourceInstanceId'] as $key) {
-            if (!is_string($input[$key]) || !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D',$input[$key])) throw new RuntimeException('invalid_request');
+            // Migration 0064 uses MySQL UUID() (v1) or the retained integration
+            // identity; SyncContractV2Service supports canonical UUID versions 1-5.
+            // New operator request IDs remain strictly v4.
+            $pattern=$key==='requestId'
+                ? '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D'
+                : '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
+            if (!is_string($input[$key]) || !preg_match($pattern,$input[$key])) throw new RuntimeException('invalid_request');
         }
         if (!is_string($input['applicationKey']) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/D',$input['applicationKey'])
             || !in_array($input['stagingOrigin'],self::ORIGINS,true)) throw new RuntimeException('invalid_staging_target');
