@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../utils/recurring_services.php';
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {
-    header('Location: /?page=contract/long-term-contracts-list&error=Invalid%20contract%20ID');
+    header('Location: /?page=contract/contracts-list&kind=recurring&error=Invalid%20contract%20ID');
     exit;
 }
 require_record_ownership($pdo, 'contracts', $id);
@@ -34,12 +34,12 @@ try {
     
     $pdo->commit();
     
-    header('Location: /?page=contract/long-term-contracts-list&paused=1');
+    header('Location: /?page=contract/contracts-list&kind=recurring&paused=1');
     exit;
     
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[long_term_contract_pause] Error: ' . $e->getMessage());
-    header('Location: /?page=contract/long-term-contracts-list&error=' . urlencode($e->getMessage()));
+    header('Location: /?page=contract/contracts-list&kind=recurring&error=' . urlencode($e->getMessage()));
     exit;
 }

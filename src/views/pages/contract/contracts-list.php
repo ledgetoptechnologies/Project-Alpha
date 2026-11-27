@@ -1,244 +1,257 @@
 <?php
-// src/views/pages/contracts-list.php
+// src/views/pages/contract/contracts-list.php
+// One list for every contract kind (one-time, recurring, as-needed).
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/document_organization.php';
-require_once __DIR__ . '/../../../utils/csrf.php';
-require_once __DIR__ . '/../../../utils/twig.php';
 require_once __DIR__ . '/../../../utils/acl.php';
-$client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
-$client_name = trim($_GET['client'] ?? '');
-$start = $_GET['start'] ?? '';
-$end = $_GET['end'] ?? '';
-$project_code = trim($_GET['project_code'] ?? '');
-$doc_no = isset($_GET['doc_number']) ? (int)$_GET['doc_number'] : 0;
-$status = $_GET['status'] ?? '';
-$min_price = isset($_GET['min_price']) ? (float)$_GET['min_price'] : null;
-$max_price = isset($_GET['max_price']) ? (float)$_GET['max_price'] : null;
-$where=['(co.contract_type IS NULL OR co.contract_type = "regular")'];$p=[];
-if($client_id>0){$where[]='co.client_id=?';$p[]=$client_id;}
-elseif($client_name!==''){ $where[]='(c.name LIKE ? OR o.name LIKE ?)'; $p[]='%'.$client_name.'%'; $p[]='%'.$client_name.'%'; }
-if($start!==''){$where[]='co.created_at>=?';$p[]=$start.' 00:00:00';}
-if($end!==''){$where[]='co.created_at<=?';$p[]=$end.' 23:59:59';}
-if($status!==''){ $where[]='co.status=?'; $p[] = $status; }
-if($project_code!==''){ $where[]='co.project_code LIKE ?'; $p[] = $project_code.'%'; }
-if($doc_no>0){ $where[]='co.doc_number=?'; $p[] = $doc_no; }
-if($min_price !== null){ $where[]='co.total>=?'; $p[] = $min_price; }
-if($max_price !== null){ $where[]='co.total<=?'; $p[] = $max_price; }
+require_once __DIR__ . '/../../../utils/contract_billing_start.php';
+require_once __DIR__ . '/../../components/document_list.php';
 
-[$scopeWhere, $scopeParams] = scope_clause($pdo, 'co', (int)$_SESSION['user']['id']);
-if ($scopeWhere) {
-    $where[] = trim($scopeWhere);
-    $p = array_merge($p, $scopeParams);
+$page = 'contract/contracts-list';
+$kind = doc_list_kind();
+$statuses = ['all' => 'All', 'pending' => 'Pending', 'active' => 'Active', 'paused' => 'Paused', 'completed' => 'Completed', 'cancelled' => 'Cancelled', 'void' => 'Void'];
+$status = (string)($_GET['status'] ?? 'all');
+if (!isset($statuses[$status]) && !in_array($status, ['draft', 'closing', 'denied'], true)) {
+    $status = 'all';
 }
 
-$per = (int)($_GET['per_page'] ?? 50); if(!in_array($per,[50,100],true)) $per=50;
-$pageN = max(1, (int)($_GET['p'] ?? 1));
-$offset = ($pageN - 1) * $per;
+$where = [];
+$params = [];
+if ($cond = doc_list_kind_condition($kind, 'co.contract_type')) {
+    $where[] = $cond;
+}
+if ($status !== 'all') {
+    $where[] = 'co.status = ?';
+    $params[] = $status;
+}
+doc_list_common_filters('co', $where, $params);
+doc_list_amount_filter("(CASE WHEN co.contract_type = 'on_demand' THEN co.price_per_invoice ELSE co.total END)", $where, $params);
+[$scopeWhere, $scopeParams] = scope_clause($pdo, 'co', (int)$_SESSION['user']['id']);
+if ($scopeWhere !== '') {
+    $where[] = $scopeWhere;
+    $params = array_merge($params, $scopeParams);
+}
+[$per, $pageN, $offset] = doc_list_paging();
 
-$documentJoins = ' JOIN clients c ON c.id=co.client_id' . pa_document_effective_organization_joins('co', 'c');
-$sqlCount = 'SELECT COUNT(*) FROM contracts co'.$documentJoins.($where?' WHERE '.implode(' AND ',$where):'');
-$stc=$pdo->prepare($sqlCount);$stc->execute($p);$total=(int)$stc->fetchColumn();
+$from = ' FROM contracts co LEFT JOIN clients c ON c.id=co.client_id' . pa_document_effective_organization_joins('co', 'c')
+    . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
+$count = $pdo->prepare('SELECT COUNT(*)' . $from);
+$count->execute($params);
+$total = (int)$count->fetchColumn();
 
-$has_signed = (bool)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='contracts' AND COLUMN_NAME='signed_pdf_path'")->fetchColumn();
-$select_signed = $has_signed ? 'co.signed_pdf_path' : 'NULL AS signed_pdf_path';
-$sql="SELECT co.id, co.doc_number, co.project_code, co.status, co.total, co.deposit_type, co.deposit_amount, co.deposit_paid, co.signed_at, {$select_signed}, c.name client, c.id AS client_id, o.name organization_name FROM contracts co{$documentJoins}";
-if($where){$sql.=' WHERE '.implode(' AND ',$where);} $sql.=" ORDER BY co.created_at DESC LIMIT $per OFFSET $offset";
-$st=$pdo->prepare($sql);$st->execute($p);$rows=$st->fetchAll();
-$hasArchived = (bool)$pdo->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='clients' AND COLUMN_NAME='archived'")->fetchColumn();
-$clients=$pdo->query('SELECT id,name FROM clients '.($hasArchived?'WHERE archived=0 ':'').'ORDER BY name')->fetchAll();
+// Recurring-only lookups sit inside CASE so other kinds skip the subqueries.
+$latestInvoice = 'FROM invoices i WHERE i.contract_id=co.id AND i.invoice_type="long_term" ORDER BY i.created_at DESC, i.id DESC LIMIT 1';
+$st = $pdo->prepare("SELECT co.id, co.doc_number, co.project_id, co.project_code, co.contract_type, co.status, co.total, co.subtotal,
+        co.deposit_type, co.deposit_amount, co.deposit_paid, co.start_date, co.end_date, co.billing_interval_count, co.billing_interval_unit,
+        co.pricing_type, co.price_per_invoice, co.total_invoiced, co.next_invoice_date, co.last_invoice_date, co.invoices_generated,
+        co.invoice_count, co.signed_at, co.signed_pdf_path, co.created_at,
+        c.id AS client_id, c.name AS client_name, o.name AS organization_name,
+        document_project.invoice_billing_period AS project_invoice_billing_period,
+        CASE WHEN co.contract_type='long_term' THEN (SELECT i.id {$latestInvoice}) END AS latest_invoice_id,
+        CASE WHEN co.contract_type='long_term' THEN (SELECT i.sent_at {$latestInvoice}) END AS latest_invoice_sent_at,
+        CASE WHEN co.contract_type='long_term' THEN (SELECT COUNT(*) FROM contract_recurring_services rs WHERE rs.contract_id=co.id AND rs.status<>\"ended\") END AS recurring_service_count,
+        CASE WHEN co.contract_type='long_term' THEN (SELECT COALESCE(SUM(rs.amount),0) FROM contract_recurring_services rs WHERE rs.contract_id=co.id AND rs.status IN (\"active\",\"paused\") AND rs.approval_status=\"approved\" AND rs.next_invoice_date=co.next_invoice_date) END AS next_service_amount"
+    . $from . " ORDER BY co.created_at DESC LIMIT {$per} OFFSET {$offset}");
+$st->execute($params);
+$rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+$messages = [];
+$banners = [
+    'created' => ['ok', 'Contract created.'],
+    'signed' => ['ok', $kind === 'as_needed' ? 'Signed PDF uploaded. Review the contract, then activate it when ready.' : 'Signed PDF uploaded.'],
+    'activated' => ['ok', 'Contract activated.'],
+    'billing_started' => ['ok', 'Billing started for the recurring contract.'],
+    'deposit_received' => ['ok', 'Deposit marked as received.'],
+    'completed' => ['ok', 'Contract completed.'],
+    'paused' => ['info', 'Contract paused.'],
+    'resumed' => ['ok', 'Contract resumed.'],
+    'terminated' => ['info', 'Contract terminated. Future invoicing has stopped.'],
+    'denied' => ['info', 'Contract denied.'],
+    'emailed' => ['ok', 'Email sent.'],
+];
+foreach ($banners as $key => $banner) {
+    if (!empty($_GET[$key])) {
+        $messages[] = $banner;
+    }
+}
+if (!empty($_GET['email_err'])) {
+    $messages[] = ['bad', 'Email failed: ' . $_GET['email_err']];
+}
+if (!empty($_GET['error'])) {
+    $messages[] = ['bad', (string)$_GET['error']];
+}
+
+$userId = (int)$_SESSION['user']['id'];
+$isAdmin = ($_SESSION['user']['role'] ?? '') === 'admin';
+$canCreate = $isAdmin || user_can($pdo, $userId, 'contracts.create', 0);
+
+$prefix = ['one_time' => 'C', 'recurring' => 'LTC', 'as_needed' => 'ODC'];
+$today = date('Y-m-d');
+$hasAsNeeded = false;
 ?>
-<section>
-  <h2>Contracts</h2>
-  <?php if (!empty($_GET['emailed'])): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Email sent.</div>
-  <?php elseif (!empty($_GET['email_err'])): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fff1f2;color:#881337;border:1px solid #fca5a5">Email failed: <?php echo htmlspecialchars($_GET['email_err']); ?></div>
-  <?php endif; ?>
-  <?php if (!empty($_GET['error'])): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fff1f2;color:#881337;border:1px solid #fca5a5"><?php echo htmlspecialchars((string)$_GET['error']); ?></div>
-  <?php endif; ?>
-  <?php if (!empty($_GET['signed'])): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Signed PDF uploaded.</div>
-  <?php endif; ?>
-  <?php if (!empty($_GET['deposit_received'])): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0">Deposit marked as received.</div>
-  <?php endif; ?>
-  <?php
-  $filterConfig = [
-      'page' => 'contract/contracts-list',
-      'filters' => [
-          'client' => [
-              'type' => 'client_autocomplete',
-              'label' => 'Client',
-              'value' => $client_name,
-              'id_value' => $client_id
-          ],
-          'status' => [
-              'type' => 'select',
-              'label' => 'Status',
-              'value' => $status,
-              'options' => [
-                  ['value' => '', 'label' => 'All'],
-                  ['value' => 'pending', 'label' => 'Pending'],
-                  ['value' => 'active', 'label' => 'Active'],
-                  ['value' => 'completed', 'label' => 'Completed'],
-                  ['value' => 'cancelled', 'label' => 'Cancelled'],
-                  ['value' => 'void', 'label' => 'Void']
-              ]
-          ],
-          'start' => [
-              'type' => 'date',
-              'label' => 'Start',
-              'value' => $start
-          ],
-          'end' => [
-              'type' => 'date',
-              'label' => 'End',
-              'value' => $end
-          ],
-          'min_price' => [
-              'type' => 'number',
-              'label' => 'Min ($)',
-              'value' => $min_price ?? '',
-              'step' => '0.01'
-          ],
-          'max_price' => [
-              'type' => 'number',
-              'label' => 'Max ($)',
-              'value' => $max_price ?? '',
-              'step' => '0.01'
-          ],
-          'project_code' => [
-              'type' => 'text',
-              'label' => 'Project ID',
-              'value' => $project_code,
-              'placeholder' => 'PA-2025'
-          ],
-          'doc_number' => [
-              'type' => 'number',
-              'label' => 'Doc #',
-              'value' => $doc_no
-          ]
-      ]
-  ];
-  
-  // Render the filter using Twig template
-  echo render_template('components/document-filter.html.twig', $filterConfig);
-  ?>
-
-  <div style="overflow:auto">
-    <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;box-shadow:0 6px 18px rgba(11,18,32,0.06)">
+<section class="doc-list">
+  <?php doc_list_render_top([
+      'title' => 'Contracts',
+      'page' => $page,
+      'new_url' => $canCreate ? '/?page=contract/contracts-create' : null,
+      'new_label' => '+ New contract',
+      'statuses' => $statuses,
+      'status' => $status,
+      'messages' => $messages,
+  ]); ?>
+  <div class="pa-table-wrap">
+    <table class="pa-table">
       <thead>
-        <tr style="text-align:left;border-bottom:1px solid #eee">
-          <th style="padding:10px">No.</th>
-          <th style="padding:10px">Project</th>
-          <th style="padding:10px">Customer</th>
-          <th style="padding:10px">Contact</th>
-          <th style="padding:10px">Status</th>
-          <th style="padding:10px">Total</th>
-          <th style="padding:10px">Actions</th>
-          <th style="padding:10px">Edit</th>
-        </tr>
+        <tr><th>No.</th><th>Client</th><th>Kind</th><th>Status</th><th class="doc-amount">Amount</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr>
       </thead>
       <tbody>
-        <?php foreach ($rows as $r): ?>
-<?php 
-  // active = yellow, completed = green, denied/cancelled = red, draft = light yellow
-  $rowStyle = ($r['status']==='active') ? 'background:#fffbeb;' : (($r['status']==='completed') ? 'background:#ecfdf5;' : ((in_array($r['status'], ['cancelled','denied'], true)) ? 'background:#fef2f2;' : (($r['status']==='draft') ? 'background:#fdfdea;' : '')));
-?>
-          <tr style="border-top:1px solid #f3f4f6;<?php echo $rowStyle; ?>">
-            <td style="padding:10px"><a href="/?page=contract/contract-details&id=<?php echo (int)$r['id']; ?>" style="text-decoration:none;color:inherit">C-<?php echo (int)($r['doc_number'] ?? $r['id']); ?></a></td>
-            <td style="padding:10px"><?php echo htmlspecialchars($r['project_code'] ?? ''); ?></td>
-            <td style="padding:10px"><?php echo htmlspecialchars($r['organization_name'] ?: $r['client']); ?></td>
-            <td style="padding:10px"><?php if (!empty($r['organization_name'])): ?><a href="/?page=client/clients-list&selected_client_id=<?php echo (int)$r['client_id']; ?>"><?php echo htmlspecialchars($r['client']); ?></a><?php endif; ?></td>
-            <td style="padding:10px;text-transform:capitalize"><?php echo htmlspecialchars($r['status']); ?></td>
-            <td style="padding:10px">$<?php echo number_format((float)($r['total'] ?? 0),2); ?></td>
-            <td style="padding:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-              <a href="/?page=contract/contract-details&id=<?php echo (int)$r['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">View</a>
-              <?php $cst = strtolower((string)$r['status']); if (!in_array($cst, ['denied','cancelled','void'], true)): ?>
-              <form method="post" action="/?page=contract/email-send" style="display:inline">
-                <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                <input type="hidden" name="type" value="contract">
-                <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>">
-                <button type="submit" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">Email</button>
-              </form>
-              <?php endif; ?>
-              <?php if (in_array($r['status'], ['draft','pending'], true) && empty($r['signed_at']) && empty($r['signed_pdf_path'])): ?>
-              <form method="post" action="/?page=contract/contract-sign" enctype="multipart/form-data" style="display:inline-flex;gap:6px;align-items:center">
-                <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                <input id="upload-<?php echo (int)$r['id']; ?>" type="file" name="signed_pdf" accept="application/pdf,.pdf" style="display:none" data-submit-on-file required>
-                <button type="button" data-file-picker-target="upload-<?php echo (int)$r['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">Upload</button>
-              </form>
-              <?php endif; ?>
-              <?php if (!empty($r['signed_pdf_path'])): ?>
-                <a href="<?php echo htmlspecialchars($r['signed_pdf_path']); ?>" target="_blank" rel="noopener" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">Signed PDF</a>
-              <?php endif; ?>
-              <?php 
-                // Check if deposit is required and not yet received
-                // Note: deposit_amount already stores the calculated dollar amount (not percentage)
-                $depositType = $r['deposit_type'] ?? 'none';
-                $depositCalc = (float)($r['deposit_amount'] ?? 0);
-                $depositPaid = (float)($r['deposit_paid'] ?? 0);
-                $needsDeposit = $depositType !== 'none' && $depositCalc > 0 && $depositPaid < $depositCalc;
-              ?>
-              <?php if ($needsDeposit && $r['status'] === 'pending'): ?>
-                <form method="post" action="/?page=contract/contract-deposit-received" style="display:inline" onsubmit="return confirm('Mark deposit as received ($<?php echo number_format($depositCalc, 2); ?>)?')">
-                  <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                  <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                  <button type="submit" style="padding:6px 10px;border:0;border-radius:8px;background:#d1fae5;color:#065f46; font-size: small;">Deposit Received</button>
-                </form>
-              <?php endif; ?>
-              <?php if ($r['status']==='active'): ?>
-                <form method="post" action="/?page=contract/contract-complete" style="display:inline" onsubmit="return confirm('Complete this contract, finalize its invoice, and send it when automatic delivery is enabled?')">
-                  <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                  <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                  <button type="submit" style="padding:6px 10px;border:0;border-radius:8px;background:#10b981;color:#fff; font-size: small;">Complete</button>
-                </form>
-              <?php endif; ?>
-              <?php if ($r['status'] !== 'cancelled' && $r['status'] !== 'completed'): ?>
-              <form method="post" action="/?page=contract/contract-void" onsubmit="return confirm('Void this contract and linked invoices?')" style="display:inline">
-                <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
-                <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                <button type="submit" style="padding:6px 10px;border:0;border-radius:8px;background:#6b7280;color:#fff; font-size: small;">Void</button>
-              </form>
-              <?php endif; ?>
-            </td>
-            <td style="padding:10px">
-              <?php if (in_array($r['status'], ['draft','pending'], true) && empty($r['signed_pdf_path'])): ?>
-                <a href="/?page=contract/contracts-edit&id=<?php echo (int)$r['id']; ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff; font-size: small;">Edit</a>
-              <?php else: ?>
-                <span style="color:#9ca3af;font-size:small">—</span>
-              <?php endif; ?>
+        <?php foreach ($rows as $r):
+            $k = doc_list_kind_of($r['contract_type']);
+            $id = (int)$r['id'];
+            $rowStatus = (string)$r['status'];
+            $number = $prefix[$k] . '-' . (int)($r['doc_number'] ?: $r['id']);
+            $detailsPage = $k === 'recurring' ? 'contract/long-term-contract-details' : 'contract/contract-details';
+            $hasSignedPdf = !empty($r['signed_pdf_path']);
+            $editable = in_array($rowStatus, ['draft', 'pending'], true) && !$hasSignedPdf;
+            $route = $k === 'recurring' ? 'long-term-contract' : 'on-demand-contract';
+            $kindSub = [];
+            if ($k === 'recurring') {
+                $n = (int)$r['billing_interval_count'];
+                $unit = strtolower((string)$r['billing_interval_unit']);
+                $kindSub[] = (int)($r['recurring_service_count'] ?? 0) > 1
+                    ? (int)$r['recurring_service_count'] . ' service schedules'
+                    : 'every ' . ($n > 1 ? $n . ' ' . $unit . 's' : $unit);
+                if (!empty($r['next_invoice_date'])) {
+                    $kindSub[] = 'Next ' . date('M j, Y', strtotime((string)$r['next_invoice_date']));
+                } elseif ($rowStatus === 'active') {
+                    $kindSub[] = 'Manual start';
+                }
+                if ($r['pricing_type'] === 'per_invoice') {
+                    $nextAmount = (float)($r['next_service_amount'] ?? 0);
+                    $amount = '$' . number_format($nextAmount > 0 ? $nextAmount : (float)$r['price_per_invoice'], 2) . ' next';
+                } else {
+                    $amount = '$' . number_format((float)$r['total'], 2) . ' total';
+                }
+                $latestInvoiceId = (int)($r['latest_invoice_id'] ?? 0);
+            } elseif ($k === 'as_needed') {
+                $hasAsNeeded = true;
+                $kindSub[] = 'Manual invoices';
+                $invoiceCount = (int)$r['invoice_count'];
+                $kindSub[] = $invoiceCount . ($invoiceCount === 1 ? ' invoice' : ' invoices') . ' ($' . number_format((float)$r['total_invoiced'], 2) . ')'
+                    . (!empty($r['last_invoice_date']) ? ', last ' . date('M j, Y', strtotime((string)$r['last_invoice_date'])) : '');
+                $price = (float)($r['price_per_invoice'] ?? 0) > 0 ? (float)$r['price_per_invoice'] : (float)($r['subtotal'] ?? 0);
+                $amount = '$' . number_format($price, 2) . ' / invoice';
+                $canGenerate = $rowStatus === 'active' && (empty($r['end_date']) || (string)$r['end_date'] >= $today);
+                $monthlyProjectBilling = !empty($r['project_id']) && ($r['project_invoice_billing_period'] ?? '') === 'monthly';
+            } else {
+                $amount = '$' . number_format((float)$r['total'], 2);
+                $depositDue = (float)($r['deposit_amount'] ?? 0);
+                $needsDeposit = ($r['deposit_type'] ?? 'none') !== 'none' && $depositDue > 0 && (float)($r['deposit_paid'] ?? 0) < $depositDue;
+            }
+        ?>
+          <tr>
+            <td><a href="/?page=<?php echo $detailsPage; ?>&amp;id=<?php echo $id; ?>"><strong><?php echo doc_list_e($number); ?></strong></a></td>
+            <td><?php echo doc_list_customer_cell($r); ?></td>
+            <td class="doc-kind"><?php echo doc_list_e(DOC_LIST_KINDS[$k]); ?><?php foreach ($kindSub as $line): ?><span class="doc-sub"><?php echo doc_list_e($line); ?></span><?php endforeach; ?></td>
+            <td><?php echo doc_list_status_pill($rowStatus, $statuses[$rowStatus] ?? null); ?></td>
+            <td class="doc-amount"><?php echo doc_list_e($amount); ?></td>
+            <td><?php echo $r['created_at'] ? doc_list_e(date('M j, Y', strtotime((string)$r['created_at']))) : ''; ?></td>
+            <td>
+              <div class="doc-actions">
+                <?php if ($editable && $k !== 'as_needed'): ?>
+                  <a class="btn btn-sm" href="/?page=contract/contracts-edit&amp;id=<?php echo $id; ?>"><?php echo $k === 'recurring' ? 'Edit Billing' : 'Edit'; ?></a>
+                <?php endif; ?>
+                <?php if (!in_array($rowStatus, ['denied', 'cancelled', 'void'], true)) echo doc_list_email_button('contract', $id, $k === 'as_needed' ? ['generation_key' => bin2hex(random_bytes(16))] : []); ?>
+                <?php if ($k !== 'one_time'): ?>
+                  <a class="btn btn-sm" href="/?page=invoice/invoices-list&amp;kind=<?php echo $k; ?>&amp;contract_id=<?php echo $id; ?>">Invoices</a>
+                <?php endif; ?>
+                <?php if (in_array($rowStatus, ['draft', 'pending'], true) && empty($r['signed_at']) && empty($r['signed_pdf_path'])): ?>
+                  <form method="post" action="/?page=contract/contract-sign" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf" value="<?php echo doc_list_e(csrf_token()); ?>">
+                    <input type="hidden" name="id" value="<?php echo $id; ?>">
+                    <input id="upload-<?php echo $id; ?>" type="file" name="signed_pdf" accept="application/pdf,.pdf" hidden data-submit-on-file required>
+                    <button type="button" class="btn btn-sm" data-file-picker-target="upload-<?php echo $id; ?>">Upload</button>
+                  </form>
+                <?php endif; ?>
+                <?php if ($hasSignedPdf): ?>
+                  <a class="btn btn-sm" href="<?php echo doc_list_e((string)$r['signed_pdf_path']); ?>" target="_blank" rel="noopener">Signed PDF</a>
+                <?php endif; ?>
+                <?php if ($k === 'one_time'): ?>
+                  <?php if ($needsDeposit && $rowStatus === 'pending') echo doc_list_post_button('contract/contract-deposit-received', 'Deposit Received', ['id' => $id], 'Mark deposit as received ($' . number_format($depositDue, 2) . ')?', 'btn btn-sm btn-success'); ?>
+                  <?php if ($rowStatus === 'active') echo doc_list_post_button('contract/contract-complete', 'Complete', ['id' => $id], 'Complete this contract, finalize its invoice, and send it when automatic delivery is enabled?', 'btn btn-sm btn-success'); ?>
+                  <?php if (!in_array($rowStatus, ['cancelled', 'completed', 'void'], true)) echo doc_list_post_button('contract/contract-void', 'Void', ['id' => $id], 'Void this contract and linked invoices?', 'btn btn-sm btn-muted'); ?>
+                <?php else: ?>
+                  <?php if ($rowStatus === 'pending' && $hasSignedPdf): ?>
+                    <?php echo doc_list_post_button($route . '-activate', 'Activate', ['id' => $id], null, 'btn btn-sm btn-success'); ?>
+                  <?php elseif ($rowStatus === 'pending'): ?>
+                    <button type="button" class="btn btn-sm" disabled title="Upload signed contract first">Activate</button>
+                  <?php endif; ?>
+                  <?php if ($k === 'recurring'): ?>
+                    <?php if ($rowStatus !== 'pending' && pa_long_term_can_start_billing($pdo, $r)) echo doc_list_post_button('long-term-contract-start-billing', 'Start Billing', ['id' => $id], null, 'btn btn-sm btn-primary'); ?>
+                    <?php if ($latestInvoiceId > 0 && empty($r['latest_invoice_sent_at'])): ?>
+                      <?php echo doc_list_post_button('invoice/email-send', 'Email Latest Invoice', ['type' => 'invoice', 'id' => $latestInvoiceId, 'redirect_to' => '/?page=invoice/invoice-details&id=' . $latestInvoiceId]); ?>
+                    <?php elseif ($latestInvoiceId > 0): ?>
+                      <a class="btn btn-sm" href="/?page=invoice/invoice-details&amp;id=<?php echo $latestInvoiceId; ?>">Latest Invoice</a>
+                    <?php endif; ?>
+                  <?php elseif ($canGenerate): ?>
+                    <form method="post" action="/?page=on-demand-invoice-generate" class="od-generate-form" data-monthly-project-billing="<?php echo $monthlyProjectBilling ? '1' : '0'; ?>">
+                      <input type="hidden" name="csrf" value="<?php echo doc_list_e(csrf_token()); ?>">
+                      <input type="hidden" name="id" value="<?php echo $id; ?>">
+                      <input type="hidden" name="generation_key" value="<?php echo bin2hex(random_bytes(16)); ?>">
+                      <input type="hidden" name="send_email" value="0">
+                      <button type="button" class="btn btn-sm btn-primary" onclick="openOdGenerateModal(this.form)">Generate Invoice</button>
+                    </form>
+                  <?php endif; ?>
+                  <?php if ($rowStatus === 'active') echo doc_list_post_button($route . '-pause', 'Pause', ['id' => $id], null, 'btn btn-sm btn-warning'); ?>
+                  <?php if ($rowStatus === 'paused') echo doc_list_post_button($route . '-resume', 'Resume', ['id' => $id], null, 'btn btn-sm btn-success'); ?>
+                  <?php if ($k === 'recurring' && in_array($rowStatus, ['pending', 'active', 'paused'], true)) echo doc_list_post_button('long-term-contract-terminate', 'Terminate', ['id' => $id], 'Terminate this long-term contract? This will stop future invoicing.', 'btn btn-sm btn-danger'); ?>
+                  <?php if ($k === 'as_needed' && $editable) echo doc_list_post_button('on-demand-contract-terminate', 'Terminate', ['id' => $id], 'Terminate this on-demand contract?', 'btn btn-sm btn-danger'); ?>
+                <?php endif; ?>
+              </div>
             </td>
           </tr>
         <?php endforeach; ?>
+        <?php if (!$rows): ?>
+          <tr><td colspan="7" class="doc-empty">No contracts match these filters.</td></tr>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
-  <?php
-    $last=(int)ceil(max(1,$total)/$per);
-    $qs=$_GET; unset($qs['p']); $base='/?'.http_build_query($qs+['page'=>'contract/contracts-list','per_page'=>$per]);
-  ?>
-  <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
-    <div>
-      <form method="get" action="/">
-        <?php foreach($_GET as $k=>$v){ if($k==='per_page'||$k==='p'||$k==='page') continue; echo '<input type="hidden" name="'.htmlspecialchars($k).'" value="'.htmlspecialchars($v).'">'; }
-        ?>
-        <input type="hidden" name="page" value="contract/contracts-list">
-        <label>Per page
-          <select name="per_page" onchange="this.form.submit()" style="padding:6px;border-radius:8px;border:1px solid #ddd">
-            <option value="50" <?php echo $per===50?'selected':''; ?>>50</option>
-            <option value="100" <?php echo $per===100?'selected':''; ?>>100</option>
-          </select>
-        </label>
-      </form>
-    </div>
-    <div style="display:flex;gap:8px">
-      <?php if($pageN>1): ?><a href="<?php echo $base.'&p='.($pageN-1); ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff">Prev</a><?php endif; ?>
-      <div style="padding:6px 10px;color:var(--muted)">Page <?php echo $pageN; ?> / <?php echo $last; ?></div>
-      <?php if($pageN<$last): ?><a href="<?php echo $base.'&p='.($pageN+1); ?>" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff">Next</a><?php endif; ?>
-    </div>
-  </div>
+  <?php doc_list_render_pager($page, $total, $per, $pageN); ?>
+  <?php if ($hasAsNeeded): ?>
+    <dialog id="odGenerateModal" aria-labelledby="odGenerateTitle">
+      <h3 id="odGenerateTitle">Generate On-Demand Invoice</h3>
+      <p id="odGenerateDescription" class="doc-sub">Choose whether to send the invoice now or generate it for review and edits first.</p>
+      <div class="doc-actions">
+        <button type="button" class="btn btn-muted" onclick="closeOdGenerateModal()">Cancel</button>
+        <button id="odGenerateDraft" type="button" class="btn" onclick="submitOdGenerate(false)">Generate Only</button>
+        <button id="odGeneratePrimary" type="button" class="btn btn-primary" onclick="submitOdGenerate(true)">Generate and Send Email</button>
+      </div>
+    </dialog>
+    <script>
+      var odGenerateForm = null;
+      function openOdGenerateModal(form) {
+        odGenerateForm = form;
+        var monthly = form.dataset.monthlyProjectBilling === '1';
+        document.getElementById('odGenerateDescription').textContent = monthly
+          ? 'Finalize this charge for the monthly project statement, or save a draft for review. Monthly charges are not emailed separately.'
+          : 'Choose whether to send the invoice now or generate it for review and edits first.';
+        document.getElementById('odGeneratePrimary').textContent = monthly ? 'Finalize for Project Billing' : 'Generate and Send Email';
+        document.getElementById('odGenerateDraft').textContent = monthly ? 'Save Draft for Review' : 'Generate Only';
+        document.getElementById('odGenerateModal').showModal();
+      }
+      function closeOdGenerateModal() {
+        odGenerateForm = null;
+        document.getElementById('odGenerateModal').close();
+      }
+      function submitOdGenerate(sendEmail) {
+        if (!odGenerateForm) return;
+        odGenerateForm.querySelector('input[name="send_email"]').value = sendEmail ? '1' : '0';
+        odGenerateForm.submit();
+      }
+      document.getElementById('odGenerateModal').addEventListener('click', function (e) {
+        if (e.target === this) closeOdGenerateModal();
+      });
+    </script>
+  <?php endif; ?>
 </section>

@@ -22,7 +22,7 @@ $generationKey=hash('sha256','on-demand:'.$contract_id.':'.$requestGenerationKey
 
 if ($contract_id <= 0) {
     @error_log('[on_demand_invoice_generate] invalid contract_id', 0);
-    header('Location: /?page=contract/on-demand-contracts-list&error=Invalid%20contract%20ID');
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=Invalid%20contract%20ID');
     exit;
 }
 
@@ -73,7 +73,7 @@ try {
                 invoice_notification_process($pdo, $appConfig, null, null, 10, $existingInvoiceId);
             }
         }
-        header('Location: /?page=contract/on-demand-invoices-list&contract_id='.$contract_id.'&invoice_generated=1&idempotent=1');exit;
+        header('Location: /?page=invoice/invoices-list&kind=as_needed&contract_id='.$contract_id.'&invoice_generated=1&idempotent=1');exit;
     }
     
     // Check if contract is active
@@ -238,7 +238,7 @@ try {
         // durable and is retried by the normal invoice delivery worker.
         invoice_notification_process($pdo, $appConfig, null, null, 10, $invoiceId);
     }
-    $redirect = '/?page=contract/on-demand-invoices-list&contract_id=' . $contract_id . '&invoice_generated=1';
+    $redirect = '/?page=invoice/invoices-list&kind=as_needed&contract_id=' . $contract_id . '&invoice_generated=1';
     if ($sendEmail) {
         $redirect .= $projectMonthlyBilling ? '&project_billing=1' : '&email_requested=1';
     }
@@ -249,6 +249,6 @@ try {
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[on_demand_invoice_generate] exception: ' . $e->getMessage(), 0);
     $msg = substr($e->getMessage(), 0, 200);
-    header('Location: /?page=contract/on-demand-contracts-list&error=' . urlencode($msg));
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=' . urlencode($msg));
     exit;
 }

@@ -149,8 +149,8 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         $finalize = (string)file_get_contents($this->root . '/src/controllers/invoice/invoice_finalize.php');
         $createController = (string)file_get_contents($this->root . '/src/controllers/invoice/invoices_create.php');
         $projectDetails = (string)file_get_contents($this->root . '/src/views/pages/project/projects-details.php');
-        $onDemandList = (string)file_get_contents($this->root . '/src/views/pages/contract/on-demand-contracts-list.php');
-        $onDemandInvoices = (string)file_get_contents($this->root . '/src/views/pages/contract/on-demand-invoices-list.php');
+        $onDemandList = (string)file_get_contents($this->root . '/src/views/pages/contract/contracts-list.php');
+        $onDemandInvoices = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoices-list.php');
 
         self::assertStringContainsString('data-invoice-billing-period=', $createView);
         self::assertStringContainsString('invoice_billing_period', $projectSearch);
@@ -171,6 +171,8 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
         self::assertStringContainsString('data-monthly-project-billing=', $onDemandList);
         self::assertStringContainsString("monthly ? 'Finalize for Project Billing'", $onDemandList);
         self::assertStringContainsString('Finalize for Project Billing', $onDemandInvoices);
+        self::assertStringContainsString("=== 'project_aggregate'", $onDemandInvoices);
+        self::assertStringContainsString('will be included in the next eligible Project Invoice', $onDemandInvoices);
         $notifications = (string)file_get_contents($this->root . '/src/utils/invoice_notifications.php');
         self::assertStringContainsString("(\$invoice['collection_mode'] ?? 'direct') !== 'direct'", $notifications);
     }

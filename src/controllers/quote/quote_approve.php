@@ -215,9 +215,9 @@ try {
   $redirectPage = 'quote/quotes-list';
   if (isset($quoteType)) {
     if ($quoteType === 'long_term') {
-      $redirectPage = 'quote/long-term-quotes-list';
+      $redirectPage = 'quote/quotes-list&kind=recurring';
     } elseif ($quoteType === 'on_demand') {
-      $redirectPage = 'quote/on-demand-quotes-list';
+      $redirectPage = 'quote/quotes-list&kind=as_needed';
     }
   }
   
@@ -230,9 +230,9 @@ if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 // Determine redirect page based on quote type
 $redirectPage = 'quote/quotes-list';
 if ($quoteType === 'long_term') {
-  $redirectPage = 'quote/long-term-quotes-list';
+  $redirectPage = 'quote/quotes-list&kind=recurring';
 } elseif ($quoteType === 'on_demand') {
-  $redirectPage = 'quote/on-demand-quotes-list';
+  $redirectPage = 'quote/quotes-list&kind=as_needed';
 }
 
 $redirect = '/?page=' . $redirectPage . '&approved=1';

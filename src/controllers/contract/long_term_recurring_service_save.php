@@ -9,7 +9,7 @@ require_once __DIR__ . '/../../utils/recurring_billing.php';
 $contractId = (int)($_POST['contract_id'] ?? 0);
 $serviceId = max(0, (int)($_POST['service_id'] ?? 0));
 if ($contractId <= 0) {
-    header('Location: /?page=contract/long-term-contracts-list&error=' . urlencode('Invalid contract.'));
+    header('Location: /?page=contract/contracts-list&kind=recurring&error=' . urlencode('Invalid contract.'));
     exit;
 }
 require_record_ownership($pdo, 'contracts', $contractId);

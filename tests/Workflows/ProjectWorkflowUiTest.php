@@ -503,7 +503,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('$idempotentResult = $idempotentReplay ? \'&idempotent=1\' : \'\';',$proration);
         self::assertStringContainsString('$generationKey',$recurring);
         self::assertStringContainsString('created_at,generation_key',$recurring);
-        $onDemandView=(string)file_get_contents($this->root.'/src/views/pages/contract/on-demand-contracts-list.php');
+        $onDemandView=(string)file_get_contents($this->root.'/src/views/pages/contract/contracts-list.php');
         self::assertMatchesRegularExpression('/<form[^>]+class="od-generate-form"[\\s\\S]*?<input[^>]+name="generation_key"[^>]+value="<\\?php echo bin2hex\\(random_bytes\\(16\\)\\); \\?>"[\\s\\S]*?<\\/form>/', $onDemandView);
         self::assertStringContainsString('name="generation_key"',(string)file_get_contents($this->root.'/src/views/components/recurring_service_form.php'));
         self::assertStringContainsString("pricing_money_to_minor((string)(\$contract['total_invoiced']??'0'))",$onDemand);
@@ -521,13 +521,13 @@ final class ProjectWorkflowUiTest extends TestCase
         $sign = file_get_contents($this->root . '/src/controllers/public_view/public_contract_sign.php');
         $start = file_get_contents($this->root . '/src/controllers/contract/long_term_contract_start_billing.php');
         $activate = file_get_contents($this->root . '/src/controllers/contract/long_term_contract_activate.php');
-        $odcList = file_get_contents($this->root . '/src/views/pages/contract/on-demand-contracts-list.php');
+        $odcList = file_get_contents($this->root . '/src/views/pages/contract/contracts-list.php');
         $editView = file_get_contents($this->root . '/src/views/pages/contract/contracts-edit.php');
         $editScript = file_get_contents($this->root . '/public/assets/js/contracts-edit-logic.js');
         $update = file_get_contents($this->root . '/src/controllers/contract/contracts_update.php');
         $ltDetails = file_get_contents($this->root . '/src/views/pages/contract/long-term-contract-details.php');
-        $ltList = file_get_contents($this->root . '/src/views/pages/contract/long-term-contracts-list.php');
-        $recurringList = file_get_contents($this->root . '/src/views/pages/invoice/recurring-invoices-list.php');
+        $ltList = $odcList;
+        $recurringList = file_get_contents($this->root . '/src/views/pages/invoice/invoices-list.php');
         $recurringBilling = file_get_contents($this->root . '/src/utils/recurring_billing.php');
         $invoiceLifecycle = file_get_contents($this->root . '/src/utils/invoice_lifecycle.php');
         $stripePayment = file_get_contents($this->root . '/src/controllers/webhook/stripe_payment_succeeded.php');
@@ -548,7 +548,7 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('pa_long_term_billing_start_date($pdo, $contract)', (string)$activate);
         self::assertStringContainsString('recurring_invoice_send_on_generate_if_enabled($pdo, $invoiceId, $appConfig)', (string)$start);
         self::assertStringContainsString('UPDATE invoices SET sent_at=COALESCE(sent_at,NOW())', (string)file_get_contents($this->root . '/src/controllers/email_send.php'));
-        self::assertStringContainsString('$billingText = \'Manual invoices\';', (string)$odcList);
+        self::assertStringContainsString("\$kindSub[] = 'Manual invoices';", (string)$odcList);
         self::assertStringContainsString('Recurring Billing Settings', (string)$editView);
         self::assertStringContainsString('name="billing_interval_unit"', (string)$editView);
         self::assertStringContainsString('name="next_invoice_date"', (string)$editView);
@@ -565,10 +565,11 @@ final class ProjectWorkflowUiTest extends TestCase
         self::assertStringContainsString('Edit Billing', (string)$ltList);
         self::assertStringContainsString('invoices_generated', (string)$ltList);
         self::assertStringContainsString('latest_invoice_id', (string)$ltList);
-        self::assertStringContainsString('Edit billing', (string)$recurringList);
-        self::assertStringContainsString('Recurring Invoice History', (string)$recurringList);
-        self::assertStringContainsString('i.invoice_type="long_term"', (string)$recurringList);
-        self::assertStringContainsString('invoice_status', (string)$recurringList);
+        self::assertStringContainsString('pa_long_term_can_start_billing($pdo, $r)', (string)$ltList);
+        self::assertStringContainsString('/?page=invoice/invoices-list&amp;kind=<?php echo $k; ?>&amp;contract_id=', (string)$ltList);
+        self::assertStringContainsString('Upload signed contract first', (string)$ltList);
+        self::assertStringContainsString("doc_list_kind_condition(\$kind, 'i.invoice_type')", (string)$recurringList);
+        self::assertStringContainsString('i.contract_id = ?', (string)$recurringList);
         self::assertStringContainsString('balance_due, status, due_date', (string)$recurringBilling);
         self::assertStringContainsString('invoice_complete_linked_contract_if_eligible', (string)$invoiceLifecycle);
         self::assertStringContainsString("contract_type']) !== 'regular'", (string)$invoiceLifecycle);
@@ -616,14 +617,12 @@ final class ProjectWorkflowUiTest extends TestCase
         ]));
 
         $details = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoice-details.php');
-        $history = (string)file_get_contents($this->root . '/src/views/pages/invoice/recurring-invoices-list.php');
-        $onDemand = (string)file_get_contents($this->root . '/src/views/pages/invoice/on-demand-invoices-list.php');
+        $invoiceList = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoices-list.php');
         $onDemandGenerator = (string)file_get_contents($this->root . '/src/controllers/contract/on_demand_invoice_generate.php');
         $delivery = (string)file_get_contents($this->root . '/src/utils/invoice_lifecycle.php');
         $notificationDelivery = (string)file_get_contents($this->root . '/src/utils/invoice_notifications.php');
         self::assertStringContainsString('pa_invoice_label_from_row($inv)', $details);
-        self::assertStringContainsString("'long_term'", $history);
-        self::assertStringContainsString("'on_demand'", $onDemand);
+        self::assertStringContainsString('pa_invoice_label_from_row($r)', $invoiceList);
         self::assertStringContainsString("pa_invoice_label(\$docNumber, 'on_demand')", $onDemandGenerator);
         self::assertStringContainsString('pa_invoice_label', $delivery . $notificationDelivery);
         self::assertStringNotContainsString('Invoice I-', $delivery . $notificationDelivery);
@@ -782,8 +781,6 @@ final class ProjectWorkflowUiTest extends TestCase
         $organizationView = file_get_contents($this->root . '/src/views/pages/organization/organization-view.php');
         $views = [
             file_get_contents($this->root . '/src/views/pages/contract/contracts-list.php'),
-            file_get_contents($this->root . '/src/views/pages/contract/on-demand-contracts-list.php'),
-            file_get_contents($this->root . '/src/views/pages/contract/long-term-contracts-list.php'),
             file_get_contents($this->root . '/src/views/pages/contract/contract-details.php'),
             file_get_contents($this->root . '/src/views/pages/contract/long-term-contract-details.php'),
         ];
@@ -798,12 +795,12 @@ final class ProjectWorkflowUiTest extends TestCase
             self::assertStringNotContainsString(".click()\"", (string)$view);
         }
 
-        self::assertStringContainsString("'on_demand' => 'contract/on-demand-contracts-list'", (string)$controller);
-        self::assertStringContainsString("'long_term' => 'contract/long-term-contracts-list'", (string)$controller);
+        self::assertStringContainsString("'on_demand' => 'contract/contracts-list&kind=as_needed'", (string)$controller);
+        self::assertStringContainsString("'long_term' => 'contract/contracts-list&kind=recurring'", (string)$controller);
         self::assertStringContainsString('validate_and_store_upload(', (string)$controller);
         self::assertStringContainsString("'require_pdf_header' => true", (string)$controller);
         self::assertStringContainsString("'reject_pdf_active_content' => true", (string)$controller);
-        self::assertStringContainsString("empty(\$r['signed_at']) && empty(\$r['signed_pdf_path'])", (string)$views[1]);
+        self::assertStringContainsString("empty(\$r['signed_at']) && empty(\$r['signed_pdf_path'])", (string)$views[0]);
         self::assertStringNotContainsString('Header always set Content-Security-Policy', (string)$dockerStart);
         self::assertStringContainsString('Content-Security-Policy:', (string)$securityHeaders);
         self::assertStringContainsString('name="tax_exempt_file"', (string)$organizationView);

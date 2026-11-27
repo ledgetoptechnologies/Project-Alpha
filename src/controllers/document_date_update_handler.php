@@ -58,7 +58,7 @@ try {
         case 'on_demand_contract':
             $pdo->prepare("UPDATE contracts SET document_date=CURRENT_TIMESTAMP, document_date_updated_at=CURRENT_TIMESTAMP WHERE id=? AND contract_type='on_demand'")
                 ->execute([$id]);
-            $redirectPage = 'contract/on-demand-contracts-list';
+            $redirectPage = 'contract/contracts-list&kind=as_needed';
             break;
 
         default:
@@ -87,7 +87,7 @@ try {
     if($pdo->inTransaction())$pdo->rollBack();
     $errorMsg=$e instanceof InvalidArgumentException?'Invalid document date.':'Could not update the document date.';
     $requestedRedirect=(string)($_POST['redirect']??'');
-    $allowedRedirects=['quote/quote-details','quote/long-term-quote-details','contract/contract-details','contract/long-term-contract-details','contract/on-demand-contracts-list','invoice/invoice-details'];
+    $allowedRedirects=['quote/quote-details','quote/long-term-quote-details','contract/contract-details','contract/long-term-contract-details','contract/contracts-list&kind=as_needed','invoice/invoice-details'];
     $redirectPage=in_array($requestedRedirect,$allowedRedirects,true)?$requestedRedirect:'dashboard';
     header('Location: /?page='.$redirectPage.'&error='.rawurlencode($errorMsg));
     exit;

@@ -9,7 +9,7 @@ $contractId = (int)($_POST['contract_id'] ?? 0);
 $serviceId = (int)($_POST['service_id'] ?? 0);
 $action = strtolower(trim((string)($_POST['service_action'] ?? '')));
 if ($contractId <= 0 || $serviceId <= 0 || !in_array($action, ['approve', 'pause', 'resume', 'end', 'approve_change', 'cancel_change'], true)) {
-    header('Location: /?page=contract/long-term-contracts-list&error=' . urlencode('Invalid recurring service action.'));
+    header('Location: /?page=contract/contracts-list&kind=recurring&error=' . urlencode('Invalid recurring service action.'));
     exit;
 }
 require_record_ownership($pdo, 'contracts', $contractId);

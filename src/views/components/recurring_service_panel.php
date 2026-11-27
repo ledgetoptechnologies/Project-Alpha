@@ -19,7 +19,7 @@ $serviceDate = static fn($value): string => $value ? date('M j, Y', strtotime((s
   </style>
   <h3 id="service-workspace-title" style="margin:0">Services &amp; billing schedule</h3>
   <p class="service-help">The signed agreement stays unchanged. Approved billing changes start at the next renewal, after the current billed period. Invoices retain their original rates and coverage.</p>
-  <a class="btn btn-sm" href="/?page=invoice/recurring-invoices-list&amp;status=all&amp;contract_id=<?= (int)$id ?>#invoice-history">Invoices &amp; payment history</a>
+  <a class="btn btn-sm" href="/?page=invoice/invoices-list&amp;kind=recurring&amp;contract_id=<?= (int)$id ?>">Invoices &amp; payment history</a>
   <?php if (($contract['pricing_type'] ?? '') !== 'per_invoice'): ?>
     <p class="service-card">This agreement uses a fixed total paid in installments. Its existing installment schedule is preserved; monthly service rates apply to recurring service agreements.</p>
   <?php else: ?>

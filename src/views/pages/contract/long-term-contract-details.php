@@ -177,7 +177,7 @@ $isOngoing = empty($contract['end_date']);
         <a href="/?page=invoice/invoice-details&id=<?php echo (int)$latestLongTermInvoice['id']; ?>" class="btn btn-sm">Latest Invoice</a>
       <?php endif; ?>
     <?php endif; ?>
-    <a href="/?page=invoice/recurring-invoices-list&status=all&contract_id=<?php echo (int)$id; ?>#invoice-history" class="btn btn-sm">Invoice History</a>
+    <a href="/?page=invoice/invoices-list&kind=recurring&contract_id=<?php echo (int)$id; ?>" class="btn btn-sm">Invoice History</a>
     <?php if ($contractStatus === 'active'): ?>
       <form method="post" action="/?page=long-term-contract-pause" style="display:inline">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">

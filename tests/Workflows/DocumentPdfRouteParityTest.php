@@ -67,8 +67,7 @@ final class DocumentPdfRouteParityTest extends TestCase
         $expectedByFile = [
             'src/views/pages/quote/quote-details.php' => 'page=quote/quote-pdf',
             'src/views/pages/quote/long-term-quote-details.php' => 'page=quote/long-term-quote-pdf',
-            'src/views/pages/quote/long-term-quotes-list.php' => 'page=quote/long-term-quote-pdf',
-            'src/views/pages/quote/on-demand-quotes-list.php' => 'page=quote/quote-details',
+            'src/views/pages/quote/quotes-list.php' => 'page=quote/long-term-quote-pdf',
             'src/views/pages/contract/contract-details.php' => 'page=contract/contract-pdf',
             'src/views/pages/contract/long-term-contract-details.php' => 'page=contract/long-term-contract-pdf',
             'src/views/pages/invoice/invoice-details.php' => 'page=invoice/invoice-pdf',
@@ -104,8 +103,9 @@ final class DocumentPdfRouteParityTest extends TestCase
             'src/controllers/email_send.php',
             'src/views/pages/client/clients-list.php',
             'src/views/pages/jobs/jobs-list.php',
-            'src/views/pages/quote/long-term-quotes-list.php',
-            'src/views/pages/quote/on-demand-quotes-list.php',
+            'src/views/pages/quote/quotes-list.php',
+            'src/views/pages/contract/contracts-list.php',
+            'src/views/pages/invoice/invoices-list.php',
         ];
 
         foreach ($productionFiles as $file) {

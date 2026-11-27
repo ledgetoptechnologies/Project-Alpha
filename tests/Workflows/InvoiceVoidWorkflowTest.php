@@ -65,13 +65,19 @@ final class InvoiceVoidWorkflowTest extends TestCase
 
     public function testRecurringHistoryActionPreservesEveryFilterAndScrollsToResults(): void
     {
-        $history = (string)file_get_contents($this->root . '/src/views/pages/invoice/recurring-invoices-list.php');
+        // Recurring invoice history is the unified invoice list on its Recurring tab,
+        // optionally narrowed to one contract.
+        $history = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoices-list.php');
+        $contractDetails = (string)file_get_contents($this->root . '/src/views/pages/contract/long-term-contract-details.php');
+        $servicePanel = (string)file_get_contents($this->root . '/src/views/components/recurring_service_panel.php');
         $navigation = (string)file_get_contents($this->root . '/public/assets/navigation.js');
 
-        self::assertStringContainsString('&contract_id=<?php echo (int)$ltc[\'id\']; ?>&history_page=1#invoice-history', $history);
-        self::assertStringContainsString('View history (', $history);
+        self::assertStringContainsString('/?page=invoice/invoices-list&kind=recurring&contract_id=<?php echo (int)$id; ?>', $contractDetails);
+        self::assertStringContainsString('/?page=invoice/invoices-list&amp;kind=recurring&amp;contract_id=<?= (int)$id ?>', $servicePanel);
+        self::assertStringContainsString("'i.contract_id = ?'", $history);
         self::assertStringContainsString('Showing invoices for', $history);
-        self::assertStringContainsString('View / Actions', $history);
+        self::assertStringContainsString("doc_list_url(\$page, ['contract_id' => null, 'p' => null])", $history);
+        self::assertStringContainsString('/?page=invoice/invoice-details&amp;id=', $history);
         self::assertStringContainsString("const rest = separatorIndex >= 0 ? page.slice(separatorIndex + 1) : '';", $navigation);
         self::assertStringContainsString('navigateToPage(fullPage, true, linkUrl.hash)', $navigation);
         self::assertStringContainsString('scrollToPageHash(targetHash)', $navigation);

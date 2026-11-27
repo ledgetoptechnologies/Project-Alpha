@@ -56,7 +56,12 @@ function client_list_email_html(?string $email): string
 }
 ?>
 <section>
-  <h2>Clients</h2>
+  <div class="page-head">
+    <h2>Clients</h2>
+    <?php if (($_SESSION['user']['role'] ?? '') === 'admin' || user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), 'clients.create', 0)): ?>
+      <?php if (!$directoryManagementStatus['effective']): ?><a class="btn btn-primary" href="/?page=client/clients-create">+ New client</a><?php endif; ?>
+    <?php endif; ?>
+  </div>
   <?php if($directoryManagementStatus['configured']):?><div style="margin:10px 0;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;font-size:13px"><?php echo e(api_v2_directory_management_warning($directoryManagementStatus)); ?></div><?php endif;?>
   <div style="margin:8px 0">
     <a href="/?page=client/archived-clients" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fff">View Archived</a>

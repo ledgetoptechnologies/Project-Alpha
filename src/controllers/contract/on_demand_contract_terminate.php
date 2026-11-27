@@ -5,15 +5,15 @@ require_once __DIR__ . '/../../utils/acl.php';
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {
-    header('Location: /?page=contract/on-demand-contracts-list&error=Invalid%20ID');
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=Invalid%20ID');
     exit;
 }
 require_record_ownership($pdo, 'contracts', $id);
 
 try {
     $pdo->prepare('UPDATE contracts SET status=? WHERE id=? AND contract_type="on_demand"')->execute(['cancelled', $id]);
-    header('Location: /?page=contract/on-demand-contracts-list');
+    header('Location: /?page=contract/contracts-list&kind=as_needed');
 } catch (Throwable $e) {
-    header('Location: /?page=contract/on-demand-contracts-list&error=' . urlencode($e->getMessage()));
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=' . urlencode($e->getMessage()));
 }
 exit;

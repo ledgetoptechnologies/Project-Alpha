@@ -107,8 +107,6 @@ function page_permission_map(): array
 
         // Quotes module
         'quote/quotes-list'   => 'quotes.view',
-        'quote/long-term-quotes-list' => 'quotes.view',
-        'quote/on-demand-quotes-list' => 'quotes.view',
         'quote/quotes-create' => 'quotes.create',
         'quote/quotes-edit'   => 'quotes.edit',
         'quote/quotes-edit-public' => 'quotes.edit',
@@ -134,8 +132,6 @@ function page_permission_map(): array
 
         // Contracts module
         'contract/contracts-list'   => 'contracts.view',
-        'contract/long-term-contracts-list' => 'contracts.view',
-        'contract/on-demand-contracts-list' => 'contracts.view',
         'contract/contracts-create' => 'contracts.create',
         'contract/contracts-edit'   => 'contracts.edit',
         'contract/contract-details' => 'contracts.view',
@@ -196,9 +192,6 @@ function page_permission_map(): array
         'invoices-update'           => 'invoices.edit',
         'invoices-mark-paid'        => 'invoices.mark_paid',
         'on-demand-invoice-generate' => 'invoices.create',
-        'invoice/recurring-invoices-list' => 'invoices.view',
-        'invoice/on-demand-invoices-list' => 'invoices.view',
-        'contract/on-demand-invoices-list' => 'invoices.view',
 
         // Payments module
         'payments/payments-list'    => 'payments.view',

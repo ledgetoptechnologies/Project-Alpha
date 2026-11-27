@@ -115,97 +115,44 @@ function nav_can(string $permission): bool {
             </li>
             <?php endif; ?>
 
-            <?php if (nav_can('clients.view') || nav_can('clients.create') || nav_can('organizations.view')): ?>
+            <?php if (nav_can('clients.view') || nav_can('organizations.view') || nav_can('projects.view')): ?>
             <li class="nav-section">
               <div class="section-label">Clients</div>
               <ul>
                 <?php if (nav_can('clients.view')): ?>
-                <li><a href="/?page=client/clients-list" data-page="client/clients-list">List Clients</a></li>
+                <li><a href="/?page=client/clients-list" data-page="client/clients-list" data-match="client/">List Clients</a></li>
                 <?php endif; ?>
                 <?php if (nav_can('organizations.view')): ?>
-                <li><a href="/?page=organization/organizations-list" data-page="organization/organizations-list">Organizations</a></li>
+                <li><a href="/?page=organization/organizations-list" data-page="organization/organizations-list" data-match="organization/">Organizations</a></li>
                 <?php endif; ?>
                 <?php if (nav_can('clients.view')): ?>
                 <li><a href="/?page=client/onboarding" data-page="client/onboarding">Onboarding</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('clients.create') && !$directoryManagementStatus['effective']): ?>
-                <li><a href="/?page=client/clients-create" data-page="client/clients-create">Create Clients</a></li>
+                <?php if (nav_can('projects.view')): ?>
+                <li><a href="/?page=project/projects-list" data-page="project/projects-list" data-match="project/">Projects</a></li>
                 <?php endif; ?>
               </ul>
             </li>
             <?php endif; ?>
 
-            <?php if (nav_can('quotes.view') || nav_can('quotes.create')): ?>
+            <?php if (nav_can('quotes.view') || nav_can('contracts.view') || nav_can('invoices.view') || nav_can('payments.view') || nav_can('jobs.view')): ?>
             <li class="nav-section">
-              <div class="section-label">Quotes</div>
+              <div class="section-label">Billing</div>
               <ul>
                 <?php if (nav_can('quotes.view')): ?>
-                <li><a href="/?page=quote/quotes-list" data-page="quote/quotes-list">Quotes</a></li>
-                <li><a href="/?page=quote/long-term-quotes-list" data-page="quote/long-term-quotes-list">Long-term Quotes</a></li>
-                <li><a href="/?page=quote/on-demand-quotes-list" data-page="quote/on-demand-quotes-list">On-Demand Quotes</a></li>
+                <li><a href="/?page=quote/quotes-list" data-page="quote/quotes-list" data-match="quote/">Quotes</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('quotes.create')): ?>
-                <li><a href="/?page=quote/quotes-create" data-page="quote/quotes-create">Create Quote</a></li>
-                <?php endif; ?>
-              </ul>
-            </li>
-            <?php endif; ?>
-
-            <?php if (nav_can('contracts.view') || nav_can('contracts.create')): ?>
-            <li class="nav-section">
-              <div class="section-label">Contracts</div>
-              <ul>
                 <?php if (nav_can('contracts.view')): ?>
-                <li><a href="/?page=contract/contracts-list" data-page="contract/contracts-list">Contracts</a></li>
-                <li><a href="/?page=contract/long-term-contracts-list" data-page="contract/long-term-contracts-list">Long-term Contracts</a></li>
-                <li><a href="/?page=contract/on-demand-contracts-list" data-page="contract/on-demand-contracts-list">On-Demand Contracts</a></li>
+                <li><a href="/?page=contract/contracts-list" data-page="contract/contracts-list" data-match="contract/">Contracts</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('contracts.create')): ?>
-                <li><a href="/?page=contract/contracts-create" data-page="contract/contracts-create">Create Contract</a></li>
-                <?php endif; ?>
-              </ul>
-            </li>
-            <?php endif; ?>
-
-            <?php if (nav_can('invoices.view') || nav_can('invoices.create')): ?>
-            <li class="nav-section">
-              <div class="section-label">Invoices</div>
-              <ul>
                 <?php if (nav_can('invoices.view')): ?>
-                <li><a href="/?page=invoice/invoices-list" data-page="invoice/invoices-list">Invoices</a></li>
-                <li><a href="/?page=invoice/recurring-invoices-list" data-page="invoice/recurring-invoices-list">Recurring Invoices</a></li>
-                <li><a href="/?page=invoice/on-demand-invoices-list" data-page="invoice/on-demand-invoices-list">On-Demand Invoices</a></li>
+                <li><a href="/?page=invoice/invoices-list" data-page="invoice/invoices-list" data-match="invoice/">Invoices</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('invoices.create')): ?>
-                <li><a href="/?page=invoice/invoices-create" data-page="invoice/invoices-create">Create Invoice</a></li>
-                <?php endif; ?>
-              </ul>
-            </li>
-            <?php endif; ?>
-
-            <?php if (nav_can('payments.view') || nav_can('invoices.mark_paid')): ?>
-            <li class="nav-section">
-              <div class="section-label">Payments</div>
-              <ul>
                 <?php if (nav_can('payments.view')): ?>
-                <li><a href="/?page=payments/payments-list" data-page="payments/payments-list">List Payments</a></li>
+                <li><a href="/?page=payments/payments-list" data-page="payments/payments-list" data-match="payments/">Payments</a></li>
                 <?php endif; ?>
-                <?php if (nav_can('invoices.mark_paid')): ?>
-                <li><a href="/?page=payments/payments-create" data-page="payments/payments-create">Record Payment</a></li>
-                <?php endif; ?>
-              </ul>
-            </li>
-            <?php endif; ?>
-
-            <?php if (nav_can('jobs.view') || nav_can('projects.view')): ?>
-            <li class="nav-section">
-              <div class="section-label">Jobs</div>
-              <ul>
                 <?php if (nav_can('jobs.view')): ?>
-                <li><a href="/?page=jobs/jobs-list" data-page="/jobs/jobs-list">Jobs</a></li>
-                <?php endif; ?>
-                <?php if (nav_can('projects.view')): ?>
-                <li><a href="/?page=project/projects-list" data-page="project/projects-list">Projects</a></li>
+                <li><a href="/?page=jobs/jobs-list" data-page="jobs/jobs-list" data-match="jobs/">Jobs</a></li>
                 <?php endif; ?>
               </ul>
             </li>

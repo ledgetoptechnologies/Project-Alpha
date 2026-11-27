@@ -229,6 +229,6 @@ try{
 if ($return_to_project > 0) {
     header('Location: /?page=project/projects-details&id=' . $return_to_project . '&created=contract');
 } else {
-    header('Location: /?page=contract/on-demand-contracts-list&created=1');
+    header('Location: /?page=contract/contracts-list&kind=as_needed&created=1');
 }
 exit;

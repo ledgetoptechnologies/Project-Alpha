@@ -247,9 +247,9 @@ try {
 if ($return_to_project > 0) {
     header('Location: /?page=project/projects-details&id=' . $return_to_project . '&created=quote');
 } elseif ($quote_type === 'long_term') {
-    header('Location: /?page=quote/long-term-quotes-list&created=1');
+    header('Location: /?page=quote/quotes-list&kind=recurring&created=1');
 } elseif ($quote_type === 'on_demand') {
-    header('Location: /?page=quote/on-demand-quotes-list&created=1');
+    header('Location: /?page=quote/quotes-list&kind=as_needed&created=1');
 } else {
     header('Location: /?page=quote/quotes-list&created=1');
 }
