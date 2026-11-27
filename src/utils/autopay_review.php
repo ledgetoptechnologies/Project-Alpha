@@ -17,8 +17,34 @@ function pa_autopay_review_now(array $config): DateTimeImmutable
     return ($now instanceof DateTimeImmutable ? $now : new DateTimeImmutable('now'))->setTimezone(new DateTimeZone('UTC'));
 }
 
+/** Apply the longer notice to ACH, debit, prepaid and any unclassified method. */
+function pa_autopay_notice_days(string $methodType, bool $verifiedCreditCard): int
+{
+    return $methodType === 'card' && $verifiedCreditCard ? 7 : 10;
+}
+
+function pa_autopay_collection_notice_days(PDO $pdo, array $collection): int
+{
+    $stmt = $pdo->prepare('SELECT verified_credit_card FROM autopay_enrollments WHERE id=?');
+    $stmt->execute([$collection['authorization_id']]);
+    return pa_autopay_notice_days((string)$collection['method_type'], (int)$stmt->fetchColumn() === 1);
+}
+
+function pa_autopay_notice_schedule(array $review, DateTimeImmutable $sentAt, int $days): DateTimeImmutable
+{
+    $timezone = new DateTimeZone($review['timezone']);
+    $earliest = $sentAt->setTimezone($timezone)->modify('+' . $days . ' days');
+    if ($review['due_date']) {
+        $due = new DateTimeImmutable($review['due_date'] . ' 00:00:00', $timezone);
+        if ($due > $earliest) {
+            return $due;
+        }
+    }
+    return $earliest;
+}
+
 /** The caller already holds the financial document lock. */
-function pa_autopay_review_basis(PDO $pdo, string $type, array $document, array $config): array
+function pa_autopay_review_basis(PDO $pdo, string $type, array $document, array $config, int $noticeDays): array
 {
     if(empty($document['finalized_at']) || !in_array($document['status']??'', ['unpaid','sent','partial','overdue'],true) || ($document['collection_mode']??'direct')!=='direct' || ($document['recipient_presentation_mode']??'named')==='general')throw new DomainException('Invoice is not eligible for an AutoPay review.');
     $client = (int)($document[$type === 'invoice' ? 'client_id' : 'primary_client_id'] ?? 0);
@@ -38,7 +64,7 @@ function pa_autopay_review_basis(PDO $pdo, string $type, array $document, array 
     $basis = [
         'document_type'=>$type, 'document_public_id'=>$document['public_id'], 'client_public_id'=>$recipient['public_id'],
         'revision_number'=>(int)($document['revision_number'] ?? 1), 'amount_cents'=>$amount, 'currency'=>$currency,
-        'due_date'=>($document['due_date'] ?? null) ?: null, 'timezone'=>$timezone, 'recipient'=>strtolower(trim($recipient['email'])),
+        'due_date'=>($document['due_date'] ?? null) ?: null, 'notice_days'=>$noticeDays, 'timezone'=>$timezone, 'recipient'=>strtolower(trim($recipient['email'])),
     ];
     $basis['basis_hash'] = hash('sha256', json_encode([$basis, (string)($document['total'] ?? ''), (string)($document['finalized_at'] ?? ''), (string)($document['contract_id'] ?? '')], JSON_THROW_ON_ERROR));
     return $basis;
@@ -83,7 +109,11 @@ function pa_autopay_review_cancel_invalid_authorization(PDO $pdo, array $collect
 function pa_autopay_review_create(PDO $pdo, int $collectionId, string $type, array $document, array $config): array
 {
     if (!pa_autopay_review_available($pdo)) throw new DomainException('AutoPay invoice review requires the database upgrade.');
-    $basis = pa_autopay_review_basis($pdo, $type, $document, $config);
+    $stmt = $pdo->prepare('SELECT authorization_id,method_type FROM autopay_collections WHERE id=?');
+    $stmt->execute([$collectionId]);
+    $collection = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$collection) throw new DomainException('AutoPay collection is unavailable.');
+    $basis = pa_autopay_review_basis($pdo, $type, $document, $config, pa_autopay_collection_notice_days($pdo, $collection));
     $generation = bin2hex(random_bytes(16));
     $pdo->prepare('INSERT INTO autopay_invoice_reviews(collection_id,document_type,document_public_id,client_public_id,generation,management_token,basis_hash,revision_number,amount_cents,currency,due_date,timezone,recipient) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
         ->execute([$collectionId,$type,$basis['document_public_id'],$basis['client_public_id'],$generation,bin2hex(random_bytes(32)),$basis['basis_hash'],$basis['revision_number'],$basis['amount_cents'],$basis['currency'],$basis['due_date'],$basis['timezone'],$basis['recipient']]);
@@ -119,7 +149,7 @@ function pa_autopay_prepare_invoice_notice(PDO $pdo, string $type, int $id, arra
         if (!$collection || $collection['state'] !== 'pending' || (int)$collection['attempt_count'] !== 0 || $collection['financial_hold']) { $pdo->commit(); return null; }
         $review = pa_autopay_review_latest($pdo,(int)$collection['id'],true);
         if (!$review || !in_array($review['status'],['awaiting_delivery','scheduled'],true)) { $pdo->commit(); return null; }
-        $basis = pa_autopay_review_basis($pdo,$type,$document,$config);
+        $basis = pa_autopay_review_basis($pdo,$type,$document,$config,pa_autopay_collection_notice_days($pdo,$collection));
         if(!pa_autopay_review_authorized($pdo,$collection,$document,$basis,$config)){pa_autopay_review_cancel_invalid_authorization($pdo,$collection);$pdo->commit();return null;}
         if ($review['document_public_id'] !== $basis['document_public_id'] || $review['client_public_id'] !== $basis['client_public_id']) throw new DomainException('AutoPay review identity changed. Staff must review this invoice.');
         if ($basis['recipient'] !== strtolower(trim($recipient))) { $pdo->commit(); return null; }
@@ -129,21 +159,25 @@ function pa_autopay_prepare_invoice_notice(PDO $pdo, string $type, int $id, arra
             $pdo->prepare('UPDATE autopay_collections SET amount_cents=?,currency=? WHERE id=?')->execute([$basis['amount_cents'],$basis['currency'],$collection['id']]);
         }
         $amount = number_format((int)$review['amount_cents']/100,2,'.',',') . ' ' . strtoupper($review['currency']);
-        $text = 'AutoPay review: ' . $amount . ' is scheduled no earlier than seven calendar days after this invoice notice is successfully delivered, or the invoice due date if later. You may skip AutoPay for this invoice or ask a billing question before collection starts. This invoice is not paid yet.';
-        if ($review['scheduled_at']) $text = 'AutoPay review: ' . $amount . ' is scheduled on or after ' . (new DateTimeImmutable($review['scheduled_at'],new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($review['timezone']))->format('M j, Y g:i A T') . '. You may skip AutoPay for this invoice or ask a billing question before collection starts. This invoice is not paid yet.';
-        if (!$review['scheduled_at']) {
-            $earliest=pa_autopay_review_now($config)->setTimezone(new DateTimeZone($review['timezone']))->modify('+7 days');
-            if($review['due_date']){$due=new DateTimeImmutable($review['due_date'].' 00:00:00',new DateTimeZone($review['timezone']));if($due>$earliest)$earliest=$due;}
-            $text='AutoPay review: '.$amount.' is scheduled on or after '.$earliest->format('M j, Y').' and at least seven calendar days after successful delivery of this invoice notice. No action is needed to use AutoPay. You can skip AutoPay for this invoice or ask a billing question before collection starts. This invoice is not paid yet.';
+        if ($review['scheduled_at']) {
+            $chargeAt = new DateTimeImmutable($review['scheduled_at'], new DateTimeZone('UTC'));
+            $date = $chargeAt->setTimezone(new DateTimeZone($review['timezone']))->format('M j, Y g:i A T');
+            $timing = 'on or after ' . $date;
+        } else {
+            $days = $basis['notice_days'];
+            $date = pa_autopay_notice_schedule($review, pa_autopay_review_now($config), $days)->format('M j, Y');
+            $window = $days === 7 ? 'seven calendar days' : 'ten calendar days';
+            $timing = 'on or after ' . $date . ' and at least ' . $window . ' after this notice is sent';
         }
+        $text = 'Your invoice balance of ' . $amount . ' is scheduled to be paid automatically ' . $timing . '.';
         $method=$collection['method_type']==='us_bank_account'?'bank account':'card';
         $auth=$pdo->prepare('SELECT last4 FROM autopay_enrollments WHERE id=?');$auth->execute([$collection['authorization_id']]);$last4=(string)$auth->fetchColumn();
         $text.=' Payment method: '.$method.(preg_match('/^[0-9]{4}$/D',$last4)?' ending '.$last4:' saved with Stripe').'.';
         $host=rtrim((string)($config['app_host']??''),'/');
         if(!preg_match('~^https?://~i',$host))throw new DomainException('Invoice review requires a configured public app URL.');
         $url=$host.'/?page=public-autopay&review='.$review['management_token'];
-        $text.=' If everything looks correct, no action is needed. Your saved payment method will be charged automatically.';
-        $html='<div style="border:2px solid #2463a6;border-radius:8px;padding:18px;margin:16px 0;background:#f2f7fc"><h2 style="margin-top:0">You are set up with AutoPay</h2><p>'.htmlspecialchars($text,ENT_QUOTES,'UTF-8').'</p><p><a href="'.htmlspecialchars($url.'#invoice-review',ENT_QUOTES,'UTF-8').'">Don’t automatically pay this invoice</a> · <a href="'.htmlspecialchars($url.'#invoice-review',ENT_QUOTES,'UTF-8').'">Question this invoice</a> · <a href="'.htmlspecialchars($url.'#autopay-account',ENT_QUOTES,'UTF-8').'">Turn off all AutoPay</a></p></div>';
+        $text.=' No reply or action is needed if everything looks correct. Use the links below to request changes, skip this payment, or turn off AutoPay.';
+        $html='<div style="border:2px solid #2463a6;border-radius:8px;padding:18px;margin:16px 0;background:#f2f7fc"><h2 style="margin-top:0">Upcoming automatic payment</h2><p>'.htmlspecialchars($text,ENT_QUOTES,'UTF-8').'</p><p><a href="'.htmlspecialchars($url.'#invoice-review',ENT_QUOTES,'UTF-8').'">Don’t automatically pay this invoice</a> · <a href="'.htmlspecialchars($url.'#invoice-review',ENT_QUOTES,'UTF-8').'">Question this invoice</a> · <a href="'.htmlspecialchars($url.'#autopay-account',ENT_QUOTES,'UTF-8').'">Turn off all AutoPay</a></p></div>';
         $pdo->commit();
         return ['review_id'=>(int)$review['id'],'generation'=>$review['generation'],'basis_hash'=>$review['basis_hash'],'document_type'=>$type,'document_id'=>$id,'action_url'=>$url,'text'=>$text.' Review this invoice or turn off AutoPay: '.$url,'html'=>$html];
     } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }
@@ -159,7 +193,7 @@ function pa_autopay_mark_invoice_notice_sent(PDO $pdo, array $notice, string $re
         $review = $collection ? pa_autopay_review_latest($pdo,(int)$collection['id'],true) : null;
         if (!$review || $collection['state'] !== 'pending' || (int)$collection['attempt_count'] !== 0 || $collection['financial_hold'] || !in_array($review['status'],['awaiting_delivery','scheduled'],true)
             || (int)$notice['review_id'] !== (int)$review['id'] || !hash_equals($review['generation'],(string)$notice['generation']) || $review['recipient'] !== strtolower(trim($recipient))) { $pdo->commit(); return false; }
-        $basis = pa_autopay_review_basis($pdo,(string)$notice['document_type'],$document,$config);
+        $basis = pa_autopay_review_basis($pdo,(string)$notice['document_type'],$document,$config,pa_autopay_collection_notice_days($pdo,$collection));
         if(!pa_autopay_review_authorized($pdo,$collection,$document,$basis,$config)){pa_autopay_review_cancel_invalid_authorization($pdo,$collection);$pdo->commit();return false;}
         if (!hash_equals($review['basis_hash'],$basis['basis_hash'])) {
             $pdo->prepare('UPDATE autopay_collections SET state="held",next_attempt_at=NULL,last_error="Invoice changed during delivery; a new review notice is required." WHERE id=?')->execute([$collection['id']]);
@@ -176,9 +210,7 @@ function pa_autopay_mark_invoice_notice_sent(PDO $pdo, array $notice, string $re
                 $now=$now->setTimezone(new DateTimeZone('UTC'));
                 if($now>pa_autopay_review_now($config))throw new DomainException('Invoice delivery timestamp is in the future.');
             }
-            $local = $now->setTimezone(new DateTimeZone($review['timezone']));
-            $scheduled = $local->modify('+7 days');
-            if ($review['due_date']) { $due = new DateTimeImmutable($review['due_date'].' 00:00:00',new DateTimeZone($review['timezone'])); if ($due > $scheduled) $scheduled = $due; }
+            $scheduled = pa_autopay_notice_schedule($review, $now, $basis['notice_days']);
             $utc = $scheduled->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
             $pdo->prepare('UPDATE autopay_invoice_reviews SET status="scheduled",delivered_at=?,scheduled_at=?,delivery_log_id=? WHERE id=?')->execute([$now->format('Y-m-d H:i:s'),$utc,$deliveryLogId,$review['id']]);
             $pdo->prepare('UPDATE autopay_collections SET next_attempt_at=? WHERE id=?')->execute([$utc,$collection['id']]);
@@ -191,7 +223,7 @@ function pa_autopay_mark_invoice_notice_sent(PDO $pdo, array $notice, string $re
 function pa_autopay_review_worker_ready(PDO $pdo, array $collection, array $document, array $config): bool
 {
     $review = pa_autopay_review_latest($pdo,(int)$collection['id'],true);
-    try { $basis = pa_autopay_review_basis($pdo,$collection['document_type'],$document,$config); } catch (Throwable $error) { $basis = null; }
+    try { $basis = pa_autopay_review_basis($pdo,$collection['document_type'],$document,$config,pa_autopay_collection_notice_days($pdo,$collection)); } catch (Throwable $error) { $basis = null; }
     if($basis && !pa_autopay_review_authorized($pdo,$collection,$document,$basis,$config)){
         pa_autopay_review_cancel_invalid_authorization($pdo,$collection);
         if((int)$collection['attempt_count']>0)$pdo->prepare('UPDATE autopay_collections SET state="held",next_attempt_at=NULL,last_error="Authorization changed after submission; reconcile the existing payment." WHERE id=?')->execute([$collection['id']]);
@@ -266,7 +298,7 @@ function pa_autopay_invoice_review_staff_restart(PDO $pdo, string $type, int $id
         [$document,$collection]=pa_autopay_review_lock($pdo,$type,$id);
         $review=$collection?pa_autopay_review_latest($pdo,(int)$collection['id'],true):null;
         if(!$review || $review['status']==='skipped' || $collection['state']!=='held' || $collection['financial_hold'] || (int)$collection['attempt_count']!==0 || $collection['stripe_payment_intent_id'] || $collection['lease_token'])throw new DomainException('This collection cannot be restarted. A client skip or submitted payment must not be overridden.');
-        $basis=pa_autopay_review_basis($pdo,$type,$document,$config);
+        $basis=pa_autopay_review_basis($pdo,$type,$document,$config,pa_autopay_collection_notice_days($pdo,$collection));
         if(!pa_autopay_enabled($config) || !pa_autopay_review_authorized($pdo,$collection,$document,$basis,$config))throw new DomainException('Original AutoPay authorization is no longer active.');
         if($basis['document_public_id']!==$review['document_public_id'] || $basis['client_public_id']!==$review['client_public_id'])throw new DomainException('Invoice identity changed.');
         require_once __DIR__.'/check_reports.php';
@@ -292,7 +324,7 @@ function pa_autopay_invoice_review_action(PDO $pdo, string $type, int $id, int $
     try {
         [$document,$collection] = pa_autopay_review_lock($pdo,$type,$id);
         $review = $collection ? pa_autopay_review_latest($pdo,(int)$collection['id'],true) : null;
-        $basis = pa_autopay_review_basis($pdo,$type,$document,$config);
+        $basis = pa_autopay_review_basis($pdo,$type,$document,$config,pa_autopay_collection_notice_days($pdo,$collection));
         if (!$review || $clientId <= 0 || $clientId !== (int)($document[$type === 'invoice' ? 'client_id' : 'primary_client_id'] ?? 0) || $review['client_public_id'] !== $basis['client_public_id'] || $review['document_public_id'] !== $basis['document_public_id']) throw new DomainException('Invoice review is unavailable.');
         if($review['status']==='skipped' && $action==='skip' && $collection['state']==='failed' && (int)$collection['attempt_count']===0 && !$collection['stripe_payment_intent_id'] && !$collection['lease_token'] && !$collection['financial_hold']){$pdo->commit();return $review;}
         if ((int)$collection['attempt_count'] !== 0 || !empty($collection['stripe_payment_intent_id']) || !empty($collection['lease_token']) || $collection['financial_hold'] || !in_array($collection['state'],['pending','held'],true)) throw new DomainException('Payment submission has started or needs staff review. Contact the business.');

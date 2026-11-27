@@ -32,7 +32,7 @@ final class AutoPayNotificationsDatabaseTest extends TestCase {
     }
     public function testProcessingSuppressesReminderAndNeverCreatesReceipt():void {
         $sent=[];$sender=static function(...$args)use(&$sent){$sent[]=$args;return [true,''];};
-        $this->state('pending');self::assertStringContainsString('seven-day review',pa_autopay_pending_notice($this->pdo,$this->invoice));$this->state('processing');
+        $this->state('pending');self::assertStringContainsString('payment review',pa_autopay_pending_notice($this->pdo,$this->invoice));$this->state('processing');
         self::assertStringContainsString('processing',pa_autopay_pending_notice($this->pdo,$this->invoice));
         self::assertSame(0,pa_autopay_deliver_notifications($this->pdo,$this->config,$sender)['sent']);
         $due=$this->pdo->query('SELECT due_date FROM invoices WHERE id='.$this->invoice)->fetchColumn();invoice_notification_enqueue($this->pdo,$this->invoice,'due_7','due:'.$due,'payer@example.invalid');

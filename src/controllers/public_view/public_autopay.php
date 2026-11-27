@@ -116,7 +116,7 @@ $s->execute([$client['id'],getenv('AUTOPAY_INSTALLATION_ID'),getenv('AUTOPAY_STR
 <fieldset><legend>Invoices covered</legend>
 <input type="hidden" name="scope" value="business"><input type="hidden" name="consent" value="1">
 <p>AutoPay covers all future invoices for your client account with this business, including regular, on-demand, recurring and project invoices.</p>
-<p><label><input type="checkbox" name="business_consent" value="1" required> I authorize this account-wide coverage. Each invoice email will show its amount and charge date, with at least seven calendar days after delivery to review, skip or question that invoice. I can turn off all AutoPay.</label></p></fieldset>
+<p><label><input type="checkbox" name="business_consent" value="1" required> I authorize this account-wide coverage. Each invoice email will show its amount and charge date, with at least seven calendar days to review, skip or question it after the notice is sent. Bank accounts and cards Stripe has not verified as credit get at least ten days. I can turn off all AutoPay.</label></p></fieldset>
 <p><label>Payment method <select name="method_type"><option value="us_bank_account">US bank account (ACH)</option><option value="card">Card</option></select></label></p>
 <p class="help">Existing invoices are not charged by this setup. Bank verification must complete before AutoPay becomes active. To replace a saved method, complete a new setup; the previous authorization stays active until the replacement succeeds.</p>
 <button name="action" value="setup">Continue to Stripe</button></form>

@@ -10,13 +10,13 @@ $autopayEscape = static fn($value): string => htmlspecialchars((string)$value, E
   <strong>AutoPay</strong>
   <?php if ($autopayState['eligible']): ?>
     <p style="margin:6px 0"><?= $autopayEscape($autopayState['scope']) ?> · <?= $autopayEscape($autopayState['method']) ?></p>
-    <p style="margin:6px 0">AutoPay covers <strong><?= $autopayEscape(strtoupper((string)($autopayDocument['currency'] ?? $appConfig['workforce_currency'] ?? 'USD'))) ?> <?= number_format((float)$autopayState['amount'], 2) ?></strong>. Finalizing reserves this invoice; it does not charge immediately. The client must receive the invoice notice and have at least seven calendar days to review, or until a later due date.</p>
+    <p style="margin:6px 0">AutoPay covers <strong><?= $autopayEscape(strtoupper((string)($autopayDocument['currency'] ?? $appConfig['workforce_currency'] ?? 'USD'))) ?> <?= number_format((float)$autopayState['amount'], 2) ?></strong>. Finalizing reserves this invoice; it does not charge immediately. The client must receive the invoice notice and have at least seven calendar days to review for verified credit cards, or ten days for other methods. A later invoice due date takes precedence.</p>
     <?php if (!empty($autopayForm) && empty($autopayDocument['finalized_at'])): ?>
       <input form="<?= $autopayEscape($autopayForm) ?>" type="hidden" name="autopay_preview_hash" value="<?= $autopayEscape(pa_autopay_staff_preview_hash($autopayDocument, $autopayState, $autopayType, csrf_token())) ?>">
       <label style="display:block;margin-top:8px">AutoPay after invoice delivery and review
         <select data-autopay-choice form="<?= $autopayEscape($autopayForm) ?>" name="autopay_action" required style="display:block;padding:8px;max-width:100%">
           <option value="">Choose before finalizing</option>
-          <option value="collect">Schedule AutoPay after the seven-day review</option>
+          <option value="collect">Schedule AutoPay after invoice review</option>
           <option value="hold">Hold AutoPay for this invoice</option>
         </select>
       </label>
@@ -26,7 +26,7 @@ $autopayEscape = static fn($value): string => htmlspecialchars((string)$value, E
     <?php if($autopayState['state']==='pending' && ($autopayState['review_status']??'')==='scheduled' && !empty($autopayState['scheduled_at'])): ?>
     <p style="margin:6px 0"><strong>AutoPay scheduled on or after <?= $autopayEscape((new DateTimeImmutable($autopayState['scheduled_at'],new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($autopayState['timezone']??'UTC'))->format('F j, Y g:i a T')) ?></strong>. The client can skip or question this invoice before collection begins.</p>
     <?php elseif(($autopayState['review_status']??'')==='awaiting_delivery'): ?>
-    <p style="margin:6px 0"><strong>Awaiting invoice email delivery.</strong> Collection cannot start until the notice is delivered and the seven-day review window ends.</p>
+    <p style="margin:6px 0"><strong>Awaiting invoice email delivery.</strong> Collection cannot start until the notice is delivered and the applicable review window ends.</p>
     <?php endif; ?>
     <?php if(!empty($autopayState['question_text'])): ?><p style="margin:6px 0"><strong>Client invoice question:</strong> <?= $autopayEscape($autopayState['question_text']) ?></p><?php endif; ?>
     <p style="margin:6px 0"><?= $autopayEscape(match ($autopayState['state']) {
@@ -82,7 +82,7 @@ $autopayEscape = static fn($value): string => htmlspecialchars((string)$value, E
       <input type="hidden" name="document_type" value="<?= $autopayEscape($autopayType) ?>">
       <input type="hidden" name="document_id" value="<?= (int)$autopayDocument['id'] ?>">
       <label style="display:block">Resolution note <textarea name="resolution_note" maxlength="1000" required rows="3" style="display:block;width:100%;font:inherit"></textarea></label>
-      <label style="display:block;margin:8px 0"><input type="checkbox" name="confirm_review_resolution" value="1" required> I have resolved this review. Require a fresh invoice notice and seven-day window.</label>
+      <label style="display:block;margin:8px 0"><input type="checkbox" name="confirm_review_resolution" value="1" required> I have resolved this review. Require a fresh invoice notice and review window.</label>
       <button type="submit" class="btn btn-sm">Resolve review and require a new notice</button>
       <small style="display:block">This does not charge or email the client. Send the updated invoice to start a fresh review window. Client opt-outs cannot be overridden here.</small>
     </form>

@@ -35,7 +35,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
             $this->env[$key] = getenv($key); putenv($key . '=' . $value);
         }
         $this->client = $this->client();
-        $this->pdo->prepare('INSERT INTO autopay_enrollments(client_id,scope,status,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,currency,consent_version,consent_text,verified_email,consent_at,consent_proof,verified_at,effective_from) VALUES (?,"business","active","acct_reviewTEST","synthetic-review-tests","cus_review","pm_review","card","usd","synthetic","Synthetic account-wide consent",?,"2025-01-01",REPEAT("a",64),"2025-01-01","2025-01-01")')->execute([$this->client['id'], $this->client['email']]);
+        $this->pdo->prepare('INSERT INTO autopay_enrollments(client_id,scope,status,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,verified_credit_card,currency,consent_version,consent_text,verified_email,consent_at,consent_proof,verified_at,effective_from) VALUES (?,"business","active","acct_reviewTEST","synthetic-review-tests","cus_review","pm_review","card",1,"usd","synthetic","Synthetic account-wide consent",?,"2025-01-01",REPEAT("a",64),"2025-01-01","2025-01-01")')->execute([$this->client['id'], $this->client['email']]);
         $this->authorization = (int)$this->pdo->lastInsertId();
     }
 
@@ -165,6 +165,24 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
             self::assertNull($this->review($document)['delivered_at']);
             self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00')));
             self::assertSame('2026-02-08 12:00:00', $this->review($document)['scheduled_at']);
+        }
+    }
+
+    public function testUnknownCardAndBankAccountUseTenDayNoticeAndCollectionWindow(): void
+    {
+        foreach (['card', 'us_bank_account'] as $method) {
+            $this->pdo->prepare('UPDATE autopay_enrollments SET method_type=?,verified_credit_card=0 WHERE id=?')
+                ->execute([$method, $this->authorization]);
+            $document = $this->invoice();
+            $sentAt = $this->clock('2026-02-01 12:00:00');
+            $notice = $this->notice($document, $sentAt);
+            self::assertStringContainsString('Feb 11, 2026', $notice['text']);
+            self::assertStringContainsString('ten calendar days', $notice['text']);
+            self::assertStringContainsString('Turn off all AutoPay', $notice['html']);
+            self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $sentAt));
+            self::assertSame('2026-02-11 12:00:00', $this->review($document)['scheduled_at']);
+            self::assertFalse($this->ready($document, '2026-02-08 12:00:00'));
+            self::assertTrue($this->ready($document, '2026-02-11 12:00:00'));
         }
     }
 

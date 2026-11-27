@@ -19,7 +19,7 @@ function pa_autopay_pending_notice(PDO $pdo, int $id, string $type = 'invoice'):
     if(($collection['state']??'')==='pending' && empty($collection['financial_hold'])){
         require_once __DIR__.'/autopay_review.php';
         $review=pa_autopay_invoice_review_state($pdo,$type,$id);
-        if(!$review || $review['review_status']==='awaiting_delivery')return 'AutoPay is waiting for successful delivery of this invoice and your seven-day review period. This invoice is not paid yet.';
+        if(!$review || $review['review_status']==='awaiting_delivery')return 'AutoPay is waiting for successful delivery of this invoice and your payment review period. This invoice is not paid yet.';
         if($review['review_status']==='scheduled' && $review['scheduled_at'])return 'AutoPay is scheduled on or after '.(new DateTimeImmutable($review['scheduled_at'],new DateTimeZone('UTC')))->setTimezone(new DateTimeZone($review['timezone']))->format('M j, Y g:i A T').'. You can review, skip AutoPay for this invoice, or ask a billing question using the link in your invoice email. This invoice is not paid yet.';
     }
     return match (!empty($collection['financial_hold']) ? 'held' : ($collection['state'] ?? '')) {
