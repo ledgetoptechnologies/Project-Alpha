@@ -29,7 +29,7 @@ function pa_autopay_assert_payment_available(PDO $pdo, int $id, string $type='in
 function pa_autopay_reserve_checkout(PDO $pdo,array $document,array $config,string $type='invoice'): void
 {
     require_once __DIR__ . '/check_reports.php';
-    if(!pa_autopay_enabled($config) && !pa_check_report_available($pdo))return;
+    if (!pa_autopay_enabled($config) && !(pa_check_reporting_enabled() && pa_check_report_available($pdo))) return;
     if(!$pdo->inTransaction())throw new LogicException('Checkout reservation requires its document lock.');
     pa_autopay_assert_payment_available($pdo,(int)$document['id'],$type);
     if(empty($document['finalized_at']) || !in_array($document['status'],['unpaid','sent','partial','overdue'],true))throw new DomainException('Finalize the invoice before payment.');

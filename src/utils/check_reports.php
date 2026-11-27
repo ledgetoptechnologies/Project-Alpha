@@ -14,6 +14,11 @@ function pa_check_report_table(string $type): string
     };
 }
 
+function pa_check_reporting_enabled(): bool
+{
+    return filter_var(getenv('MAILED_CHECK_REPORTING_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN);
+}
+
 function pa_check_report_available(PDO $pdo): bool
 {
     return invoice_table_has_column($pdo, 'mailed_check_reports', 'client_public_id');

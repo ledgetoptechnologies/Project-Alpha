@@ -175,9 +175,9 @@ try {
     $autoPayLinkLabel = pa_autopay_enabled($appConfig) ? 'Set up or manage AutoPay (test mode)' : 'Manage or turn off AutoPay (test mode)';
     echo '<p class="public-doc-wrap"><a href="/?page=public-autopay&amp;token=' . htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8') . '">' . $autoPayLinkLabel . '</a></p>';
   }
-  if (in_array($type, ['invoice','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice)) {
+  require_once __DIR__ . '/../../utils/check_reports.php';
+  if (pa_check_reporting_enabled() && in_array($type, ['invoice','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice)) {
     require_once __DIR__ . '/../../utils/check_report_public.php';
-    require_once __DIR__ . '/../../utils/check_reports.php';
     try {
       pa_check_report_public_context($pdo, $token, $appConfig);
       if (pa_check_report_available($pdo)) {

@@ -77,6 +77,7 @@ final class MailedCheckHttpMySqlTest extends TestCase
         $env['MYSQL_PASSWORD'] = (string)getenv('CHECK_HTTP_PASSWORD');
         $env['APP_SKIP_DB_CONFIG'] = '1';
         $env['APP_ENV'] = 'production';
+        $env['MAILED_CHECK_REPORTING_ENABLED'] = 'true';
         foreach (['AUTH_DISABLED', 'APP_AUTH_DISABLED'] as $key) $env[$key] = 'false';
         foreach (['STRIPE_SECRET_KEY', 'stripe_secret_key', 'stripe_secret_key_enc', 'STRIPE_WEBHOOK_SECRET'] as $key) $env[$key] = '';
         $log = tmpfile();

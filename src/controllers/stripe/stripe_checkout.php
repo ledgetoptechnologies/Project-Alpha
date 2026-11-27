@@ -91,6 +91,8 @@ try {
     
     // Serialize the collection decision with original issuance and the AutoPay worker.
     require_once __DIR__ . '/../../utils/autopay_collection.php';
+    require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+    invoice_ensure_payments_schema($pdo);
     $pdo->beginTransaction();
     if ($documentType === 'invoice') pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
     // Get invoice details
@@ -130,9 +132,7 @@ try {
     if ($documentType === 'project_invoice') {
         $amountPaid = (float)($invoice['amount_paid'] ?? 0);
     } else {
-        $paidStmt = $pdo->prepare('SELECT COALESCE(SUM(GREATEST(amount-refunded_amount,0)), 0) FROM payments WHERE invoice_id = ? AND status = "succeeded"');
-        $paidStmt->execute([$invoiceId]);
-        $amountPaid = (float)$paidStmt->fetchColumn();
+        $amountPaid = invoice_effective_paid_cents($pdo, $invoiceId, false) / 100;
     }
     $amountDue = $total - $amountPaid;
     

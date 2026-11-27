@@ -14,6 +14,10 @@ if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 $token = (string)($_POST['token'] ?? $_GET['token'] ?? '');
 $message = ''; $error = ''; $context = null; $report = null; $reportNeedsReview = false;
 try {
+    if (!pa_check_reporting_enabled()) {
+        http_response_code(404);
+        throw new DomainException('This mailed-check link is unavailable.');
+    }
     if (!in_array(($_SERVER['REQUEST_METHOD'] ?? 'GET'), ['GET','POST'], true)) { http_response_code(405); throw new DomainException('Use the invoice link to report your check.'); }
     if (!rate_limit_check($pdo, 'mailed_check_view', 30, 60, false)) { http_response_code(429); throw new DomainException('Please wait before trying again.'); }
     $context = pa_check_report_public_context($pdo, $token, $appConfig);

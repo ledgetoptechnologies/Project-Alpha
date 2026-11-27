@@ -226,12 +226,13 @@ function invoice_effective_paid_total(PDO $pdo, int $invoiceId): float
 }
 
 /** Read after the invoice lock: a previous RR snapshot may predate a waiting payment. */
-function invoice_effective_paid_cents(PDO $pdo, int $invoiceId): int
+function invoice_effective_paid_cents(PDO $pdo, int $invoiceId, bool $subtractDisputes = true): int
 {
     invoice_ensure_payments_schema($pdo);
     require_once __DIR__ . '/stripe_invoice_payment_amounts.php';
     $suffix = $pdo->inTransaction() && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
-    $stmt = $pdo->prepare('SELECT GREATEST(amount-refunded_amount-disputed_amount,0) AS effective_amount FROM payments WHERE invoice_id=? AND status="succeeded" ORDER BY id' . $suffix);
+    $net = $subtractDisputes ? 'amount-refunded_amount-disputed_amount' : 'amount-refunded_amount';
+    $stmt = $pdo->prepare("SELECT GREATEST({$net},0) AS effective_amount FROM payments WHERE invoice_id=? AND status='succeeded' ORDER BY id" . $suffix);
     $stmt->execute([$invoiceId]);
     $paid = 0;
     foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $amount) {

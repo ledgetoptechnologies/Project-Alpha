@@ -222,12 +222,17 @@ final class MailedCheckReportsDatabaseTest extends TestCase
     public function testPendingReportBlocksCheckoutReservationEvenWithAutoPayDisabled(): void
     {
         $id = $this->invoice(); $this->report($id);
+        $previous = getenv('MAILED_CHECK_REPORTING_ENABLED');
+        putenv('MAILED_CHECK_REPORTING_ENABLED=true');
         $this->pdo->beginTransaction();
         try {
             $row = $this->pdo->query('SELECT * FROM invoices WHERE id=' . $id . ' FOR UPDATE')->fetch(PDO::FETCH_ASSOC);
             $this->rejects(fn() => pa_autopay_reserve_checkout($this->pdo, $row, []));
             self::assertEmpty($this->pdo->query('SELECT stripe_session_id FROM invoices WHERE id=' . $id)->fetchColumn());
-        } finally { $this->pdo->rollBack(); }
+        } finally {
+            $this->pdo->rollBack();
+            putenv($previous === false ? 'MAILED_CHECK_REPORTING_ENABLED' : 'MAILED_CHECK_REPORTING_ENABLED=' . $previous);
+        }
     }
 
     public function testActiveProcessorReservationsRejectClaimsAndRejectedClaimNeverEnqueuesAutoPay(): void

@@ -4,7 +4,7 @@ Clients can report a mailed check from a finalized invoice or project invoice. A
 
 ## Client and staff workflow
 
-- Enable the existing check payment method. The client follows the invoice link, chooses to report a mailed check, verifies their email, and enters the check number.
+- For the isolated test installation, set `MAILED_CHECK_REPORTING_ENABLED=true` and enable the existing check payment method. New public check reports are disabled by default. The client follows the invoice link, chooses to report a mailed check, verifies their email, and enters the check number.
 - The server captures the current outstanding balance and currency. The arrival deadline is ten calendar days from the original submission, stored in UTC. Repeating the report does not extend the deadline.
 - Staff see pending reports on invoice details and the payments page. Confirm receipt only after physically receiving the check. Confirmation records the payment through the existing accounting path; repeating confirmation does not record another payment or resend a receipt.
 - A missing check becomes overdue for staff review. It does not automatically trigger a debit on day eleven. Staff can reject the report and arrange follow-up; the invoice is not automatically re-enqueued for AutoPay.

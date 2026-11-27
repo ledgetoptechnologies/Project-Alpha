@@ -117,7 +117,7 @@ final class MailedCheckPublicContextTest extends TestCase
             $commit = strpos($source, '$pdo->commit();');
             self::assertNotFalse($reservation);
             self::assertNotFalse($commit);
-            foreach (['$collectionMode =', 'if ($amountDue <= 0)', 'StripeService::fromAppConfig('] as $validation) {
+            foreach (['$collectionMode =', 'invoice_effective_paid_cents(', 'if ($amountDue <= 0)', 'StripeService::fromAppConfig('] as $validation) {
                 $position = strpos($source, $validation);
                 self::assertNotFalse($position);
                 self::assertLessThan($reservation, $position, $file);
