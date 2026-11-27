@@ -46,6 +46,8 @@ final class AutoPayEnrollmentDatabaseTest extends TestCase {
     public function testHostedSetupRemainsPendingUntilVerifiedWebhook():void {
         $auth=$this->enroll();self::assertSame('pending',$auth['status']);self::assertNull($auth['effective_from']);
         self::assertSame('setup',$this->calls[1][2]['mode']);self::assertArrayNotHasKey('line_items',$this->calls[1][2]);
+        $expectedKey = 'autopay-setup-' . hash('sha256', $auth['installation_id'] . ':' . $auth['processor_account_id'] . ':' . $auth['id'] . ':' . $auth['stripe_customer_id']);
+        self::assertSame($expectedKey, $this->calls[1][3]);
         self::assertTrue(pa_autopay_setup_event($this->pdo,$this->event($auth),$this->config,$this->verifiedTransport($auth)));
         $s=$this->pdo->prepare('SELECT * FROM autopay_enrollments WHERE id=?');$s->execute([$auth['id']]);$active=$s->fetch(PDO::FETCH_ASSOC);
         self::assertSame('active',$active['status']);self::assertSame('pm_synthetic',$active['payment_method_id']);self::assertNotNull($active['effective_from']);

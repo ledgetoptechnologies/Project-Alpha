@@ -40,7 +40,10 @@ try {
     }
     
     require_once __DIR__ . '/../../utils/autopay_collection.php';
+    require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+    invoice_ensure_payments_schema($pdo);
     $pdo->beginTransaction();
+    pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
     // Get invoice details
     $invSt = $pdo->prepare('
         SELECT i.*, c.name as client_name, c.email as client_email 
@@ -55,8 +58,6 @@ try {
         throw new Exception('Invoice not found');
     }
     pa_autopay_assert_payment_available($pdo, $invoiceId);
-    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig);
-    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -73,9 +74,7 @@ try {
     
     // Calculate amount due from payments table for accuracy
     $total = (float)($invoice['total'] ?? 0);
-    $paidStmt = $pdo->prepare('SELECT COALESCE(SUM(GREATEST(amount-refunded_amount,0)), 0) FROM payments WHERE invoice_id = ? AND status = "succeeded"');
-    $paidStmt->execute([$invoiceId]);
-    $amountPaid = (float)$paidStmt->fetchColumn();
+    $amountPaid = invoice_effective_paid_cents($pdo, $invoiceId, false) / 100;
     $amountDue = $total - $amountPaid;
     
     if ($amountDue <= 0) {
@@ -118,6 +117,11 @@ try {
     $brandName = $appConfig['brand_name'] ?? 'Project Alpha';
     $description = "Invoice {$invoiceLabel} - {$checkoutRecipient}";
     
+    // Reject local eligibility errors before persisting a reservation. Release
+    // the lock before any Stripe I/O.
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig);
+    $pdo->commit();
+
     $session = $stripe->createCheckoutSessionWithSurcharge(
         $amountDue,
         $surchargeAmount,

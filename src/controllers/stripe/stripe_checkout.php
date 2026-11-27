@@ -91,7 +91,10 @@ try {
     
     // Serialize the collection decision with original issuance and the AutoPay worker.
     require_once __DIR__ . '/../../utils/autopay_collection.php';
+    require_once __DIR__ . '/../../utils/invoice_lifecycle.php';
+    invoice_ensure_payments_schema($pdo);
     $pdo->beginTransaction();
+    if ($documentType === 'invoice') pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
     // Get invoice details
     $invSt = $documentType === 'project_invoice'
         ? $pdo->prepare('SELECT pi.*,p.name AS project_name,p.name AS client_name,NULL AS client_email FROM project_invoices pi JOIN projects p ON p.id=pi.project_id WHERE pi.id=? FOR UPDATE')
@@ -103,10 +106,6 @@ try {
         throw new Exception('Invoice not found');
     }
     pa_autopay_assert_payment_available($pdo, $invoiceId, $documentType);
-    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig, $documentType);
-    // Finalized documents cannot acquire a new AutoPay reservation on resend.
-    // Release before Stripe I/O; no network request holds a financial row lock.
-    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -133,9 +132,7 @@ try {
     if ($documentType === 'project_invoice') {
         $amountPaid = (float)($invoice['amount_paid'] ?? 0);
     } else {
-        $paidStmt = $pdo->prepare('SELECT COALESCE(SUM(GREATEST(amount-refunded_amount,0)), 0) FROM payments WHERE invoice_id = ? AND status = "succeeded"');
-        $paidStmt->execute([$invoiceId]);
-        $amountPaid = (float)$paidStmt->fetchColumn();
+        $amountPaid = invoice_effective_paid_cents($pdo, $invoiceId, false) / 100;
     }
     $amountDue = $total - $amountPaid;
     
@@ -179,6 +176,11 @@ try {
     $existingExpiresAt = !empty($invoice['stripe_checkout_expires_at'])
         ? strtotime((string)$invoice['stripe_checkout_expires_at'])
         : 0;
+    // Reject local eligibility errors before persisting a reservation. Release
+    // the lock before any Stripe I/O.
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig, $documentType);
+    $pdo->commit();
+
     if ($existingSessionId !== '' && $existingExpiresAt > time()) {
         try {
             $existing = $stripe->getCheckoutSession($existingSessionId);
