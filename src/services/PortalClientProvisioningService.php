@@ -20,6 +20,8 @@ final class PortalClientProvisioningService
 {
     public const DEFAULT_CAPABILITIES = ['workspace.view', 'directory.read', 'delivery.view'];
     private const BOUND_PROFILE_KEY = 'external_ops_client_portal_profile_id';
+    /** Raise when an eligibility rule changes; see backfillContractFingerprint(). 2: no-organisation clients are individuals. */
+    private const ELIGIBILITY_POLICY_VERSION = 2;
     /** Only these fixed sender codes may leave the diagnostics boundary. */
     private const SAFE_DELIVERY_ERROR_CODES = [
         'dns_no_public_address',
@@ -746,7 +748,10 @@ final class PortalClientProvisioningService
     /** @param array<string,mixed> $profile */
     private function backfillContractFingerprint(array $profile): string
     {
-        return hash('sha256', json_encode([(string)$profile['application_key'],(string)$profile['portal_route']], JSON_THROW_ON_ERROR));
+        // The policy version is part of the contract: raising it re-reconciles
+        // every completed root once, so an eligibility rule change reaches
+        // existing clients without a manual run.
+        return hash('sha256', json_encode([(string)$profile['application_key'],(string)$profile['portal_route'],self::ELIGIBILITY_POLICY_VERSION], JSON_THROW_ON_ERROR));
     }
 
     /** A missing person is not permission to revisit existing people or roots.
@@ -1086,7 +1091,12 @@ final class PortalClientProvisioningService
         if(!$active){$status='review_required';$reason='client_inactive';}
         elseif(!$rootActive){$status='revoked';$reason='root_revoked';}
         elseif($manual==='revoked'){$status='revoked';$reason='none';}
-        elseif(empty($client['organization_id'])&&!in_array((string)($client['client_type']??'unknown'),['consumer'],true)){$status='review_required';$reason='non_human_record';}
+        // A client with no organisation is an individual client: their own
+        // client email is their portal login, as for 'consumer'. Clients added
+        // by staff keep the default 'unknown' type and have no way to change it,
+        // so only an explicit 'business' record without an organisation still
+        // needs review. Email validity, uniqueness and conflicts apply below.
+        elseif(empty($client['organization_id'])&&(string)($client['client_type']??'unknown')==='business'){$status='review_required';$reason='non_human_record';}
         elseif($email===''){$status='review_required';$reason='missing_email';}
         elseif(strlen($email)>254||!filter_var($email,FILTER_VALIDATE_EMAIL)){$status='review_required';$reason='invalid_email';}
         elseif($this->emailCount($pdo,$email,$currentReads)!==1){$status='review_required';$reason='duplicate_email';}
