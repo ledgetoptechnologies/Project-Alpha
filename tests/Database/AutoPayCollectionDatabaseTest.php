@@ -61,7 +61,7 @@ final class AutoPayCollectionDatabaseTest extends TestCase
     {
         require_once dirname(__DIR__,2).'/src/utils/autopay_review.php';
         $notice=pa_autopay_prepare_invoice_notice($this->pdo,$type,$invoice,$this->config,'never@example.invalid');
-        if($notice!==null){$clock=$this->config+['_autopay_review_now'=>new DateTimeImmutable('-8 days',new DateTimeZone('UTC'))];self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo,$notice,'never@example.invalid',null,$clock));}
+        if($notice!==null){$clock=$this->config+['_autopay_review_now'=>new DateTimeImmutable('-11 days',new DateTimeZone('UTC'))];self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo,$notice,'never@example.invalid',null,$clock));}
     }
     private function row(int $id):array{$s=$this->pdo->prepare('SELECT * FROM autopay_collections WHERE id=?');$s->execute([$id]);return $s->fetch(PDO::FETCH_ASSOC);}
     private function intent(array $row,string $status='processing'):array
