@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../utils/invoice_item_hierarchy.php';
 // src/views/pages/invoice-print.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
@@ -40,9 +41,10 @@ if (!defined('PUBLIC_VIEW') && !defined('PDF_MODE')) {
         $generalRecipientToken = (string)$generalRecipientFlash['token'];
     }
 }
-$items = $pdo->prepare('SELECT item, description, quantity, unit_price, line_total, billing_unit, is_extra_charge FROM invoice_items WHERE invoice_id=?');
+$items = $pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sort_order, id');
 $items->execute([$id]);
-$items = $items->fetchAll();
+$items = invoice_items_in_display_order($items->fetchAll(PDO::FETCH_ASSOC));
+$itemAlignment = array_filter(array_column($items, 'parent_item_id')) ? 'left' : 'center';
 $isHourlyBilling = ($inv['billing_mode'] ?? 'fixed') === 'hourly';
 $documentSender = document_sender_for_document($pdo, $appConfig, $inv);
 $fromName = $documentSender['name'] ?? '';
@@ -377,7 +379,7 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
   <table style="width:100%;table-layout:fixed;border-collapse:collapse;background:#fff;border-radius:8px;box-shadow:0 6px 18px rgba(11,18,32,0.06)">
     <thead>
       <tr style="text-align:left;border-bottom:1px solid #eee">
-        <th style="padding:10px;width:25%;vertical-align:top;text-align:center">Item</th>
+        <th style="padding:10px;width:25%;vertical-align:top;text-align:<?php echo $itemAlignment; ?>">Item</th>
         <th style="padding:10px;width:35%;vertical-align:top">Description</th>
         <th style="padding:10px;width:10%;text-align:right;vertical-align:top"><?php echo $isHourlyBilling ? 'Hours' : 'Qty / Unit'; ?></th>
         <th style="padding:10px;width:15%;text-align:right;vertical-align:top"><?php echo $isHourlyBilling ? 'Hourly Rate' : 'Unit Price'; ?></th>
@@ -387,8 +389,8 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
     <tbody>
       <?php foreach ($items as $it): ?>
       <tr style="border-top:1px solid #f3f4f6<?php echo (int)($it['is_extra_charge'] ?? 0) ? ';background:#fffbeb' : ''; ?>">
-        <td style="padding:10px;vertical-align:top;text-align:center">
-          <div class="font-600"><?php echo htmlspecialchars($it['item'] ?? ''); ?></div>
+        <td style="padding:10px;vertical-align:top;text-align:<?php echo $itemAlignment; ?>">
+          <div class="font-600"<?php if (!empty($it['parent_item_id'])): ?> style="padding-left:1.25rem"<?php endif; ?>><?php echo htmlspecialchars($it['item'] ?? ''); ?></div>
           <?php if ((int)($it['is_extra_charge'] ?? 0) === 1): ?>
             <span style="display:inline-block;margin-top:4px;padding:2px 6px;background:#fbbf24;color:#92400e;border-radius:3px;font-size:10px;font-weight:600">Extra Charge</span>
           <?php endif; ?>

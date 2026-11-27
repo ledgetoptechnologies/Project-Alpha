@@ -97,6 +97,7 @@ $ExtraPrices = $_POST['extra_price'] ?? [];
 $extraIds = $_POST['extra_id'] ?? [];
 $extraUnits = $_POST['extra_billing_unit'] ?? [];
 $extraTypes = $_POST['extra_adjustment_type'] ?? [];
+$extraParentIds = $_POST['extra_parent_item_id'] ?? [];
 $extraCatalogIds = $_POST['extra_item_library_id'] ?? [];
 
 $extraItemsArr = [];
@@ -118,7 +119,7 @@ for ($i = 0; $i < count($extraItems); $i++) {
   $line = $q * $signedPrice;
   $subtotal += $line;
   $unit = $billing_mode==='hourly'?'hour':catalog_document_unit((string)($extraUnits[$i]??'each'));
-  $extraItemsArr[] = ['id'=>$eid,'i'=>$itm,'d'=>$d,'q'=>$q,'p'=>$signedPrice,'t'=>$line,'u'=>$unit,'type'=>$adjustmentType,'catalog_id'=>max(0,(int)($extraCatalogIds[$i]??0))];
+  $extraItemsArr[] = ['id'=>$eid,'i'=>$itm,'d'=>$d,'q'=>$q,'p'=>$signedPrice,'t'=>$line,'u'=>$unit,'type'=>$adjustmentType,'parent_item_id'=>max(0,(int)($extraParentIds[$i]??0)),'catalog_id'=>max(0,(int)($extraCatalogIds[$i]??0))];
 }
 
 // Fetch all existing items to calculate subtotal including contract items
@@ -202,6 +203,20 @@ try {
     $up->execute([$pc, $client_id, $pn]);
   }
   
+  // Validate links while the invoice is locked. Only existing base items
+  // survive the editor's replacement of manual adjustments.
+  foreach ($extraItemsArr as $it) {
+    if (!$it['parent_item_id']) continue;
+    if (!$hasExtraChargeCol || !empty($invoiceState['contract_id'])) {
+      throw new DomainException('Sub-items can be added to standalone invoices.');
+    }
+    $parent = $pdo->prepare('SELECT id FROM invoice_items WHERE invoice_id=? AND id=? AND is_extra_charge=0 AND parent_item_id IS NULL FOR UPDATE');
+    $parent->execute([$id, $it['parent_item_id']]);
+    if (!$parent->fetchColumn()) {
+      throw new DomainException('Choose a top-level item on this invoice for each sub-item.');
+    }
+  }
+
   // Delete only extra charge items (if column exists), otherwise do not delete contract items
   if ($hasExtraChargeCol) {
     if (pa_workforce_enabled()) {
@@ -222,6 +237,10 @@ try {
     foreach ($extraItemsArr as $it) {
       $catalog=catalog_document_snapshot($pdo,(int)($it['catalog_id']??0),$it);
       $ins->execute([$id,$catalog['item_library_id'],$it['i'],$it['d'],$it['q'],$it['p'],$it['t'],$it['u'],$catalog['catalog_snapshot']]);
+      if ($it['parent_item_id']) {
+        $pdo->prepare('UPDATE invoice_items SET parent_item_id=? WHERE id=? AND invoice_id=?')
+            ->execute([$it['parent_item_id'], (int)$pdo->lastInsertId(), $id]);
+      }
     }
   } else {
     // Schema doesn't have is_extra_charge yet: append entries as regular invoice_items

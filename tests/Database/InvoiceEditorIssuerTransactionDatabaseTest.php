@@ -165,6 +165,38 @@ final class InvoiceEditorIssuerTransactionDatabaseTest extends TestCase
         }
     }
 
+    public function testStandaloneSubItemPersistsThroughActualInvoiceEditor(): void
+    {
+        if (!invoice_table_has_column($this->pdo, 'invoice_items', 'parent_item_id')) {
+            self::markTestSkipped('Invoice item hierarchy migration is required.');
+        }
+        $this->fixture();
+        $select = $this->pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id');
+        $select->execute([$this->invoice]);
+        $parentId = (int)$select->fetchColumn();
+        $extra = [
+            'extra_item' => ['Additional acres'],
+            'extra_qty' => [30],
+            'extra_price' => [10],
+            'extra_parent_item_id' => [$parentId],
+        ];
+
+        self::assertSame(0, $this->post('creator', '0', $extra)['exit']);
+        $select->execute([$this->invoice]);
+        $items = $select->fetchAll(PDO::FETCH_ASSOC);
+        self::assertCount(2, $items);
+        self::assertSame($parentId, (int)$items[1]['parent_item_id']);
+        self::assertSame('300.00', $items[1]['line_total']);
+        self::assertSame('301.00', $this->row()['total']);
+
+        $extra['extra_id'] = [(int)$items[1]['id']];
+        $extra['extra_parent_item_id'] = [(int)$items[1]['id']];
+        self::assertStringContainsString('DomainException', $this->post('creator', '0', $extra)['log']);
+        $select->execute([$this->invoice]);
+        self::assertSame($items, $select->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame('301.00', $this->row()['total']);
+    }
+
     public function testIsolatedSecondConnectionRepairFailsClosedInsideTransactionAndRepairsOutside(): void
     {
         if (getenv('PA_DISPOSABLE_SCHEMA_PROOF') !== '1') {

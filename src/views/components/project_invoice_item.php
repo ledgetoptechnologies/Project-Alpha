@@ -35,7 +35,7 @@ $keepInvoiceSectionTogether = count($lines) <= 4;
         <tbody>
           <?php foreach ($lines as $line): ?>
             <tr style="page-break-inside:avoid">
-              <td style="padding:7px;border-bottom:1px solid #d1d5db;vertical-align:top;overflow-wrap:break-word;word-wrap:break-word">
+              <td style="padding:7px;border-bottom:1px solid #d1d5db;vertical-align:top;overflow-wrap:break-word;word-wrap:break-word<?php if (!empty($line['parent_item_id'])): ?>;padding-left:1.75rem<?php endif; ?>">
                 <?php if (!empty($line['item'])): ?><strong><?php echo htmlspecialchars((string)$line['item']); ?></strong><br><?php endif; ?>
                 <?php echo nl2br(htmlspecialchars((string)($line['description'] ?? ''))); ?>
               </td>
