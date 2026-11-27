@@ -26,7 +26,7 @@ If a question requires correcting the invoice, staff can cancel a genuinely unsu
 
 ## Collection and email safeguards
 
-Migration `0117_autopay_invoice_review.sql` introduces durable review generations. Each binds the collection to stable document and client identities, revision, outstanding amount, currency, due date, timezone and recipient. Existing queued collections receive no automatic delivery evidence and cannot charge immediately after migration.
+Migration `0118_autopay_invoice_review.sql` introduces durable review generations. Each binds the collection to stable document and client identities, revision, outstanding amount, currency, due date, timezone and recipient. Existing queued collections receive no automatic delivery evidence and cannot charge immediately after migration.
 
 The first successful notice acknowledgment starts the timer. Failed delivery does not start it. Resending the same current notice preserves its original deadline; a recorded successful email delivery can recover a lost schedule update without restarting the clock. Only invoice delivery is eligible: receipts, failure notices and other email cannot arm a collection.
 
@@ -42,7 +42,7 @@ The original review candidate used synthetic clients, normal database migrations
 
 The branch is `codex/autopay-seven-day-review`, based on local commit `b72eb6a157bb6f2cee753c076b65e344f0c6e49d`. Earlier mailed-check, email-presentation and disable-control commits are prerequisites in this branch; no production or shared staging deployment is performed by the tests.
 
-Resolve the existing mailed-check versus organization-billing migration `0116` collision and the resulting `0117` ordering before merging these branches. Do not alter an applied migration, introduce a sequence gap, or overwrite another agent's branch. Preserve PA's existing main protection and main-only Actions policy; validation is local or isolated staging, never feature-branch Actions.
+Main already owns `0116` for invoice item hierarchy. This candidate adds mailed-check reporting at `0117` and AutoPay invoice review at `0118`. Disposable database histories from earlier drafts are separate and should be rebuilt from the target branch for qualification. Do not alter an applied migration, introduce a sequence gap, or overwrite another agent's branch. Preserve PA's existing main protection and main-only Actions policy; validation is local or isolated staging, never feature-branch Actions.
 
 The final test receipt and exact source hashes are retained under `C:/Users/fstor/.codex/tmp/pa-autopay-review-staging-receipts-20261102-final/`. Preserve the separate first-run evidence, which records the issues corrected before acceptance.
 

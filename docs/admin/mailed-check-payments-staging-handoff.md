@@ -14,7 +14,7 @@ Clients can report a mailed check from a finalized invoice or project invoice. A
 
 The local branch is `codex/pending-check-payments`, based on main commit `f2225384d4951291e9b075dc6f1d1024575252c2`. No production or shared staging database was changed.
 
-The migration is `0116_mailed_check_reports.sql`. The unmerged organization billing branch at `60042cc9a68435730066b7340c41e17261bf00bc` also proposes migration 0116. Coordinate the merge order and determine whether either migration has been applied on shared staging before rebasing or renumbering. Do not modify an applied migration, introduce a sequence gap, or merge both as 0116.
+The migration is `0117_mailed_check_reports.sql`. Invoice item hierarchy already occupies `0116` on main. The unmerged organization billing branch still needs to coordinate its own migration order. Do not modify an applied migration, introduce a sequence gap, or merge both as 0116.
 
 Workflow changes remove PR triggers and guard jobs to main, preserving main release and security checks. Historical remote branches still contain legacy triggers and need coordination with their owners; this branch does not establish an account-wide restriction. Publication is held until the migration and Actions integration gates are resolved. Pre-merge validation must remain local under the October 29 main-only Actions policy.
 

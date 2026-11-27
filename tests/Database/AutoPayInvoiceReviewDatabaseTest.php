@@ -35,7 +35,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
             $this->env[$key] = getenv($key); putenv($key . '=' . $value);
         }
         $this->client = $this->client();
-        $this->pdo->prepare('INSERT INTO autopay_enrollments(client_id,scope,status,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,verified_credit_card,currency,consent_version,consent_text,verified_email,consent_at,consent_proof,verified_at,effective_from) VALUES (?,"business","active","acct_reviewTEST","synthetic-review-tests","cus_review","pm_review","card",1,"usd","synthetic","Synthetic account-wide consent",?,"2025-01-01",REPEAT("a",64),"2025-01-01","2025-01-01")')->execute([$this->client['id'], $this->client['email']]);
+        $this->pdo->prepare('INSERT INTO autopay_enrollments(client_id,scope,status,processor_account_id,installation_id,stripe_customer_id,payment_method_id,method_type,currency,consent_version,consent_text,verified_email,consent_at,consent_proof,verified_at,effective_from) VALUES (?,"business","active","acct_reviewTEST","synthetic-review-tests","cus_review","pm_review","card","usd","synthetic","Synthetic account-wide consent",?,"2025-01-01",REPEAT("a",64),"2025-01-01","2025-01-01")')->execute([$this->client['id'], $this->client['email']]);
         $this->authorization = (int)$this->pdo->lastInsertId();
     }
 
@@ -170,9 +170,9 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
 
     public function testEveryPaymentMethodUsesTenDayNoticeAndCollectionWindow(): void
     {
-        foreach ([['card', 1], ['card', 0], ['us_bank_account', 0]] as [$method, $legacyCreditFlag]) {
-            $this->pdo->prepare('UPDATE autopay_enrollments SET method_type=?,verified_credit_card=? WHERE id=?')
-                ->execute([$method, $legacyCreditFlag, $this->authorization]);
+        foreach (['card', 'us_bank_account'] as $method) {
+            $this->pdo->prepare('UPDATE autopay_enrollments SET method_type=? WHERE id=?')
+                ->execute([$method, $this->authorization]);
             $document = $this->invoice();
             $sentAt = $this->clock('2026-02-01 12:00:00');
             $notice = $this->notice($document, $sentAt);

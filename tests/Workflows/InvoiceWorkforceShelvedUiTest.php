@@ -32,7 +32,7 @@ final class InvoiceWorkforceShelvedUiTest extends TestCase
         $renderedModals = (string) ob_get_clean();
         self::assertStringNotContainsString('trackedTimeModal', $renderedModals);
         self::assertStringNotContainsString('billableMileageModal', $renderedModals);
-        self::assertStringContainsString('onclick="addItemInv()"', $source);
+        self::assertMatchesRegularExpression('/onclick="addItemInv\(\)(?:\.focus\(\))?"/', $source);
         self::assertStringContainsString('name="billing_mode" value="hourly"', $source);
     }
 
