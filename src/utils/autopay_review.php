@@ -169,7 +169,7 @@ function pa_autopay_prepare_invoice_notice(PDO $pdo, string $type, int $id, arra
             $window = $days === 7 ? 'seven calendar days' : 'ten calendar days';
             $timing = 'on or after ' . $date . ' and at least ' . $window . ' after this notice is sent';
         }
-        $text = 'Your invoice balance of ' . $amount . ' is scheduled to be paid automatically ' . $timing . '.';
+        $text = 'Your automatic payment of ' . $amount . ' is scheduled ' . $timing . '.';
         $method=$collection['method_type']==='us_bank_account'?'bank account':'card';
         $auth=$pdo->prepare('SELECT last4 FROM autopay_enrollments WHERE id=?');$auth->execute([$collection['authorization_id']]);$last4=(string)$auth->fetchColumn();
         $text.=' Payment method: '.$method.(preg_match('/^[0-9]{4}$/D',$last4)?' ending '.$last4:' saved with Stripe').'.';
