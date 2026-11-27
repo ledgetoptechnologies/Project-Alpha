@@ -233,3 +233,29 @@ for (const scenario of cases) {
     assert.equal(harness.priceFields[1].lastEvent.bubbles, true);
   });
 }
+
+test('invoice catalog units are applied to the selected sub-item instead of the form', () => {
+  const ItemAutocomplete = loadAutocomplete();
+  const firstUnit = { value: 'each' };
+  const selectedUnit = { value: 'each' };
+  const selectedQuantity = { placeholder: '' };
+  const selection = autocompleteFor(ItemAutocomplete, null, { value: '' });
+  selection.input.closest = selector => {
+    if (selector === '.invoice-item-editor__row') {
+      return { querySelector: field => field === '.qty-input' ? selectedQuantity : selectedUnit };
+    }
+    if (selector === '[style*="grid"]') {
+      return { querySelector: () => firstUnit };
+    }
+    return null;
+  };
+
+  selection.selectItem({ id: 42, item_name: 'Additional survey time', billing_unit: 'hour' });
+  assert.equal(selectedUnit.value, 'hour');
+  assert.equal(selectedQuantity.placeholder, 'Hours');
+  assert.equal(firstUnit.value, 'each');
+
+  selection.selectItem({ id: 43, item_name: 'Travel', billing_unit: 'mile' });
+  assert.equal(selectedUnit.value, 'mile');
+  assert.equal(firstUnit.value, 'each');
+});

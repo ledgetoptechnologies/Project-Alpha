@@ -32,7 +32,7 @@ class ItemAutocomplete {
       overflow-y: auto;
       display: none;
       z-index: 1000;
-      min-width: 300px;
+      min-width: ${this.input.closest('.invoice-item-editor__row') ? '0' : '300px'};
       top: calc(100% + 4px);
       left: 0;
       right: 0;
@@ -227,7 +227,9 @@ class ItemAutocomplete {
     }
 
     // When an hourly item is selected, mark the row as hour-based.
-    const row = this.input.closest('[style*="grid"]') || this.input.parentElement;
+    const row = this.input.closest('.invoice-item-editor__row')
+      || this.input.closest('[style*="grid"]')
+      || this.input.parentElement;
     if (row) {
       const qtyInput = row.querySelector('.qty-input') || row.querySelector('[name="item_qty[]"]');
       const unitInput = row.querySelector('[name="item_billing_unit[]"]');
