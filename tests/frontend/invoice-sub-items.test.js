@@ -24,6 +24,8 @@ test('sub-items stay with their parent and contribute their own quantity and pri
             return {
                 dataset: {},
                 style: {},
+                setAttribute() {},
+                total: {},
                 get nextElementSibling() { return rows[rows.indexOf(this) + 1] ?? null; },
                 set innerHTML(html) {
                     this.html = html;
@@ -31,6 +33,7 @@ test('sub-items stay with their parent and contribute their own quantity and pri
                     fields.set(key, { focus() {} });
                 },
                 querySelector(selector) {
+                    if (selector === 'output') return this.total;
                     return {
                         addEventListener: (event, callback) => { this[selector] = callback; },
                     };
@@ -60,6 +63,7 @@ test('sub-items stay with their parent and contribute their own quantity and pri
     assert.match(rows[2].html, /Extra export/);
     assert.match(rows[3].html, /Standard Photo package/);
     assert.equal(rows[1].dataset.parentKey, parent.dataset.itemKey);
+    assert.equal(rows[1].total.textContent, '$300.00');
     assert.equal(fields.get('totalValInv').textContent, '$807.00');
 
     parent['[data-remove-item]']();

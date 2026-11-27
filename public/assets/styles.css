@@ -1117,3 +1117,98 @@ body.nav-open{overflow:hidden}
 
 /* Progressive disclosure for agreement and rate controls. */
 [data-agreement-choice] [hidden], [data-monthly-rate] [hidden] { display: none !important; }
+
+/* Standalone invoice item editor */
+.invoice-item-editor {
+  container-type: inline-size;
+  min-width: 0;
+}
+.invoice-item-editor h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+}
+.invoice-item-editor__rows {
+  display: grid;
+  gap: 0.625rem;
+}
+.invoice-item-editor__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4.75rem, .24fr) minmax(5.75rem, .27fr) minmax(6rem, .25fr) minmax(5.5rem, .24fr);
+  gap: 0.65rem 0.75rem;
+  align-items: start;
+  padding: 0.8rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 0.65rem;
+  background: var(--card, #fff);
+}
+.invoice-item-editor__row[data-parent-key] {
+  margin-block-start: -0.25rem;
+  box-shadow: inset 3px 0 var(--accent, #2683b3);
+}
+.invoice-item-editor__row[data-parent-key] .invoice-item-editor__name {
+  padding-inline-start: 0.75rem;
+}
+.invoice-item-editor__field {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.invoice-item-editor__optional {
+  color: var(--muted, #64748b);
+  font-weight: 400;
+}
+.invoice-item-editor__field :is(input, textarea, select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 0.45rem;
+  background: var(--input-bg, var(--card, #fff));
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+}
+.invoice-item-editor__field :is(input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent, #2683b3);
+  outline-offset: 1px;
+}
+.invoice-item-editor__total {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.invoice-item-editor__total output {
+  display: block;
+  padding-block: 0.45rem;
+  overflow-wrap: anywhere;
+}
+.invoice-item-editor__description {
+  grid-column: 1 / 4;
+}
+.invoice-item-editor__description textarea {
+  resize: vertical;
+}
+.invoice-item-editor__actions {
+  grid-column: 4 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-self: end;
+  gap: 0.35rem;
+}
+.invoice-item-editor__remove {
+  color: var(--danger, #b91c1c);
+}
+@container (max-width: 560px) {
+  .invoice-item-editor__row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .invoice-item-editor__name,
+  .invoice-item-editor__description,
+  .invoice-item-editor__actions {
+    grid-column: 1 / -1;
+  }
+}

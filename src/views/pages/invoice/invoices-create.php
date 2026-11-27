@@ -114,17 +114,17 @@ if ($selectedProjectId > 0) {
       </div>
     </div>
 
-    <div>
-      <div style="font-weight:600;margin-bottom:8px">Items / Time</div>
-      <div id="itemsInv" style="display:grid;gap:8px"></div>
+    <section class="invoice-item-editor" aria-labelledby="invoiceItemsHeading">
+      <h2 id="invoiceItemsHeading">Invoice items</h2>
+      <div id="itemsInv" class="invoice-item-editor__rows"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px">
-        <button type="button" onclick="addItemInv()" style="padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#fff">+ Add Item</button>
+        <button type="button" onclick="addItemInv().focus()" class="btn btn-sm">+ Add item</button>
         <?php if (pa_workforce_enabled()): ?>
         <button type="button" id="btnAddFromTrackedTime" style="padding:8px 12px;border-radius:8px;border:1px solid #2ea3d6;background:#eff6ff;color:#0b4a6a;font-weight:600">+ Add from Tracked Time</button>
         <button type="button" id="btnAddFromMileage" style="padding:8px 12px;border-radius:8px;border:1px solid #2ea3d6;background:#eff6ff;color:#0b4a6a;font-weight:600">+ Add Billable Mileage</button>
         <?php endif; ?>
       </div>
-    </div>
+    </section>
 
     <label>
       <div>Job Notes (shared across related docs)</div>

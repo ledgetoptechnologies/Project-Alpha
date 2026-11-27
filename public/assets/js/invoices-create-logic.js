@@ -1,16 +1,24 @@
 function money(n) { return '$' + (Number(n) || 0).toFixed(2) }
 var itemCounterInv = 0;
+function escapeInvoiceItem(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+}
 function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null, billingUnit = 'each', mileageAllocationId = null, parentRow = null) {
     var wrap = document.createElement('div');
     var rowIndex = document.querySelectorAll('#itemsInv > div').length;
     var itemId = 'itemInv_' + (itemCounterInv++);
+    wrap.className = 'invoice-item-editor__row';
     wrap.dataset.itemKey = itemId;
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', parentRow ? 'Invoice sub-item' : 'Invoice item');
     if (parentRow) {
         wrap.dataset.parentKey = parentRow.dataset.itemKey;
     }
     var descId = 'descInv_' + itemCounterInv;
     var priceId = 'priceInv_' + itemCounterInv;
-    wrap.style.display = 'grid'; wrap.style.gridTemplateColumns = '3fr 3fr 1fr 1fr 1fr auto'; wrap.style.gap = '8px';
+    const lineTotalId = 'lineTotalInv_' + itemCounterInv;
     var teIds = Array.isArray(timeEntryId) ? timeEntryId : (timeEntryId ? [timeEntryId] : []);
     var mileageIds = Array.isArray(mileageAllocationId) ? mileageAllocationId : (mileageAllocationId ? [mileageAllocationId] : []);
     var teInput = teIds.map(id => `<input type="hidden" name="time_entry_ids[${rowIndex}][]" value="${id}">`).join('');
@@ -19,18 +27,37 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
     wrap.innerHTML = teInput + mileageInput + `
     <input type="hidden" name="item_key[]" value="${itemId}">
     <input type="hidden" name="item_parent_key[]" value="${wrap.dataset.parentKey || ''}">
-    <input id="${itemId}" required aria-label="${parentRow ? 'Sub-item name' : 'Item name'}" placeholder="${parentRow ? 'Sub-item name...' : 'Item name...'}" name="item[]" style="padding:10px;border-radius:8px;border:1px solid #ddd${parentRow ? ';margin-inline-start:1rem;border-inline-start:3px solid #cbd5e1' : ''}" value="${item}" oninput="recalcInv()" data-item-autocomplete data-description-field="${descId}" data-price-field="${priceId}">
-    <textarea id="${descId}" placeholder="Description (optional)" name="item_desc[]" style="padding:10px;border-radius:8px;border:1px solid #ddd;resize:vertical;min-height:42px" oninput="recalcInv()">${desc}</textarea>
-    <input required type="number" step="0.01" ${teIds.length === 0 && mileageIds.length === 0 ? 'min="0"' : ''} name="item_qty[]" class="qty-input" style="padding:10px;border-radius:8px;border:1px solid #ddd" value="${qty}" oninput="recalcInv()">
-    <input id="${priceId}" required type="number" step="0.01" min="0" name="item_price[]" style="padding:10px;border-radius:8px;border:1px solid #ddd" value="${price}" oninput="recalcInv()">
-    <select name="item_billing_unit[]" aria-label="Billing unit" style="padding:10px;border-radius:8px;border:1px solid #ddd">
-      <option value="each" ${selectedUnit === 'each' ? 'selected' : ''}>Each</option>
-      <option value="hour" ${selectedUnit === 'hour' ? 'selected' : ''}>Hours</option>
-      <option value="mile" ${selectedUnit === 'mile' ? 'selected' : ''}>Miles</option>
-    </select>
-    <div style="display:flex;gap:4px;flex-wrap:wrap">
+    <label class="invoice-item-editor__field invoice-item-editor__name">
+      <span>${parentRow ? 'Sub-item' : 'Item'}</span>
+      <input id="${itemId}" required placeholder="${parentRow ? 'e.g. Additional acres' : 'e.g. 2D Map'}" name="item[]" value="${escapeInvoiceItem(item)}" oninput="recalcInv()" data-item-autocomplete data-description-field="${descId}" data-price-field="${priceId}">
+    </label>
+    <label class="invoice-item-editor__field">
+      <span>Quantity</span>
+      <input required type="number" step="0.01" ${teIds.length === 0 && mileageIds.length === 0 ? 'min="0"' : ''} name="item_qty[]" class="qty-input" value="${escapeInvoiceItem(qty)}" oninput="recalcInv()">
+    </label>
+    <label class="invoice-item-editor__field">
+      <span>Unit price</span>
+      <input id="${priceId}" required type="number" step="0.01" min="0" name="item_price[]" value="${escapeInvoiceItem(price)}" oninput="recalcInv()">
+    </label>
+    <label class="invoice-item-editor__field">
+      <span>Billing unit</span>
+      <select name="item_billing_unit[]">
+        <option value="each" ${selectedUnit === 'each' ? 'selected' : ''}>Each</option>
+        <option value="hour" ${selectedUnit === 'hour' ? 'selected' : ''}>Hours</option>
+        <option value="mile" ${selectedUnit === 'mile' ? 'selected' : ''}>Miles</option>
+      </select>
+    </label>
+    <div class="invoice-item-editor__field invoice-item-editor__total">
+      <span>Line total</span>
+      <output id="${lineTotalId}" aria-label="Line total">${money(Number(qty) * Number(price))}</output>
+    </div>
+    <label class="invoice-item-editor__field invoice-item-editor__description">
+      <span>Description <span class="invoice-item-editor__optional">(optional)</span></span>
+      <textarea id="${descId}" rows="2" name="item_desc[]">${escapeInvoiceItem(desc)}</textarea>
+    </label>
+    <div class="invoice-item-editor__actions">
       ${parentRow ? '' : '<button type="button" data-add-sub-item class="btn btn-sm">+ Add sub-item</button>'}
-      <button type="button" data-remove-item style="border:0;background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 10px">Remove</button>
+      <button type="button" data-remove-item class="btn btn-sm invoice-item-editor__remove" aria-label="${parentRow ? 'Remove sub-item' : 'Remove item'}">Remove</button>
     </div>
   `;
     const container = document.getElementById('itemsInv');
@@ -68,7 +95,14 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
 function recalcInv() {
     var qtys = Array.from(document.querySelectorAll('[name=\"item_qty[]\"]')).map(e => parseFloat(e.value) || 0);
     var prices = Array.from(document.querySelectorAll('[name=\"item_price[]\"]')).map(e => parseFloat(e.value) || 0);
-    var subtotal = 0; for (var i = 0; i < qtys.length; i++) { subtotal += qtys[i] * prices[i]; }
+    let subtotal = 0;
+    const rows = document.querySelectorAll('#itemsInv > div');
+    for (let index = 0; index < qtys.length; index++) {
+        const lineTotal = qtys[index] * prices[index];
+        subtotal += lineTotal;
+        const output = rows[index]?.querySelector('output');
+        if (output) output.textContent = money(lineTotal);
+    }
     var dtype = document.getElementById('discountTypeInv').value;
     var dval = parseFloat(document.getElementById('discountValueInv').value) || 0;
     var taxp = parseFloat(document.getElementById('taxPercentInv').value) || 0;
