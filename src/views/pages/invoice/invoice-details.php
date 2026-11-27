@@ -116,6 +116,8 @@ $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empt
       $autopayType = 'invoice';
       $autopayForm = 'invoice-finalize-form';
       require __DIR__ . '/../../components/autopay_invoice_status.php';
+      $checkDocumentType = 'invoice'; $checkDocumentId = (int)$id;
+      require __DIR__ . '/../../components/pending_check_payment.php';
       require_once __DIR__ . '/../../../utils/autopay_status.php';
       $autoPayReserved = pa_autopay_pending_notice($pdo, (int)$id) !== '';
     ?>

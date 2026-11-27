@@ -8,7 +8,7 @@ final class AutoPayStaffFinalizationDatabaseTest extends TestCase {
     private PDO $pdo;private int $client=0;private int $invoice=0;private array $environment=[];
     private array $config=['_stripe_secret_key'=>'sk_test_SYNTHETIC','workforce_currency'=>'USD'];
     protected function setUp():void {
-        try{$this->pdo=migration_connection();$this->pdo->query('SELECT effective_from FROM autopay_enrollments LIMIT 0');}catch(Throwable){self::markTestSkipped('MySQL migrations112/113 required.');}
+        try{$this->pdo=migration_connection();$this->pdo->query('SELECT effective_from FROM autopay_enrollments LIMIT 0');$this->pdo->query('SELECT generation FROM autopay_invoice_reviews LIMIT 0');}catch(Throwable){self::markTestSkipped('MySQL AutoPay and invoice review migrations required.');}
         foreach(['APP_ENV'=>'test','AUTOPAY_BETA_ENABLED'=>'true','AUTOPAY_INSTALLATION_ID'=>'synthetic-staff-finalize','AUTOPAY_STRIPE_ACCOUNT_ID'=>'acct_SYNTHETIC'] as $key=>$value){$this->environment[$key]=getenv($key);putenv($key.'='.$value);}
         $this->pdo->exec("INSERT INTO clients(name,email) VALUES('Synthetic staff finalization','never@example.invalid')");$this->client=(int)$this->pdo->lastInsertId();$this->authorization();
         $this->pdo->prepare('INSERT INTO invoices(client_id,status,subtotal,total,balance_due) VALUES (?,"draft",100,100,100)')->execute([$this->client]);$this->invoice=(int)$this->pdo->lastInsertId();
@@ -16,7 +16,7 @@ final class AutoPayStaffFinalizationDatabaseTest extends TestCase {
     protected function tearDown():void {
         if(isset($this->pdo)){
             if($this->pdo->inTransaction())$this->pdo->rollBack();
-            if($this->invoice){$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="invoice" AND document_id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM payments WHERE invoice_id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM invoices WHERE id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM system_audit WHERE entity_type="invoice" AND entity_id=?')->execute([$this->invoice]);}
+            if($this->invoice){$this->pdo->prepare('DELETE r FROM autopay_invoice_reviews r JOIN autopay_collections c ON c.id=r.collection_id WHERE c.document_type="invoice" AND c.document_id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM autopay_collections WHERE document_type="invoice" AND document_id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM payments WHERE invoice_id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM invoices WHERE id=?')->execute([$this->invoice]);$this->pdo->prepare('DELETE FROM system_audit WHERE entity_type="invoice" AND entity_id=?')->execute([$this->invoice]);}
             if($this->client){$this->pdo->prepare('DELETE FROM autopay_enrollments WHERE client_id=?')->execute([$this->client]);$this->pdo->prepare('DELETE FROM clients WHERE id=?')->execute([$this->client]);}
         }
         foreach($this->environment as $key=>$value)putenv($value===false?$key:$key.'='.$value);

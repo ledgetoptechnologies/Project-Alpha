@@ -41,6 +41,7 @@ try {
     
     require_once __DIR__ . '/../../utils/autopay_collection.php';
     $pdo->beginTransaction();
+    pa_autopay_lock_parent_for_invoice_mutation($pdo, $invoiceId);
     // Get invoice details
     $invSt = $pdo->prepare('
         SELECT i.*, c.name as client_name, c.email as client_email 

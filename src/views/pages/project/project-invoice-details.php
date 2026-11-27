@@ -119,6 +119,7 @@ $documentSender = document_sender_for_document($pdo, $appConfig, $pi);
 
   <?php if (!$isPdf && !$isPublic): ?>
     <?php $autopayDocument = $pi; $autopayType = 'project_invoice'; $autopayForm = 'project-invoice-email-form'; require __DIR__ . '/../../components/autopay_invoice_status.php'; ?>
+    <?php $checkDocumentType = 'project_invoice'; $checkDocumentId = (int)$id; require __DIR__ . '/../../components/pending_check_payment.php'; ?>
     <div id="emailPanel" class="no-print" style="display:<?php echo $showEmailPanel ? 'block' : 'none'; ?>;border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;padding:14px;margin-bottom:16px">
       <form id="project-invoice-email-form" method="post" action="/?page=project/project-invoice-email" style="display:grid;gap:10px">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">

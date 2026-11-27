@@ -181,7 +181,7 @@ function project_invoice_notification_process(
             }
         }
         if ($reason === null && $autoPayNotice !== '' && in_array((string)$row['notification_type'], ['due_7', 'overdue_weekly'], true)) {
-            $reason = 'Automatic payment is reserved; do not request another payment.';
+            $reason = 'A payment is reserved or awaiting review; do not request another payment.';
         }
         if ($reason !== null) {
             $pdo->prepare(
@@ -222,18 +222,20 @@ function project_invoice_notification_process(
                 . '<p>Outstanding balance: <strong>$' . number_format((float)$row['balance_due'], 2) . '</strong></p>'
                 . '<p>Payment terms: Net ' . $termDays . ' (due ' . date('F j, Y', strtotime($due)) . ')</p>'
                 . ($url !== '' ? '<p><a href="' . htmlspecialchars($url) . '">View project invoice</a></p>' : '');
-            if ($autoPayNotice !== '') $body .= '<p><strong>AutoPay:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
+            if ($autoPayNotice !== '') $body .= '<p><strong>Payment status:</strong> ' . htmlspecialchars($autoPayNotice) . '</p>';
             $contentLinkClientIds = !empty($currentRecipient['id']) ? [(int)$currentRecipient['id']] : [];
             $body .= invoice_content_links_html(invoice_content_links_for_project_invoice($pdo, (int)$row['project_invoice_id'], $appConfig, $contentLinkClientIds));
             $send = $sender ?: static fn(string $to, string $subject, string $body, array $options): array
                 => EmailService::sendEmail($to, $subject, $body, $options);
-            [$ok, $error] = $send((string)$currentRecipient['email'], $subject, $body, [
+            require_once __DIR__ . '/autopay_invoice_email.php';
+            [$ok, $error] = pa_autopay_deliver_invoice_email($pdo, $appConfig, (string)$currentRecipient['email'], $subject, $body, [
                 'attachments' => [$attachment],
                 'document_type' => 'project_invoice',
+                'invoice_notice' => true,
                 'document_id' => (int)$row['project_invoice_id'],
                 'document_revision' => (int)($row['revision_number'] ?? 1),
                 'message_key' => 'project-invoice-notification:' . $id,
-            ]);
+            ], $send);
             if (!$ok) {
                 throw new RuntimeException($error ?: 'Email transport failed.');
             }

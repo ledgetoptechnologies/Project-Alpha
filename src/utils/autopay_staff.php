@@ -13,9 +13,12 @@ function pa_autopay_staff_state(PDO $pdo, array $document, array $config, string
         $query = $pdo->prepare('SELECT state,financial_hold,last_error FROM autopay_collections WHERE document_type=? AND document_id=?');
         $query->execute([$type, (int)$document['id']]);
         if ($collection = $query->fetch(PDO::FETCH_ASSOC)) {
+            require_once __DIR__ . '/autopay_review.php';
+            $review = pa_autopay_invoice_review_state($pdo, $type, (int)$document['id']);
+            if ($review) $state = array_merge($state, $review);
             $state['enabled'] = true;
             $state['state'] = $collection['financial_hold'] ? 'held' : $collection['state'];
-            if ($state['state'] === 'failed' && in_array($collection['last_error'], ['Canceled before submission.', 'Canceled by processor.'], true)) $state['state'] = 'canceled';
+            if ($state['state'] === 'failed' && (str_starts_with((string)$collection['last_error'], 'Canceled') || $collection['last_error'] === 'Client opted out of automatic payment.')) $state['state'] = 'canceled';
             return $state;
         }
     }
