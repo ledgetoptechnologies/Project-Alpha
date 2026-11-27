@@ -22,6 +22,12 @@ $tabs = [
     'audit'      => ['label' => 'Audit',      'file' => 'audit.php',           'hint' => 'Export reviews'],
 ];
 
+// The Audit page needs financial.audit on its own route; the tab must not bypass that.
+$canAudit = ($_SESSION['user']['role'] ?? '') === 'admin' || user_can($pdo, $userId, 'financial.audit', 0);
+if (!$canAudit) {
+    unset($tabs['audit']);
+}
+
 $active = $_GET['tab'] ?? 'overview';
 if (!isset($tabs[$active])) $active = 'overview';
 

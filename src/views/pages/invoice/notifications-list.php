@@ -92,7 +92,7 @@ require_once __DIR__ . '/../../../utils/invoice_numbers.php';
                     <?php foreach ($notifications as $n): ?>
                         <tr>
                             <td>
-                                <a href="?page=invoice/view&id=<?php echo $n['invoice_id']; ?>">
+                                <a href="/?page=invoice/invoice-details&id=<?php echo (int)$n['invoice_id']; ?>">
                                     <?php echo htmlspecialchars(pa_invoice_label_from_row($n)); ?>
                                 </a>
                             </td>

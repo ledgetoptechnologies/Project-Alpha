@@ -919,8 +919,8 @@ if ($page === 'time-tracking/options') {
     require_once __DIR__ . '/../src/controllers/time-tracking/time_entry_options.php';
     exit;
 }
-if ($page === 'financial/financial-api') {
-    require_once __DIR__ . '/../src/controllers/financial/financial_api.php';
+if ($page === 'financial/expense-export') {
+    require_once __DIR__ . '/../src/controllers/financial/expense_export.php';
     exit;
 }
 if ($page === 'settings/item-library-search') {
@@ -1132,14 +1132,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'quote/quotes-update',
         'quotes-update',
         'quote/quote-approve',
-        'quote/quote-decline',
         'quote/quote-reject',
         'quote-reject',
         'quote/email-send',
 
         // Contracts
-        'contract/contract-action',
-        'contract/contract-create',
         'contract/contracts-create',
         'contracts-create',
         'contract/contracts-update',
@@ -1163,8 +1160,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'on-demand-invoice-generate',
 
         // Invoices / payments
-        'invoice/invoice-create',
-        'invoice/invoice-action',
         'invoice/invoices-create',
         'invoices-create',
         'invoice/invoices-update',
