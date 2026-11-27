@@ -111,12 +111,19 @@ $s->execute([$client['id'],getenv('AUTOPAY_INSTALLATION_ID'),getenv('AUTOPAY_STR
 <form method="post" class="authorization"><?= $fields ?><input type="hidden" name="authorization_id" value="<?= (int)$auth['id'] ?>"><p><strong><?= $esc($auth['scope']==='agreement'?'Agreement #'.$auth['contract_id']:'All future invoices') ?></strong><br><?= $esc(ucfirst($auth['status'])) ?> · <?= $esc($auth['method_type']==='us_bank_account'?'US bank account (ACH)':'Card') ?></p><label><input type="checkbox" name="confirm_disable" value="1" required> Turn off this billing scope only. Other authorizations may still apply.</label><p><button name="action" value="revoke">Turn off this billing scope</button></p></form>
 <?php endforeach ?>
 <?php if(pa_autopay_enabled($appConfig)): ?>
-<h2>Set up AutoPay for your client account</h2>
+<h2>Set up AutoPay</h2>
 <form method="post"><?= $fields ?>
 <fieldset><legend>Invoices covered</legend>
-<input type="hidden" name="scope" value="business"><input type="hidden" name="consent" value="1">
-<p>AutoPay covers all future invoices for your client account with this business, including regular, on-demand, recurring and project invoices.</p>
-<p><label><input type="checkbox" name="business_consent" value="1" required> I authorize this account-wide coverage. Each invoice email will show its amount and charge date, with at least seven calendar days to review, skip or question it after the notice is sent. Bank accounts and cards Stripe has not verified as credit get at least ten days. I can turn off all AutoPay.</label></p></fieldset>
+<?php if (!empty($context['contract_id'])): ?>
+<label><input type="radio" name="scope" value="agreement" checked> Future invoices for this recurring agreement only.</label>
+<label><input type="radio" name="scope" value="business"> All future invoices for my client account with this business, including regular, on-demand, recurring and project invoices.</label>
+<?php else: ?>
+<input type="hidden" name="scope" value="business">
+<p>All future invoices for my client account with this business, including regular, on-demand, recurring and project invoices.</p>
+<?php endif; ?>
+<label><input type="checkbox" name="business_consent" value="1" <?= empty($context['contract_id']) ? 'required' : '' ?>> I confirm account-wide coverage if selected.</label>
+</fieldset>
+<p><label><input type="checkbox" name="consent" value="1" required> <?= $esc(pa_autopay_consent_terms()) ?></label></p>
 <p><label>Payment method <select name="method_type"><option value="us_bank_account">US bank account (ACH)</option><option value="card">Card</option></select></label></p>
 <p class="help">Existing invoices are not charged by this setup. Bank verification must complete before AutoPay becomes active. To replace a saved method, complete a new setup; the previous authorization stays active until the replacement succeeds.</p>
 <button name="action" value="setup">Continue to Stripe</button></form>

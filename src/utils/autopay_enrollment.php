@@ -51,17 +51,29 @@ function pa_autopay_verify_code(PDO $pdo,array $client,int $id,string $code,stri
     } catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
 
+function pa_autopay_consent_terms(): string
+{
+    return 'I authorize automatic payment of future finalized invoices in the scope I selected, using the payment method I save with Stripe. An invoice email will show the amount and scheduled charge date. I have at least seven calendar days after the notice is sent to review it, or at least ten for a bank account or a card Stripe has not verified as credit. Collection is no earlier than the invoice due date. I may skip an invoice, question it to hold collection, or turn off AutoPay.';
+}
+
 function pa_autopay_enroll(PDO $pdo,array $context,array $session,array $input,array $config,callable $transport): array {
     if (!pa_autopay_enabled($config) || !pa_autopay_authority($context['client'],$session)) throw new DomainException('Verify your email before managing AutoPay.');
-    $scope=(string)($input['scope']??'business');$contractId=null;
-    if ($scope!=='business' || empty($input['consent']) || empty($input['business_consent'])) throw new DomainException('Explicitly authorize AutoPay for all future invoices on your client account.');
+    $scope = (string)($input['scope'] ?? '');
+    $contractId = $scope === 'agreement' ? (int)($context['contract_id'] ?? 0) : null;
+    if (!in_array($scope, ['agreement', 'business'], true) || empty($input['consent'])
+        || ($scope === 'agreement' && !$contractId) || ($scope === 'business' && empty($input['business_consent']))) {
+        throw new DomainException('Choose which future invoices AutoPay covers and confirm your authorization.');
+    }
     $method=(string)($input['method_type']??'us_bank_account');if(!in_array($method,['card','us_bank_account'],true))throw new DomainException('Choose card or US bank account.');
     $client=$context['client'];$installation=(string)getenv('AUTOPAY_INSTALLATION_ID');$account=(string)getenv('AUTOPAY_STRIPE_ACCOUNT_ID');
     $base=rtrim((string)($config['app_host']??$config['base_url']??''),'/');
     if($base!==''&&!str_contains($base,'://'))$base='https://'.$base;
     if(!preg_match('#^https?://#',$base))throw new DomainException('Application URL is not configured.');
     $return=$base.'/?page=public-autopay&'.(!empty($input['review'])?'review='.rawurlencode((string)$input['review']):(!empty($input['manage'])?'manage='.rawurlencode((string)$input['manage']):'token='.rawurlencode((string)$input['token'])));
-    $consent='I authorize off-session automatic payment of all future finalized invoices for my client account with this business, including regular, on-demand and recurring work, using the method saved with Stripe. An invoice email will show the amount and scheduled charge date, with at least seven calendar days to review after the notice is sent, or at least ten for bank accounts and cards Stripe has not verified as credit. Collection is no earlier than the invoice due date. I may skip an invoice, question it to hold collection, or turn off all AutoPay.';
+    $scopeText = $scope === 'agreement'
+        ? 'Future invoices for this recurring agreement only.'
+        : 'All future invoices for my client account with this business, including regular, on-demand, recurring and project invoices.';
+    $consent = $scopeText . ' ' . pa_autopay_consent_terms();
     // Reserve consent before network I/O. Even a first-ever setup is then
     // visible to Turn off AutoPay while Stripe is handling the request.
     $pdo->beginTransaction();
@@ -69,7 +81,7 @@ function pa_autopay_enroll(PDO $pdo,array $context,array $session,array $input,a
         $s=$pdo->prepare('SELECT email FROM clients WHERE id=? FOR UPDATE');$s->execute([$client['id']]);
         if($s->fetchColumn()!==$client['email'])throw new DomainException('The client email changed. Verify the current email again.');
         $pdo->prepare('UPDATE autopay_enrollments SET status="revoked",revoked_at=NOW() WHERE client_id=? AND scope=? AND contract_id <=> ? AND installation_id=? AND processor_account_id=? AND livemode=0 AND status="pending"')->execute([$client['id'],$scope,$contractId,$installation,$account]);
-        $pdo->prepare('INSERT INTO autopay_enrollments(client_id,contract_id,scope,processor_account_id,installation_id,stripe_customer_id,method_type,consent_version,consent_text,verified_email,consent_at,consent_proof) VALUES (?,?,?,?,?,?,?,"2026-11-review-v2",?,?,NOW(),?)')->execute([$client['id'],$contractId,$scope,$account,$installation,'',$method,$consent,$client['email'],hash('sha256',json_encode($session['autopay_verified']))]);
+        $pdo->prepare('INSERT INTO autopay_enrollments(client_id,contract_id,scope,processor_account_id,installation_id,stripe_customer_id,method_type,consent_version,consent_text,verified_email,consent_at,consent_proof) VALUES (?,?,?,?,?,?,?,"2026-11-review-v3",?,?,NOW(),?)')->execute([$client['id'],$contractId,$scope,$account,$installation,'',$method,$consent,$client['email'],hash('sha256',json_encode($session['autopay_verified']))]);
         $id=(int)$pdo->lastInsertId();$pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
     try {
