@@ -17,6 +17,19 @@ $__creator = (int)($_SESSION['user']['id'] ?? 0) ?: null;
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit; }
 csrf_verify_post_or_redirect('project/projects-create');
 
+// Quick create (the New project button on quote/contract/invoice forms) posts quick=1 and expects JSON.
+$__quickCreate = !empty($_POST['quick']);
+function projects_create_fail(string $message): void
+{
+	if (!empty($_POST['quick'])) {
+		header('Content-Type: application/json');
+		echo json_encode(['success' => false, 'error' => $message]);
+		exit;
+	}
+	header('Location: /?page=project/projects-create&error=' . urlencode($message));
+	exit;
+}
+
 $name = trim($_POST['name'] ?? '');
 $client_id = (int)($_POST['client_id'] ?? 0);
 $projectClientIds = $_POST['project_client_ids'] ?? [];
@@ -38,14 +51,13 @@ $invoiceNetTermsDays = trim((string)($_POST['invoice_net_terms_days'] ?? ''));
 $invoiceNetTermsDays = $invoiceNetTermsDays === '' ? null : max(0, (int)$invoiceNetTermsDays);
 $projectInvoiceAutoEmail = !empty($_POST['project_invoice_auto_email']) ? 1 : 0;
 
-if ($name === '') { header('Location: /?page=project/projects-list&error=Name%20required'); exit; }
+if ($name === '') { projects_create_fail('Name required'); }
 
 $projectPlanning = new \App\Services\ProjectWorkPlanningService();
 try {
 	$projectPlanning->requireAvailableManager($pdo, $managerUserId);
 } catch (DomainException $error) {
-	header('Location: /?page=project/projects-create&error=' . urlencode($error->getMessage()));
-	exit;
+	projects_create_fail($error->getMessage());
 }
 
 if ($organization_id <= 0 && $__orgId !== null) {
@@ -59,8 +71,7 @@ if ($useOrganizationInvoiceEmail) {
 	$organizationEmailStmt->execute([$organization_id]);
 	$organizationEmail = trim((string)($organizationEmailStmt->fetchColumn() ?: ''));
 	if ($organization_id <= 0 || !filter_var($organizationEmail, FILTER_VALIDATE_EMAIL)) {
-		header('Location: /?page=project/projects-create&error=' . urlencode('The selected organization does not have a valid company email.'));
-		exit;
+		projects_create_fail('The selected organization does not have a valid company email.');
 	}
 }
 
@@ -69,8 +80,7 @@ if ($department_id > 0) {
 	$departmentStmt->execute([$department_id]);
 	$departmentOrgId = (int)($departmentStmt->fetchColumn() ?: 0);
 	if ($departmentOrgId <= 0 || ($organization_id > 0 && $departmentOrgId !== $organization_id)) {
-		header('Location: /?page=project/projects-create&error=' . urlencode('Selected department does not belong to the selected organization.'));
-		exit;
+		projects_create_fail('Selected department does not belong to the selected organization.');
 	}
 	$organization_id = $departmentOrgId;
 }
@@ -102,8 +112,7 @@ if ($organization_id > 0 && $projectClientIds) {
 	$expectedClientIds = $projectClientIds;
 	sort($expectedClientIds);
 	if ($validClientIds !== $expectedClientIds) {
-		header('Location: /?page=project/projects-create&error=' . urlencode('Project contacts must belong to the selected organization.'));
-		exit;
+		projects_create_fail('Project contacts must belong to the selected organization.');
 	}
 } elseif ($projectClientIds) {
 	foreach ($projectClientIds as $attachedClientId) {
@@ -115,8 +124,7 @@ foreach ($projectInvoiceRecipientIds as $recipientClientId) {
 	require_record_ownership($pdo, 'clients', $recipientClientId);
 }
 if (!project_invoice_recipient_client_ids_in_scope($pdo, $projectInvoiceRecipientIds, $organization_id > 0 ? $organization_id : null)) {
-	header('Location: /?page=project/projects-create&error=' . urlencode('Invoice email recipients must be active contacts in the selected organization.'));
-	exit;
+	projects_create_fail('Invoice email recipients must be active contacts in the selected organization.');
 }
 $projectInvoiceLinkClientIds = $projectInvoiceLinkClientIds === null ? null : array_values(array_intersect($projectInvoiceLinkClientIds, $projectClientIds));
 if ($projectInvoiceAutoEmail && !project_invoice_has_deliverable_recipient_config(
@@ -125,14 +133,13 @@ if ($projectInvoiceAutoEmail && !project_invoice_has_deliverable_recipient_confi
 	$projectInvoiceManualEmails,
 	$useOrganizationInvoiceEmail ? [$organization_id] : []
 )) {
-	header('Location: /?page=project/projects-create&error=' . urlencode('Automatic project invoice email requires at least one valid recipient.'));
-	exit;
+	projects_create_fail('Automatic project invoice email requires at least one valid recipient.');
 }
 
 // Validate date window if set
 if ($estimated_start !== '' && $estimated_end !== '') {
 	if (strtotime($estimated_start) > strtotime($estimated_end)) {
-		header('Location: /?page=project/projects-create&error=Start%20must%20be%20before%20end'); exit;
+		projects_create_fail('Start must be before end');
 	}
 }
 
@@ -239,6 +246,11 @@ $pdo->commit();
 		$pdo->rollBack();
 	}
 	throw $error;
+}
+if ($__quickCreate) {
+	header('Content-Type: application/json');
+	echo json_encode(['success' => true, 'project_id' => $project_id]);
+	exit;
 }
 header('Location: /?page=project/projects-details&id=' . $project_id . '&created=1');
 exit;

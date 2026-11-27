@@ -11,12 +11,15 @@ csrf_verify_post_or_redirect($redirectPage);
 $action = (string)($_POST['action'] ?? 'create');
 $organizationId = request_client_org_id();
 $scheduleOrgId = $organizationId > 0 ? $organizationId : null;
-$requiredPermission = $requestedType === 'expense' ? 'financial.manage' : 'financial.audit';
-if (($_SESSION['user']['role'] ?? '') !== 'admin'
-    && !user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), $requiredPermission, 0)) {
-    require_once __DIR__ . '/../../utils/acl_middleware.php';
-    deny_response($redirectPage);
-}
+$requireSchedulePermission = static function (string $reportType, string $deniedPage) use ($pdo): void {
+    $permission = $reportType === 'expense' ? 'financial.manage' : 'financial.audit';
+    if (($_SESSION['user']['role'] ?? '') !== 'admin'
+        && !user_can($pdo, (int)($_SESSION['user']['id'] ?? 0), $permission, 0)) {
+        require_once __DIR__ . '/../../utils/acl_middleware.php';
+        deny_response($deniedPage);
+    }
+};
+$requireSchedulePermission($requestedType, $redirectPage);
 
 try {
     if ($action === 'create') {
@@ -97,6 +100,8 @@ try {
         throw new RuntimeException('Schedule not found.');
     }
     $redirectPage = $storedType === 'expense' ? 'financial/expense-report' : 'financial/audit';
+    // The posted report_type is only a hint; authorize against the stored schedule.
+    $requireSchedulePermission((string)$storedType, $redirectPage);
 
     if ($action === 'delete') {
         $pdo->prepare('DELETE FROM audit_schedules WHERE id=?')->execute([$id]);

@@ -464,14 +464,14 @@ document.getElementById('createProjectBtn').addEventListener('click', function (
     const projectName = prompt('Enter project name:');
     if (!projectName || !projectName.trim()) return;
 
-    fetch('/?page=project/projects-create-quick', {
+    fetch('/?page=project/projects-create', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: 'csrf=' + encodeURIComponent(document.querySelector('input[name="csrf"]').value) +
             '&name=' + encodeURIComponent(projectName.trim()) +
-            '&client_id=' + encodeURIComponent(clientId)
+            '&client_id=' + encodeURIComponent(clientId) + '&quick=1'
     })
         .then(r => r.json())
         .then(result => {

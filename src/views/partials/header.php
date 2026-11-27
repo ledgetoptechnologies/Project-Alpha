@@ -237,7 +237,7 @@ function nav_can(string $permission): bool {
               <ul>
                 <?php if (nav_can('financial.view')): ?>
                 <li><a href="/?page=financial/financial-dashboard" data-page="financial/financial-dashboard">Dashboard</a></li>
-                <li><a href="/?page=financial/audit" data-page="financial/audit">Audit &amp; Reports</a></li>
+                <?php if (nav_can('financial.audit')): ?><li><a href="/?page=financial/audit" data-page="financial/audit">Audit &amp; Reports</a></li><?php endif; ?>
                 <li><a href="/?page=financial/expenses-list" data-page="financial/expenses-list">Assets &amp; Expenses</a></li>
                 <li><a href="/?page=financial/forms-list" data-page="financial/forms-list">Forms &amp; Docs</a></li>
                 <?php endif; ?>

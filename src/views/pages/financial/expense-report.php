@@ -60,9 +60,9 @@ $whereSQL = implode(' AND ', $where);
 // Summary totals
 $summaryStmt = $pdo->prepare("
     SELECT COALESCE(SUM(e.amount),0) as total_amount,
-           COALESCE(SUM(e.total_amount),0) as grand_total,
-           COALESCE(SUM(CASE WHEN e.is_billable=1 THEN e.total_amount ELSE 0 END),0) as billable_total,
-           COALESCE(SUM(CASE WHEN e.is_tax_deductible=1 THEN e.total_amount ELSE 0 END),0) as deductible_total,
+           COALESCE(SUM(COALESCE(e.total_amount, e.amount, 0)),0) as grand_total,
+           COALESCE(SUM(CASE WHEN e.is_billable=1 THEN COALESCE(e.total_amount, e.amount, 0) ELSE 0 END),0) as billable_total,
+           COALESCE(SUM(CASE WHEN e.is_tax_deductible=1 THEN COALESCE(e.total_amount, e.amount, 0) ELSE 0 END),0) as deductible_total,
            COUNT(*) as count
     FROM expenses e WHERE {$whereSQL}
 ");
@@ -72,7 +72,7 @@ $summary = $summaryStmt->fetch(PDO::FETCH_ASSOC);
 // Build query based on group_by
 if ($groupBy === 'category') {
     $groupStmt = $pdo->prepare("
-        SELECT ec.name as group_name, COALESCE(SUM(e.total_amount),0) as total, COUNT(e.id) as count
+        SELECT ec.name as group_name, COALESCE(SUM(COALESCE(e.total_amount, e.amount, 0)),0) as total, COUNT(e.id) as count
         FROM expenses e
         LEFT JOIN expense_categories ec ON ec.id = e.category_id
         WHERE {$whereSQL}
@@ -82,7 +82,7 @@ if ($groupBy === 'category') {
     $grouped = $groupStmt->fetchAll(PDO::FETCH_ASSOC);
 } elseif ($groupBy === 'vendor') {
     $groupStmt = $pdo->prepare("
-        SELECT COALESCE(v.name,'(No Vendor)') as group_name, COALESCE(SUM(e.total_amount),0) as total, COUNT(e.id) as count
+        SELECT COALESCE(v.name,'(No Vendor)') as group_name, COALESCE(SUM(COALESCE(e.total_amount, e.amount, 0)),0) as total, COUNT(e.id) as count
         FROM expenses e
         LEFT JOIN vendors v ON v.id = e.vendor_id
         WHERE {$whereSQL}
@@ -92,7 +92,7 @@ if ($groupBy === 'category') {
     $grouped = $groupStmt->fetchAll(PDO::FETCH_ASSOC);
 } elseif ($groupBy === 'month') {
     $groupStmt = $pdo->prepare("
-        SELECT DATE_FORMAT(e.expense_date, '%Y-%m') as group_name, COALESCE(SUM(e.total_amount),0) as total, COUNT(e.id) as count
+        SELECT DATE_FORMAT(e.expense_date, '%Y-%m') as group_name, COALESCE(SUM(COALESCE(e.total_amount, e.amount, 0)),0) as total, COUNT(e.id) as count
         FROM expenses e
         WHERE {$whereSQL}
         GROUP BY DATE_FORMAT(e.expense_date, '%Y-%m') ORDER BY group_name
@@ -116,8 +116,8 @@ $detailStmt = $pdo->prepare("
 $detailStmt->execute($params);
 $details = $detailStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$scheduleStmt = $pdo->prepare('SELECT * FROM audit_schedules WHERE (organization_id IS NULL OR organization_id = 0) AND report_type="expense" ORDER BY created_at DESC');
-$scheduleStmt->execute();
+$scheduleStmt = $pdo->prepare("SELECT * FROM audit_schedules WHERE (? = 0 OR organization_id = ?) AND report_type = 'expense' ORDER BY created_at DESC");
+$scheduleStmt->execute([$orgId, $orgId]);
 $expenseSchedules = $scheduleStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Build export URL with current filters

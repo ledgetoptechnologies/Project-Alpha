@@ -29,7 +29,6 @@ This directory contains current operating guides and historical engineering reco
 - [Database Migrations](https://github.com/ledgetoptechnologies/Project-Alpha/blob/main/database/migrations/README.md)
 - [Cron Service](https://github.com/ledgetoptechnologies/Project-Alpha/blob/main/cron/README.md)
 - [Twig Templates](https://github.com/ledgetoptechnologies/Project-Alpha/blob/main/src/views/templates/README.md)
-- [Document Filter Component](https://github.com/ledgetoptechnologies/Project-Alpha/blob/main/src/views/components/FILTER_COMPONENT_README.md)
 
 ## Historical Records
 
