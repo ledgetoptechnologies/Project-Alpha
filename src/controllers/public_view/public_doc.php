@@ -171,8 +171,19 @@ try {
   }
 
   require_once __DIR__ . '/../../utils/autopay_beta.php';
-  if (in_array($type, ['invoice','contract','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice) && pa_autopay_enabled($appConfig)) {
-    echo '<p class="public-doc-wrap"><a href="/?page=public-autopay&amp;token=' . htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8') . '">Set up or manage AutoPay (test mode)</a></p>';
+  if (in_array($type, ['invoice','contract','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice) && pa_autopay_test_context_enabled($appConfig)) {
+    $autoPayLinkLabel = pa_autopay_enabled($appConfig) ? 'Set up or manage AutoPay (test mode)' : 'Manage or turn off AutoPay (test mode)';
+    echo '<p class="public-doc-wrap"><a href="/?page=public-autopay&amp;token=' . htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8') . '">' . $autoPayLinkLabel . '</a></p>';
+  }
+  if (in_array($type, ['invoice','project_invoice'], true) && empty($isGeneralRecipientPublicInvoice)) {
+    require_once __DIR__ . '/../../utils/check_report_public.php';
+    require_once __DIR__ . '/../../utils/check_reports.php';
+    try {
+      pa_check_report_public_context($pdo, $token, $appConfig);
+      if (pa_check_report_available($pdo)) {
+        echo '<p class="public-doc-wrap"><a href="/?page=public-check-payment&amp;token=' . htmlspecialchars(rawurlencode($token), ENT_QUOTES, 'UTF-8') . '">Report a mailed check</a></p>';
+      }
+    } catch (DomainException $checkUnavailable) { /* Only eligible payable invoices expose check reporting. */ }
   }
   // Prefer Twig template if available, otherwise include PHP view wrapper
   $twigTemplate = __DIR__ . '/../../views/public/doc-template.twig';

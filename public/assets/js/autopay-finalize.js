@@ -7,7 +7,7 @@
         const button = select.form?.querySelector('button[type="submit"]');
         if (!button) return;
         button.textContent = select.value === 'collect'
-          ? 'Finalize & initiate payment'
+          ? 'Finalize & schedule AutoPay review'
           : select.value === 'hold' ? 'Finalize without AutoPay' : 'Choose collection before finalizing';
       };
       select.addEventListener('change', update);

@@ -201,6 +201,7 @@ try {
   [$sent, $err, $deliveryLogId] = EmailService::sendEmail($to, $subject, $body, [
     'attachments' => $attachments,
     'document_type' => $type,
+    'invoice_notice' => in_array($type, ['invoice', 'project_invoice'], true),
     'document_id' => $id,
     'document_revision' => $revision,
     'message_key' => implode(':', ['document', $type, $id, $revision, strtolower((string)$to)]),

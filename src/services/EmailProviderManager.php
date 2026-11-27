@@ -63,7 +63,7 @@ final class EmailProviderManager
         $message->messageId ??= '<' . hash('sha256', $messageKey) . '@project-alpha.local>';
         $reservation = $this->reserveDelivery($messageKey, (int)$connection['id'], $message, $context);
         if ($reservation['status'] === 'sent') {
-            return new SendResult(true, 'Already sent');
+            return new SendResult(true, 'Already sent', null, null, $reservation['id']);
         }
         if ($reservation['status'] === 'in_progress') {
             return new SendResult(false, 'Delivery is already in progress');
