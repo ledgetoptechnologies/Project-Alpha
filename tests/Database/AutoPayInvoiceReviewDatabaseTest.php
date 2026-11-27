@@ -150,7 +150,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         } catch (Throwable $error) { $this->pdo->rollBack(); throw $error; }
     }
 
-    public function testEveryInvoiceKindRequiresSuccessfulNoticeBeforeSevenDayReviewStarts(): void
+    public function testEveryInvoiceKindRequiresSuccessfulNoticeBeforeTenDayReviewStarts(): void
     {
         foreach ([$this->invoice(), $this->invoice('on_demand'), $this->invoice('long_term'), $this->projectInvoice()] as $document) {
             self::assertNotNull($document['collection']);
@@ -158,30 +158,30 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
             self::assertNull($this->review($document)['delivered_at']);
             self::assertNull($this->collection($document)['next_attempt_at']);
             $notice = $this->notice($document);
-            self::assertStringContainsString('seven calendar days', $notice['text']);
+            self::assertStringContainsString('10 calendar days', $notice['text']);
             self::assertStringContainsString('100.00 USD', $notice['text']);
             self::assertStringContainsString('https://example.invalid/', $notice['action_url']);
             // Merely preparing HTML or a failed transport does not acknowledge delivery.
             self::assertNull($this->review($document)['delivered_at']);
             self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00')));
-            self::assertSame('2026-02-08 12:00:00', $this->review($document)['scheduled_at']);
+            self::assertSame('2026-02-11 12:00:00', $this->review($document)['scheduled_at']);
         }
     }
 
-    public function testUnknownCardAndBankAccountUseTenDayNoticeAndCollectionWindow(): void
+    public function testEveryPaymentMethodUsesTenDayNoticeAndCollectionWindow(): void
     {
-        foreach (['card', 'us_bank_account'] as $method) {
-            $this->pdo->prepare('UPDATE autopay_enrollments SET method_type=?,verified_credit_card=0 WHERE id=?')
-                ->execute([$method, $this->authorization]);
+        foreach ([['card', 1], ['card', 0], ['us_bank_account', 0]] as [$method, $legacyCreditFlag]) {
+            $this->pdo->prepare('UPDATE autopay_enrollments SET method_type=?,verified_credit_card=? WHERE id=?')
+                ->execute([$method, $legacyCreditFlag, $this->authorization]);
             $document = $this->invoice();
             $sentAt = $this->clock('2026-02-01 12:00:00');
             $notice = $this->notice($document, $sentAt);
             self::assertStringContainsString('Feb 11, 2026', $notice['text']);
-            self::assertStringContainsString('ten calendar days', $notice['text']);
+            self::assertStringContainsString('10 calendar days', $notice['text']);
             self::assertStringContainsString('Turn off all AutoPay', $notice['html']);
             self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $sentAt));
             self::assertSame('2026-02-11 12:00:00', $this->review($document)['scheduled_at']);
-            self::assertFalse($this->ready($document, '2026-02-08 12:00:00'));
+            self::assertFalse($this->ready($document, '2026-02-11 11:59:59'));
             self::assertTrue($this->ready($document, '2026-02-11 12:00:00'));
         }
     }
@@ -196,7 +196,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         self::assertSame('scheduled', $this->review($document)['status']);
     }
 
-    public function testExactSevenDayBoundaryAndResendsDoNotExtendWindow(): void
+    public function testExactTenDayBoundaryAndResendsDoNotExtendWindow(): void
     {
         $document = $this->invoice(); $notice = $this->notice($document);
         pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00'));
@@ -205,15 +205,30 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $resend, $this->client['email'], null, $this->clock('2026-02-03 14:00:00')));
         self::assertSame($before['generation'], $this->review($document)['generation']);
         self::assertSame($before['scheduled_at'], $this->review($document)['scheduled_at']);
-        self::assertFalse($this->ready($document, '2026-02-08 11:59:59'));
-        self::assertTrue($this->ready($document, '2026-02-08 12:00:00'));
+        self::assertFalse($this->ready($document, '2026-02-11 11:59:59'));
+        self::assertTrue($this->ready($document, '2026-02-11 12:00:00'));
+    }
+
+    public function testEarlierSevenDayCreditNoticeRequiresFreshNotice(): void
+    {
+        $document = $this->invoice();
+        $notice = $this->notice($document);
+        $sentAt = $this->clock('2026-02-01 12:00:00');
+        self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $sentAt));
+
+        // The previous policy bound the seven-day window into the notice basis.
+        $this->pdo->prepare('UPDATE autopay_invoice_reviews SET basis_hash=?, scheduled_at=? WHERE id=?')
+            ->execute([str_repeat('0', 64), '2026-02-08 12:00:00', $notice['review_id']]);
+
+        self::assertFalse($this->ready($document, '2026-02-08 12:00:00'));
+        self::assertSame('held', $this->collection($document)['state']);
     }
 
     public function testCalendarDaysAcrossDaylightSavingAndLaterInvoiceDueDate(): void
     {
         $document = $this->invoice(); $notice = $this->notice($document);
         pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-10-28 17:00:00'));
-        self::assertSame('2026-11-04 18:00:00', $this->review($document)['scheduled_at'], 'Fall-back week is 169 hours but seven local calendar days.');
+        self::assertSame('2026-11-07 18:00:00', $this->review($document)['scheduled_at'], 'Ten local calendar days across fall-back are 241 hours.');
         $later = $this->invoice('regular', ['due_date' => '2026-11-12']);
         pa_autopay_mark_invoice_notice_sent($this->pdo, $this->notice($later), $this->client['email'], null, $this->clock('2026-10-28 17:00:00'));
         self::assertSame('2026-11-12 06:00:00', $this->review($later)['scheduled_at']);
@@ -229,7 +244,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         self::assertFalse(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00')));
         self::assertNull($this->review($document)['delivered_at']);
         self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $new, $this->client['email'], null, $this->clock('2026-02-03 12:00:00')));
-        self::assertSame('2026-02-10 12:00:00', $this->review($document)['scheduled_at']);
+        self::assertSame('2026-02-13 12:00:00', $this->review($document)['scheduled_at']);
         self::assertSame(12500, (int)$this->collection($document)['amount_cents']);
     }
 
@@ -245,7 +260,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         $next = $this->notice($document);
         self::assertNotSame($notice['generation'], $next['generation']);
         self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $next, $this->client['email'], null, $this->clock('2026-02-03 12:00:00')));
-        self::assertSame('2026-02-10 12:00:00', $this->review($document)['scheduled_at']);
+        self::assertSame('2026-02-13 12:00:00', $this->review($document)['scheduled_at']);
     }
 
     public function testChangedAmountRevisionCurrencyOrClientCannotUseOldDeliveryEvidence(): void
@@ -254,7 +269,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
             $document = $this->invoice(); $notice = $this->notice($document);
             pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00'));
             $this->pdo->exec('UPDATE invoices SET ' . $mutation . ' WHERE id=' . $document['id']);
-            self::assertFalse($this->ready($document, '2026-02-08 12:00:00'));
+            self::assertFalse($this->ready($document, '2026-02-11 12:00:00'));
             self::assertSame($expectedState, $this->collection($document)['state']);
             if ($expectedState === 'failed') self::assertStringStartsWith('Canceled:', $this->collection($document)['last_error']);
         }
@@ -316,7 +331,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         $document = $this->invoice(); $notice = $this->notice($document);
         pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], null, $this->clock('2026-02-01 12:00:00'));
         $this->insert('payments', ['client_id' => $this->client['id'], 'invoice_id' => $document['id'], 'amount' => '25.00', 'payment_method' => 'check', 'status' => 'succeeded', 'payment_date' => '2026-02-02']);
-        self::assertFalse($this->ready($document, '2026-02-08 12:00:00'));
+        self::assertFalse($this->ready($document, '2026-02-11 12:00:00'));
         self::assertSame('held', $this->collection($document)['state']);
     }
 
@@ -338,7 +353,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         $options = ['document_type' => 'invoice', 'document_id' => $document['id'], 'message_key' => 'synthetic-review-notice', 'invoice_notice' => true];
         $sentOptions = [];
         $failed = pa_autopay_deliver_invoice_email($this->pdo, $this->clock('2026-02-01 12:00:00'), $this->client['email'], 'Invoice', '<p>Synthetic invoice</p>', $options,
-            static function ($to, $subject, $body, $options) use (&$sentOptions) { $sentOptions = $options; self::assertStringContainsString('seven calendar days', $body); return [false, 'Synthetic delivery failure']; });
+            static function ($to, $subject, $body, $options) use (&$sentOptions) { $sentOptions = $options; self::assertStringContainsString('10 calendar days', $body); return [false, 'Synthetic delivery failure']; });
         self::assertFalse($failed[0]);
         self::assertNull($this->review($document)['delivered_at']);
         self::assertStringContainsString(':autopay-review:', $sentOptions['message_key']);
@@ -348,7 +363,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         self::assertNull($this->review($document)['delivered_at']);
         pa_autopay_deliver_invoice_email($this->pdo, $this->clock('2026-02-03 12:00:00'), $this->client['email'], 'Invoice', '<p>Synthetic invoice</p>', $options, static fn() => [true, 'Synthetic acceptance']);
         self::assertSame('2026-02-03 12:00:00', $this->review($document)['delivered_at']);
-        self::assertSame('2026-02-10 12:00:00', $this->review($document)['scheduled_at']);
+        self::assertSame('2026-02-13 12:00:00', $this->review($document)['scheduled_at']);
     }
 
     public function testStaffResolutionRequiresNewNoticeAndCannotOverrideClientSkip(): void
@@ -367,7 +382,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         self::assertNull($next['delivered_at']);
         self::assertNull($this->collection($document)['next_attempt_at']);
         pa_autopay_mark_invoice_notice_sent($this->pdo, $this->notice($document), $this->client['email'], null, $this->clock('2026-02-05 12:00:00'));
-        self::assertSame('2026-02-12 12:00:00', $this->review($document)['scheduled_at']);
+        self::assertSame('2026-02-15 12:00:00', $this->review($document)['scheduled_at']);
         pa_autopay_invoice_review_action($this->pdo, 'invoice', $document['id'], $this->client['id'], 'skip', $this->config);
         try { pa_autopay_invoice_review_staff_restart($this->pdo, 'invoice', $document['id'], 77, $this->config, 'Cannot override consent'); self::fail('Staff overrode client skip.'); }
         catch (DomainException $expected) { self::assertStringContainsString('cannot be restarted', $expected->getMessage()); }
@@ -399,7 +414,7 @@ final class AutoPayInvoiceReviewDatabaseTest extends TestCase
         $logId = (int)$this->pdo->lastInsertId(); $this->deliveryLogs[] = $logId;
         self::assertTrue(pa_autopay_mark_invoice_notice_sent($this->pdo, $notice, $this->client['email'], $logId, $this->clock('2026-02-03 15:00:00')));
         self::assertSame('2026-02-01 12:00:00', $this->review($document)['delivered_at']);
-        self::assertSame('2026-02-08 12:00:00', $this->review($document)['scheduled_at']);
+        self::assertSame('2026-02-11 12:00:00', $this->review($document)['scheduled_at']);
         $other = $this->invoice(); $otherNotice = $this->notice($other);
         try { pa_autopay_mark_invoice_notice_sent($this->pdo, $otherNotice, $this->client['email'], $logId, $this->clock('2026-02-03 15:00:00')); self::fail('Another invoice delivery log acknowledged this invoice.'); }
         catch (DomainException $expected) { self::assertStringContainsString('evidence', $expected->getMessage()); }
@@ -575,7 +590,7 @@ PHP;
             self::assertStringContainsString('100.00 USD', $html);
             self::assertStringContainsString('4242', $html);
             self::assertStringContainsString('scheduled on or after', $html);
-            self::assertStringContainsString('seven calendar days', $html);
+            self::assertStringContainsString('10 calendar days', $html);
             self::assertStringContainsString('public-autopay', $html);
             self::assertStringContainsString($sent['management_token'], $html);
             self::assertSame($pdf, $parts['application/pdf'][0]);

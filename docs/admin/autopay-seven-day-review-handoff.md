@@ -1,12 +1,12 @@
-# AutoPay seven day invoice review
+# AutoPay invoice review
 
-AutoPay applies to all future invoice types on a newly enrolled client account within one business instance. A normal invoice email contains the AutoPay notice; there is no extra charge-notification email. Collection waits at least seven local calendar days after the outgoing email service accepts that notice, or until a later invoice due date.
+New enrollments can authorize an eligible recurring agreement or future invoices across the client account in one business instance. A normal invoice email contains the AutoPay notice; there is no extra charge-notification email. Collection waits at least 10 local calendar days after the outgoing email service accepts that notice, or until a later invoice due date.
 
 Production AutoPay remains unavailable under the existing guard. This change does not enable live keys or live charging.
 
 ## Client experience
 
-New enrollment explicitly authorizes account-wide coverage for regular, on-demand, recurring and eligible project invoices. Existing agreement-only consent is preserved until the client explicitly enrolls for broader coverage. Historical invoices and work performed before authorization are not swept into collection.
+Enrollment explicitly authorizes the selected scope. Account-wide coverage includes regular, on-demand, recurring and eligible project invoices. Existing agreement-only consent is preserved until the client explicitly enrolls for broader coverage. Historical invoices and work performed before authorization are not swept into collection.
 
 The invoice email prominently shows the amount, earliest charge date and saved method's last four digits when available. It explains that no action is needed if the invoice is correct and offers links to review or skip that invoice, question it, or turn off all AutoPay. The notice is inside the shared email layout, including when a caller supplies a complete HTML document.
 
@@ -30,15 +30,15 @@ Migration `0117_autopay_invoice_review.sql` introduces durable review generation
 
 The first successful notice acknowledgment starts the timer. Failed delivery does not start it. Resending the same current notice preserves its original deadline; a recorded successful email delivery can recover a lost schedule update without restarting the clock. Only invoice delivery is eligible: receipts, failure notices and other email cannot arm a collection.
 
-Before submitting, the worker checks the current notice and deadline, original active authorization, client and processor bindings, invoice basis, payment activity and check holds. Changed evidence requires review rather than a guessed debit. Invoice changes during email delivery invalidate the old acknowledgment; staff resolution and a new notice are required.
+Before submitting, the worker checks the current notice and deadline, original active authorization, client and processor bindings, invoice basis, payment activity and check holds. Changed evidence requires review rather than a guessed debit. A notice issued under the earlier seven-day policy cannot arm collection under the 10-day policy; the client needs a fresh notice. Invoice changes during email delivery invalidate the old acknowledgment; staff resolution and a new notice are required.
 
 An invoice notice must reach the current authorized client email to start collection. Sending only to another accounting recipient does not silently authorize collection; the invoice remains awaiting appropriate notice. Mixed-client project statements do not inherit one client's authority over other clients' balances.
 
-Email success means SMTP/API acceptance recorded by PA, not proof of inbox delivery or reading. The seven-day arithmetic uses the configured timezone and calendar days, including daylight-saving changes. SMTP, Stripe calls and other network requests run outside database locks. Existing idempotency, reconciliation, receipts and refund holds remain in effect.
+Email success means SMTP/API acceptance recorded by PA, not proof of inbox delivery or reading. The 10-day arithmetic uses the configured timezone and calendar days, including daylight-saving changes. SMTP, Stripe calls and other network requests run outside database locks. Existing idempotency, reconciliation, receipts and refund holds remain in effect.
 
 ## Validation and integration
 
-Testing uses synthetic clients, normal database migrations, fake Stripe transport and an actual loopback SMTP capture inside isolated staging containers. It includes all invoice types, calendar boundaries, failed delivery, resend recovery, stale amounts and identities, opt-out, question resolution, account revocation, OTP/CSRF and staff permission checks, full HTML MIME and PDF preservation, and processing/financial-hold guards.
+The original review candidate used synthetic clients, normal database migrations, fake Stripe transport and an actual loopback SMTP capture inside isolated staging containers. It includes all invoice types, calendar boundaries, failed delivery, resend recovery, stale amounts and identities, opt-out, question resolution, account revocation, OTP/CSRF and staff permission checks, full HTML MIME and PDF preservation, and processing/financial-hold guards.
 
 The branch is `codex/autopay-seven-day-review`, based on local commit `b72eb6a157bb6f2cee753c076b65e344f0c6e49d`. Earlier mailed-check, email-presentation and disable-control commits are prerequisites in this branch; no production or shared staging deployment is performed by the tests.
 

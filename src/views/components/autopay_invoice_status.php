@@ -10,7 +10,7 @@ $autopayEscape = static fn($value): string => htmlspecialchars((string)$value, E
   <strong>AutoPay</strong>
   <?php if ($autopayState['eligible']): ?>
     <p style="margin:6px 0"><?= $autopayEscape($autopayState['scope']) ?> · <?= $autopayEscape($autopayState['method']) ?></p>
-    <p style="margin:6px 0">AutoPay covers <strong><?= $autopayEscape(strtoupper((string)($autopayDocument['currency'] ?? $appConfig['workforce_currency'] ?? 'USD'))) ?> <?= number_format((float)$autopayState['amount'], 2) ?></strong>. Finalizing reserves this invoice; it does not charge immediately. The client must receive the invoice notice and have at least seven calendar days to review for verified credit cards, or ten days for other methods. A later invoice due date takes precedence.</p>
+    <p style="margin:6px 0">AutoPay covers <strong><?= $autopayEscape(strtoupper((string)($autopayDocument['currency'] ?? $appConfig['workforce_currency'] ?? 'USD'))) ?> <?= number_format((float)$autopayState['amount'], 2) ?></strong>. Finalizing reserves this invoice; it does not charge immediately. The client must receive the invoice notice and have at least 10 calendar days to review. A later invoice due date takes precedence.</p>
     <?php if (!empty($autopayForm) && empty($autopayDocument['finalized_at'])): ?>
       <input form="<?= $autopayEscape($autopayForm) ?>" type="hidden" name="autopay_preview_hash" value="<?= $autopayEscape(pa_autopay_staff_preview_hash($autopayDocument, $autopayState, $autopayType, csrf_token())) ?>">
       <label style="display:block;margin-top:8px">AutoPay after invoice delivery and review
