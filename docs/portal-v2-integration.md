@@ -21,7 +21,11 @@ Project Alpha remains the authoritative source for organizations, departments, c
    (`unknown` is the default for clients staff add, and no screen changes it);
    their own client email becomes their portal login. Only an explicit
    `business` record without an organization stays review-required
-   (`non_human_record`). Missing, invalid or duplicate emails, principal
+   (`non_human_record`), and so does a payer the payment-processor import
+   created (`imported_payer`, recorded in `client_creation_origins` by migration
+   0119) unless it is a `consumer` record. Clients created through the API-v2
+   directory create command are staff-driven (Operations staff create them and
+   choose the type) and are treated like staff-added clients. Missing, invalid or duplicate emails, principal
    conflicts and manual revocations stay review-required or revoked. Project
    Alpha creates the exact profile/workspace link and login-eligibility intent;
    ambiguous records remain review-required. Contacts and public links do not

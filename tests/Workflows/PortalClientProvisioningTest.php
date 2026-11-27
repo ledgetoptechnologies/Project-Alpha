@@ -1045,7 +1045,8 @@ SQL);
             $this->prepareHistoricalBackfill();
             $profileId=(int)$this->pdo->query('SELECT id FROM portal_integration_profiles')->fetchColumn();
             // Matches backfillContractFingerprint(): key, route and eligibility policy version.
-            $fingerprint=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events',2],JSON_THROW_ON_ERROR));
+            // Raise this with ELIGIBILITY_POLICY_VERSION.
+            $fingerprint=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events',3],JSON_THROW_ON_ERROR));
             $this->pdo->exec("INSERT INTO clients VALUES(20,'client-failed','Failed Person','failed@example.test',NULL,'consumer',0,NULL,'v1')");
             $insert=$this->pdo->prepare("INSERT INTO portal_client_provisioning_backfill VALUES(?,? ,?,?, 'failed',5,NULL,'projection_failure:abc',NULL)");
             $insert->execute([$profileId,'standalone_client','client-failed',$fingerprint]);
@@ -1185,6 +1186,30 @@ SQL);
             self::assertSame(1,(int)$this->pdo->query('SELECT COUNT(*) FROM portal_v2_workspaces')->fetchColumn(),'Organization contacts share one workspace; revoked standalone is not provisioned.');
             self::assertSame(['revoked','eligible','revoked'],$this->pdo->query('SELECT eligibility_status FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_COLUMN));
         });
+    }
+
+    public function testImportedPayerGetsNoIndividualLoginButStaffAndConsumerClientsDo(): void
+    {
+        $this->pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+        $this->pdo->exec("INSERT INTO clients VALUES
+              (40,'client-payer','Imported Payer','payer@example.test',NULL,'unknown',0,NULL,'a'),
+              (41,'client-payer-consumer','Imported Consumer','consumer-payer@example.test',NULL,'consumer',0,NULL,'b'),
+              (42,'client-staff','Staff Added','staff@example.test',NULL,'unknown',0,NULL,'c'),
+              (43,'client-api','Directory Created','api@example.test',NULL,'unknown',0,NULL,'d')");
+        $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(40,'payment_import'),(41,'payment_import')");
+        $scopes=array_map(fn(string $id)=>['root_type'=>'standalone_client','root_public_id'=>$id],['client-payer','client-payer-consumer','client-staff','client-api']);
+
+        $this->pdo->beginTransaction();
+        $this->service->ensureScopes($this->pdo,$scopes,7,['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1]);
+        $this->pdo->commit();
+
+        // Payment import: held. A consumer record keeps its login. Staff-added and API-v2 directory-created
+        // clients (staff create them from Operations, choosing the type) have no origin row: individuals.
+        $rows=array_map(fn(array $row)=>[(int)$row['client_id'],$row['eligibility_status'],$row['review_reason']],
+            $this->pdo->query('SELECT client_id,eligibility_status,review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame([[40,'review_required','imported_payer'],[41,'eligible','none'],[42,'eligible','none'],[43,'eligible','none']],$rows);
+        self::assertSame(['api@example.test','consumer-payer@example.test','staff@example.test'],
+            $this->pdo->query('SELECT email_hint FROM portal_principals ORDER BY email_hint')->fetchAll(PDO::FETCH_COLUMN));
     }
 
     public function testEligibilityPolicyChangeReconcilesCompletedRootsOnce(): void

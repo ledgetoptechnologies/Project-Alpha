@@ -36,6 +36,24 @@ final class ProcessorImportManagedDirectoryTest extends TestCase
         self::assertGreaterThan(0, (int)$pdo->query('SELECT COUNT(*) FROM api_v2_directory_resource_changes')->fetchColumn());
     }
 
+    public function testImportRecordsOnlyThePayersItCreates(): void
+    {
+        $pdo = $this->clientDatabase();
+        $pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+        $config = ['processor_import_standalone_income' => true, 'processor_import_auto_create_clients' => true];
+        $pdo->prepare('INSERT INTO clients(public_id,name,email,phone,client_type) VALUES(?,?,?,?,?)')
+            ->execute([str_repeat('b', 32), 'Staff client', 'staff-added@example.test', null, 'unknown']);
+        $staffClientId = (int)$pdo->lastInsertId();
+
+        [$createdClientId] = $this->clientIdentity($pdo, $config, $this->transaction('payer@example.test', 'New payer'));
+        [$matchedClientId] = $this->clientIdentity($pdo, $config, $this->transaction('staff-added@example.test', 'Staff client'));
+
+        self::assertSame($staffClientId, $matchedClientId);
+        // Only the payer the import created is marked; paying never re-marks a client staff added.
+        self::assertSame([[(int)$createdClientId, 'payment_import']], array_map(fn(array $row) => [(int)$row['client_id'], $row['origin']],
+            $pdo->query('SELECT client_id,origin FROM client_creation_origins ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC)));
+    }
+
     public function testActivatedOwnershipLeavesProcessorDataUnassignedWithoutDirectoryChanges(): void
     {
         $pdo = $this->clientDatabase();
