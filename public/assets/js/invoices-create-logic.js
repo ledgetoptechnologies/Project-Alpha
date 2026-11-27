@@ -457,7 +457,7 @@ document.getElementById('invoiceForm').addEventListener('submit', function (e) {
             return;
         }
         entries.forEach(function (entry) {
-            const route = [entry.start_location, entry.end_location].filter(Boolean).join(' â†’ ');
+            const route = [entry.start_location, entry.end_location].filter(Boolean).join(' → ');
             const loggedMiles = Number(entry.logged_miles);
             const billableMiles = Number(entry.billable_miles);
             const billingNote = entry.charge_method === 'fixed_fee' ? 'Fixed travel fee' : `${loggedMiles.toFixed(3)} miles logged; ${billableMiles.toFixed(3)} miles billed`;
