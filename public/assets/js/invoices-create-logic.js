@@ -27,10 +27,10 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
     wrap.innerHTML = teInput + mileageInput + `
     <input type="hidden" name="item_key[]" value="${itemId}">
     <input type="hidden" name="item_parent_key[]" value="${wrap.dataset.parentKey || ''}">
-    <label class="invoice-item-editor__field invoice-item-editor__name">
-      <span>${parentRow ? 'Sub-item' : 'Item'}</span>
+    <div class="invoice-item-editor__field invoice-item-editor__name">
+      <label for="${itemId}">${parentRow ? 'Sub-item' : 'Item'}</label>
       <input id="${itemId}" required placeholder="${parentRow ? 'e.g. Additional acres' : 'e.g. 2D Map'}" name="item[]" value="${escapeInvoiceItem(item)}" oninput="recalcInv()" data-item-autocomplete data-description-field="${descId}" data-price-field="${priceId}">
-    </label>
+    </div>
     <label class="invoice-item-editor__field">
       <span>Quantity</span>
       <input required type="number" step="0.01" ${teIds.length === 0 && mileageIds.length === 0 ? 'min="0"' : ''} name="item_qty[]" class="qty-input" value="${escapeInvoiceItem(qty)}" oninput="recalcInv()">
@@ -82,7 +82,7 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
         const input = document.getElementById(itemId);
         const descField = document.getElementById(descId);
         const priceField = document.getElementById(priceId);
-        new ItemAutocomplete(input, {
+        input._itemAutocomplete = new ItemAutocomplete(input, {
             descriptionField: descField,
             priceField: priceField
         });
@@ -457,7 +457,7 @@ document.getElementById('invoiceForm').addEventListener('submit', function (e) {
             return;
         }
         entries.forEach(function (entry) {
-            const route = [entry.start_location, entry.end_location].filter(Boolean).join(' → ');
+            const route = [entry.start_location, entry.end_location].filter(Boolean).join(' â†’ ');
             const loggedMiles = Number(entry.logged_miles);
             const billableMiles = Number(entry.billable_miles);
             const billingNote = entry.charge_method === 'fixed_fee' ? 'Fixed travel fee' : `${loggedMiles.toFixed(3)} miles logged; ${billableMiles.toFixed(3)} miles billed`;
