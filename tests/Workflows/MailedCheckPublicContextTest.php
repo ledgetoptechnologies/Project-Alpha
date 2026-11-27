@@ -104,4 +104,30 @@ final class MailedCheckPublicContextTest extends TestCase
         catch (DomainException $error) { self::assertStringContainsString('upgrade',$error->getMessage()); }
         self::assertSame(0,(int)$this->pdo->query('SELECT amount_paid FROM invoices WHERE id=10')->fetchColumn());
     }
+    public function testStripeControllersValidateCheckoutBeforePersistingReservation(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $controllers = [
+            'stripe_checkout.php' => ['$stripe->getCheckoutSession(', '$stripe->createCheckoutSession'],
+            'stripe_charge.php' => ['$stripe->createCheckoutSessionWithSurcharge('],
+        ];
+        foreach ($controllers as $file => $calls) {
+            $source = (string)file_get_contents($root . '/src/controllers/stripe/' . $file);
+            $reservation = strpos($source, 'pa_autopay_reserve_checkout(');
+            $commit = strpos($source, '$pdo->commit();');
+            self::assertNotFalse($reservation);
+            self::assertNotFalse($commit);
+            foreach (['$collectionMode =', 'if ($amountDue <= 0)', 'StripeService::fromAppConfig('] as $validation) {
+                $position = strpos($source, $validation);
+                self::assertNotFalse($position);
+                self::assertLessThan($reservation, $position, $file);
+            }
+            self::assertLessThan($commit, $reservation, $file);
+            foreach ($calls as $call) {
+                $position = strpos($source, $call);
+                self::assertNotFalse($position);
+                self::assertGreaterThan($commit, $position, $file);
+            }
+        }
+    }
 }

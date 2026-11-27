@@ -56,8 +56,6 @@ try {
         throw new Exception('Invoice not found');
     }
     pa_autopay_assert_payment_available($pdo, $invoiceId);
-    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig);
-    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -119,6 +117,11 @@ try {
     $brandName = $appConfig['brand_name'] ?? 'Project Alpha';
     $description = "Invoice {$invoiceLabel} - {$checkoutRecipient}";
     
+    // Reject local eligibility errors before persisting a reservation. Release
+    // the lock before any Stripe I/O.
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig);
+    $pdo->commit();
+
     $session = $stripe->createCheckoutSessionWithSurcharge(
         $amountDue,
         $surchargeAmount,

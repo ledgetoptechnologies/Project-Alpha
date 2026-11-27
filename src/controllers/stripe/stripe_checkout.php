@@ -104,10 +104,6 @@ try {
         throw new Exception('Invoice not found');
     }
     pa_autopay_assert_payment_available($pdo, $invoiceId, $documentType);
-    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig, $documentType);
-    // Finalized documents cannot acquire a new AutoPay reservation on resend.
-    // Release before Stripe I/O; no network request holds a financial row lock.
-    $pdo->commit();
     
     // Check invoice status
     $status = strtolower($invoice['status'] ?? '');
@@ -180,6 +176,11 @@ try {
     $existingExpiresAt = !empty($invoice['stripe_checkout_expires_at'])
         ? strtotime((string)$invoice['stripe_checkout_expires_at'])
         : 0;
+    // Reject local eligibility errors before persisting a reservation. Release
+    // the lock before any Stripe I/O.
+    pa_autopay_reserve_checkout($pdo, $invoice, $appConfig, $documentType);
+    $pdo->commit();
+
     if ($existingSessionId !== '' && $existingExpiresAt > time()) {
         try {
             $existing = $stripe->getCheckoutSession($existingSessionId);
