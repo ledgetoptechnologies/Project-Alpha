@@ -89,7 +89,9 @@ function pa_autopay_enroll(PDO $pdo,array $context,array $session,array $input,a
         if(empty($customer['id']) || !empty($customer['livemode']))throw new DomainException('Stripe test customer could not be verified.');
         pa_autopay_bind_pending_setup($pdo,$client,$id,$installation,$account,'stripe_customer_id',(string)$customer['id']);
         $metadata=['pa_autopay_authorization_id'=>(string)$id,'pa_client_id'=>(string)$client['id'],'pa_autopay_installation_id'=>$installation,'pa_autopay_account_id'=>$account];
-        $checkout=$transport('POST','checkout/sessions',['mode'=>'setup','currency'=>'usd','customer'=>$customer['id'],'payment_method_types'=>[$method],'success_url'=>$return.'&setup_return=1','cancel_url'=>$return,'metadata'=>$metadata,'setup_intent_data'=>['metadata'=>$metadata]],'autopay-setup-'.$id);
+        // Authorization row IDs can repeat across installations or restored snapshots.
+        $setupKey = 'autopay-setup-' . hash('sha256', $installation . ':' . $account . ':' . $id . ':' . $customer['id']);
+        $checkout=$transport('POST','checkout/sessions',['mode'=>'setup','currency'=>'usd','customer'=>$customer['id'],'payment_method_types'=>[$method],'success_url'=>$return.'&setup_return=1','cancel_url'=>$return,'metadata'=>$metadata,'setup_intent_data'=>['metadata'=>$metadata]],$setupKey);
         if(empty($checkout['id']) || !empty($checkout['livemode']) || !preg_match('#^https://checkout\.stripe\.com/#',(string)($checkout['url']??'')))throw new DomainException('Stripe setup could not be verified.');
         pa_autopay_bind_pending_setup($pdo,$client,$id,$installation,$account,'checkout_session_id',(string)$checkout['id']);
         return $checkout;
