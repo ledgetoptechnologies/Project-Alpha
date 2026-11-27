@@ -83,6 +83,7 @@ $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId
 $showContactOnDocument = $__orgId && !empty($_POST['show_contact_on_document']) ? 1 : 0;
 
 $items = [];
+$rowKeys = [];
 $subtotal = 0.0;
 for ($i=0; $i<count($item); $i++) {
     $itm = trim((string)($item[$i] ?? ''));
@@ -93,9 +94,21 @@ for ($i=0; $i<count($item); $i++) {
     $rowMileageAllocationIds = array_values(array_unique(array_filter(array_map('intval', $mileageAllocationIdsByRow[$i] ?? []))));
     // Linked adjustment groups may legitimately net to zero or negative.
     if ($itm === '' || ($q == 0.0 && !$rowTimeEntryIds && !$rowMileageAllocationIds) || $p < 0) continue;
+    $key = (string)($_POST['item_key'][$i] ?? '');
+    $parentKey = (string)($_POST['item_parent_key'][$i] ?? '');
+    if (($key !== '' && isset($rowKeys[$key]))
+        || ($parentKey !== '' && ($key === '' || ($rowKeys[$parentKey] ?? false) !== true))) {
+        header('Location: /?page=invoice/invoices-create&error=' . urlencode('Each sub-item must have an item above it.'));
+        exit;
+    }
+    if ($key !== '') {
+        $rowKeys[$key] = $parentKey === '';
+    }
     $line = $q * $p;
     $subtotal += $line;
     $items[] = [
+        'row_key' => $key,
+        'parent_key' => $parentKey,
         'item' => $itm,
         'description' => $d,
         'quantity' => $q,
@@ -355,12 +368,20 @@ try {
     $pdo->prepare('UPDATE invoices SET doc_number=? WHERE id=?')->execute([pa_next_invoice_doc_number($pdo, 'regular'), $invoice_id]);
 
     $ii = $pdo->prepare('INSERT INTO invoice_items (invoice_id,item_library_id,item,description,quantity,unit_price,line_total,billing_unit,is_travel,pricing_status,time_entry_id,hours,catalog_snapshot) VALUES (?,?,?,?,?,?,?,?,?,"standard",?,?,?)');
-    foreach ($items as $idx => $it) {
+    $savedItemIds = [];
+    foreach ($items as $it) {
         $primaryTimeEntryId = !empty($it['time_entry_ids']) ? (int)$it['time_entry_ids'][0] : null;
         $catalog=catalog_document_snapshot($pdo,(int)($it['catalog_id']??0),$it);
         $ii->execute([$invoice_id,$catalog['item_library_id'],$it['item'],$it['description'],$it['quantity'],$it['unit_price'],$it['line_total'],$it['billing_unit'],$it['is_travel'],$primaryTimeEntryId,$it['billing_unit']==='hour'?($it['quantity']??null):null,$catalog['catalog_snapshot']]);
+        $itemId = (int)$pdo->lastInsertId();
+        if ($it['row_key'] !== '') {
+            $savedItemIds[$it['row_key']] = $itemId;
+        }
+        if ($it['parent_key'] !== '') {
+            $pdo->prepare('UPDATE invoice_items SET parent_item_id=? WHERE id=? AND invoice_id=?')
+                ->execute([$savedItemIds[$it['parent_key']], $itemId, $invoice_id]);
+        }
         if (!empty($it['time_entry_ids'])) {
-            $itemId = (int)$pdo->lastInsertId();
             $check = $pdo->prepare('SELECT id FROM time_entries WHERE id = ? AND billed = 0 AND COALESCE(external_status,"approved") = "approved" AND (client_id = ? OR client_id IS NULL OR client_id = 0) FOR UPDATE');
             $mark = $pdo->prepare('UPDATE time_entries SET client_id = CASE WHEN client_id IS NULL OR client_id = 0 THEN ? ELSE client_id END, billed = 1, invoice_item_id = ?, invoice_id = ? WHERE id = ?');
             foreach ($it['time_entry_ids'] as $teId) {
@@ -372,7 +393,6 @@ try {
             }
         }
         if (!empty($it['mileage_allocation_ids'])) {
-            $itemId = (int)$pdo->lastInsertId();
             $markMileage = $pdo->prepare(
                 'UPDATE mileage_charge_allocations SET billed=1,invoice_item_id=?,invoice_id=?
                  WHERE id=? AND client_id=? AND billed=0'

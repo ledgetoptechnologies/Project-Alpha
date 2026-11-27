@@ -1,9 +1,13 @@
 function money(n) { return '$' + (Number(n) || 0).toFixed(2) }
 var itemCounterInv = 0;
-function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null, billingUnit = 'each', mileageAllocationId = null) {
+function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null, billingUnit = 'each', mileageAllocationId = null, parentRow = null) {
     var wrap = document.createElement('div');
     var rowIndex = document.querySelectorAll('#itemsInv > div').length;
     var itemId = 'itemInv_' + (itemCounterInv++);
+    wrap.dataset.itemKey = itemId;
+    if (parentRow) {
+        wrap.dataset.parentKey = parentRow.dataset.itemKey;
+    }
     var descId = 'descInv_' + itemCounterInv;
     var priceId = 'priceInv_' + itemCounterInv;
     wrap.style.display = 'grid'; wrap.style.gridTemplateColumns = '3fr 3fr 1fr 1fr 1fr auto'; wrap.style.gap = '8px';
@@ -13,7 +17,9 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
     var mileageInput = mileageIds.map(id => `<input type="hidden" name="mileage_allocation_ids[${rowIndex}][]" value="${id}">`).join('');
     var selectedUnit = ['each', 'hour', 'mile'].includes(billingUnit) ? billingUnit : 'each';
     wrap.innerHTML = teInput + mileageInput + `
-    <input id="${itemId}" required placeholder="Item name..." name="item[]" style="padding:10px;border-radius:8px;border:1px solid #ddd" value="${item}" oninput="recalcInv()" data-item-autocomplete data-description-field="${descId}" data-price-field="${priceId}">
+    <input type="hidden" name="item_key[]" value="${itemId}">
+    <input type="hidden" name="item_parent_key[]" value="${wrap.dataset.parentKey || ''}">
+    <input id="${itemId}" required aria-label="${parentRow ? 'Sub-item name' : 'Item name'}" placeholder="${parentRow ? 'Sub-item name...' : 'Item name...'}" name="item[]" style="padding:10px;border-radius:8px;border:1px solid #ddd${parentRow ? ';margin-inline-start:1rem;border-inline-start:3px solid #cbd5e1' : ''}" value="${item}" oninput="recalcInv()" data-item-autocomplete data-description-field="${descId}" data-price-field="${priceId}">
     <textarea id="${descId}" placeholder="Description (optional)" name="item_desc[]" style="padding:10px;border-radius:8px;border:1px solid #ddd;resize:vertical;min-height:42px" oninput="recalcInv()">${desc}</textarea>
     <input required type="number" step="0.01" ${teIds.length === 0 && mileageIds.length === 0 ? 'min="0"' : ''} name="item_qty[]" class="qty-input" style="padding:10px;border-radius:8px;border:1px solid #ddd" value="${qty}" oninput="recalcInv()">
     <input id="${priceId}" required type="number" step="0.01" min="0" name="item_price[]" style="padding:10px;border-radius:8px;border:1px solid #ddd" value="${price}" oninput="recalcInv()">
@@ -22,9 +28,27 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
       <option value="hour" ${selectedUnit === 'hour' ? 'selected' : ''}>Hours</option>
       <option value="mile" ${selectedUnit === 'mile' ? 'selected' : ''}>Miles</option>
     </select>
-    <button type="button" onclick="this.parentElement.remove();recalcInv()" style="border:0;background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 10px">Remove</button>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      ${parentRow ? '' : '<button type="button" data-add-sub-item class="btn btn-sm">+ Add sub-item</button>'}
+      <button type="button" data-remove-item style="border:0;background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 10px">Remove</button>
+    </div>
   `;
-    document.getElementById('itemsInv').appendChild(wrap);
+    const container = document.getElementById('itemsInv');
+    let followingRow = parentRow ? parentRow.nextElementSibling : null;
+    while (followingRow && followingRow.dataset.parentKey === parentRow.dataset.itemKey) {
+        followingRow = followingRow.nextElementSibling;
+    }
+    container.insertBefore(wrap, followingRow);
+    wrap.querySelector('[data-add-sub-item]')?.addEventListener('click', () => {
+        addItemInv('', '', 1, 0, null, 'each', null, wrap).focus();
+    });
+    wrap.querySelector('[data-remove-item]').addEventListener('click', () => {
+        const children = Array.from(container.children).filter(row => row.dataset.parentKey === itemId);
+        if (children.length && !window.confirm('Remove this item and its sub-items?')) return;
+        children.forEach(row => row.remove());
+        wrap.remove();
+        recalcInv();
+    });
 
     // Re-initialize autocomplete for the new item input
     if (window.ItemAutocomplete) {
@@ -38,6 +62,7 @@ function addItemInv(item = '', desc = '', qty = 1, price = 0, timeEntryId = null
     }
 
     recalcInv();
+    return document.getElementById(itemId);
 }
 
 function recalcInv() {

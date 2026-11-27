@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../utils/invoice_item_hierarchy.php';
 // src/views/pages/invoices-edit.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
@@ -23,9 +24,9 @@ if (!$inv) {
 }
 try{$inv=DocumentPolicy::assertMutable($pdo,'invoice',$id,'monetary_adjustment');}catch(DocumentLockedException $locked){http_response_code(409);echo '<div class="alert alert-warning">'.htmlspecialchars($locked->getMessage()).' <a href="/?page=invoice/invoice-details&id='.$id.'">Return to invoice</a></div>';return;}
 $isGeneralRecipientInvoice = pa_invoice_is_general_recipient($inv);
-$items = $pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id=?');
+$items = $pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sort_order, id');
 $items->execute([$id]);
-$items = $items->fetchAll(PDO::FETCH_ASSOC);
+$items = invoice_items_in_display_order($items->fetchAll(PDO::FETCH_ASSOC));
 $preservedWorkforceItems = invoice_workforce_history($pdo, $id)['items'];
 $clients = $pdo->query("SELECT c.id, c.name, c.organization_id, o.name AS organization_name FROM clients c LEFT JOIN organizations o ON o.id=c.organization_id ORDER BY c.name ASC")->fetchAll();
 $clientName = '';
@@ -279,7 +280,7 @@ if (!empty($inv['contract_id'])) {
     </div>
 
     <div>
-      <div style="font-weight:600;margin-bottom:8px">Items (from contract - read only)</div>
+      <div style="font-weight:600;margin-bottom:8px">Invoice items</div>
       <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px">
         <?php
         $contractItems = [];
@@ -308,23 +309,34 @@ if (!empty($inv['contract_id'])) {
             <tbody>
               <?php foreach ($contractItems as $it): ?>
                 <tr style="border-bottom:1px solid #e5e7eb">
-                  <td style="padding:8px;font-weight:600"><?php echo htmlspecialchars($it['item'] ?? ''); ?></td>
+                  <td style="padding:8px;font-weight:600<?php if (!empty($it['parent_item_id'])) echo ';padding-left:1.75rem'; ?>"><?php echo htmlspecialchars($it['item'] ?? ''); ?></td>
                   <td style="padding:8px;color:#6b7280;font-size:13px"><?php echo htmlspecialchars($it['description'] ?? ''); ?></td>
                   <td style="padding:8px;text-align:right"><?php echo htmlspecialchars(number_format((float)$it['quantity'], 2)); ?></td>
                   <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format((float)$it['unit_price'], 2)); ?></td>
-                  <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format(isset($preservedWorkforceItems[(int)$it['id']]) ? (float)$it['line_total'] : (float)$it['quantity'] * (float)$it['unit_price'], 2)); ?></td>
+                  <td style="padding:8px;text-align:right">$<?php echo htmlspecialchars(number_format(isset($preservedWorkforceItems[(int)$it['id']]) ? (float)$it['line_total'] : (float)$it['quantity'] * (float)$it['unit_price'], 2)); ?>
+                    <?php if (empty($inv['contract_id']) && empty($it['is_extra_charge']) && empty($it['parent_item_id'])): ?>
+                      <button type="button" class="btn btn-sm" onclick="addExtraCharge(<?php echo (int)$it['id']; ?>)">+ Add sub-item</button>
+                    <?php endif; ?>
+                  </td>
                 </tr>
               <?php endforeach; ?>
             </tbody>
           </table>
         <?php endif; ?>
       </div>
-      <p style="color:#6b7280;font-size:0.875rem;margin-top:8px">To change items, modify the contract and apply a discount if needed.</p>
+
     </div>
 
     <!-- Extra Charges Section -->
     <div>
-      <div style="font-weight:600;margin-bottom:8px">Invoice Adjustments (editable)</div>
+      <div style="font-weight:600;margin-bottom:8px">Invoice Adjustments</div>
+      <template id="invoiceAdjustmentParentOptions">
+        <option value="">Standalone item</option>
+        <?php foreach ($contractItems as $parentItem): ?>
+          <?php if (!empty($inv['contract_id']) || !empty($parentItem['is_extra_charge']) || !empty($parentItem['parent_item_id'])) continue; ?>
+          <option value="<?php echo (int)$parentItem['id']; ?>">Under <?php echo htmlspecialchars($parentItem['item'] ?? ''); ?></option>
+        <?php endforeach; ?>
+      </template>
       <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:12px;margin-bottom:8px">
         <?php if (empty($extraCharges)): ?>
           <p style="color:#92400e;margin:0">No extra charges added yet. Use the form below to add additional line items.</p>
@@ -332,6 +344,13 @@ if (!empty($inv['contract_id'])) {
           <div id="extraChargesContainer" style="display:grid;gap:8px">
             <?php foreach ($extraCharges as $idx => $it): ?>
               <div style="display:grid;grid-template-columns:1.2fr 2.5fr 2.5fr 1fr 1fr auto;gap:8px;padding:8px;background:#fff;border-radius:4px;border:1px solid #fcd34d">
+                <select name="extra_parent_item_id[]" aria-label="Show as sub-item of" style="grid-column:1/-1;justify-self:start;max-width:100%">
+                  <option value="">Standalone item</option>
+                  <?php foreach ($contractItems as $parentItem): ?>
+                    <?php if (!empty($inv['contract_id']) || !empty($parentItem['is_extra_charge']) || !empty($parentItem['parent_item_id'])) continue; ?>
+                    <option value="<?php echo (int)$parentItem['id']; ?>"<?php if ((int)($it['parent_item_id'] ?? 0) === (int)$parentItem['id']) echo ' selected'; ?>>Under <?php echo htmlspecialchars($parentItem['item'] ?? ''); ?></option>
+                  <?php endforeach; ?>
+                </select>
                 <input type="hidden" name="extra_billing_unit[]" value="<?php echo htmlspecialchars($it['billing_unit'] ?? 'each'); ?>">
                 <select name="extra_adjustment_type[]" style="padding:8px;border-radius:4px;border:1px solid #ddd" onchange="recalcInv()"><option value="charge" <?php echo (float)$it['unit_price'] >= 0 ? 'selected' : ''; ?>>Charge</option><option value="credit" <?php echo (float)$it['unit_price'] < 0 ? 'selected' : ''; ?>>Credit</option></select>
                 <input id="item" type="text" name="extra_item[]" value="<?php echo htmlspecialchars($it['item'] ?? ''); ?>" placeholder="Item name..." style="padding:8px;border-radius:4px;border:1px solid #ddd" data-item-autocomplete data-item-library-id="<?php echo (int)($it['item_library_id'] ?? 0); ?>" data-description-field="extra_desc_<?php echo $idx; ?>" data-price-field="extra_price_<?php echo $idx; ?>">

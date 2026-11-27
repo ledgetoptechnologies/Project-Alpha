@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../utils/invoice_item_hierarchy.php';
 // src/views/pages/project/project-invoice-details.php
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/invoice_numbers.php';
@@ -67,8 +68,8 @@ $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $hasBillingUnit = project_invoice_table_has_column($pdo, 'invoice_items', 'billing_unit');
 $lineSql = $hasBillingUnit
-    ? 'SELECT item, description, quantity, unit_price, line_total, billing_unit FROM invoice_items WHERE invoice_id=? ORDER BY sort_order ASC, id ASC'
-    : 'SELECT item, description, quantity, unit_price, line_total, "each" AS billing_unit FROM invoice_items WHERE invoice_id=? ORDER BY sort_order ASC, id ASC';
+    ? 'SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY sort_order ASC, id ASC'
+    : 'SELECT invoice_items.*, "each" AS billing_unit FROM invoice_items WHERE invoice_id=? ORDER BY sort_order ASC, id ASC';
 $lineStmt = $pdo->prepare($lineSql);
 
 $recipients = project_invoice_client_recipients($pdo, $id);
@@ -199,7 +200,7 @@ $documentSender = document_sender_for_document($pdo, $appConfig, $pi);
   <?php foreach ($items as $invoiceSectionIndex => $item): ?>
     <?php
       $lineStmt->execute([(int)$item['invoice_id']]);
-      $lines = $lineStmt->fetchAll(PDO::FETCH_ASSOC);
+      $lines = invoice_items_in_display_order($lineStmt->fetchAll(PDO::FETCH_ASSOC));
       $itemOrganizationId = isset($item['organization_id']) ? (int)$item['organization_id'] : null;
       $itemPricingSnapshot = $itemOrganizationId > 0
         ? pricing_document_snapshot($pdo, $itemOrganizationId, 'invoice', (int)$item['invoice_id'], max(1, (int)$item['revision_number']))

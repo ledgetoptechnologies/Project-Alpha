@@ -1,7 +1,7 @@
 // Extra charges management
 var extraChargeCounter = 0;
 function money(n) { return '$' + (Number(n) || 0).toFixed(2) }
-function addExtraCharge() {
+function addExtraCharge(parentItemId = null) {
   try {
     var container = document.getElementById('extraChargesContainer');
     var anchorBtn = document.getElementById('addExtraChargeBtn');
@@ -44,7 +44,15 @@ function addExtraCharge() {
     <input type="hidden" name="extra_id[]" value="">
     <button type="button" onclick="this.parentElement.remove();recalcInv()" style="border:0;background:#fee2e2;color:#991b1b;border-radius:4px;padding:8px 10px;cursor:pointer">Remove</button>
   `;
+    const parentSelect = document.createElement('select');
+    parentSelect.name = 'extra_parent_item_id[]';
+    parentSelect.setAttribute('aria-label', 'Show as sub-item of');
+    parentSelect.style.cssText = 'grid-column:1/-1;justify-self:start;max-width:100%';
+    parentSelect.appendChild(document.getElementById('invoiceAdjustmentParentOptions').content.cloneNode(true));
+    parentSelect.value = parentItemId ? String(parentItemId) : '';
+    wrap.prepend(parentSelect);
     container.appendChild(wrap);
+    if (parentItemId) document.getElementById(itemId).focus();
 
     // Initialize autocomplete for the new item input
     if (window.ItemAutocomplete) {
