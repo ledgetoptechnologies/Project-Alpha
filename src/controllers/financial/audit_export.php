@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../utils/csrf_sf.php';
 require_once __DIR__ . '/../../utils/audit.php';
 require_once __DIR__ . '/../../utils/acl.php';
 require_once __DIR__ . '/../../utils/csv.php';
+require_once __DIR__ . '/../../utils/payment_accounting.php';
 
 // Get form parameters
 $startDate = $_POST['start_date'] ?? date('Y-m-d', strtotime('January 1 ' . date('Y')));
@@ -64,21 +65,8 @@ try {
             : "i.status IN ('paid', 'partial')";
         
         if ($accountingBasis === 'cash') {
-            $invoiceQuery = "
-                SELECT i.id,i.doc_number,i.invoice_type,i.client_id,c.name AS client_name,i.project_code,
-                       i.subtotal,i.tax_percent,i.tax_amount AS tax,i.tax_county,i.discount_value,
-                       i.total,i.status,MIN(p.payment_date) AS report_date,i.created_at,i.due_date,
-                       SUM(GREATEST(p.amount-p.refunded_amount-p.disputed_amount,0)) AS amount_paid,
-                       GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') AS payment_methods
-                FROM invoices i
-                JOIN clients c ON i.client_id=c.id
-                JOIN payments p ON i.id=p.invoice_id AND p.status='succeeded'
-                WHERE p.payment_date BETWEEN ? AND ? AND (?=0 OR i.organization_id=?)
-                GROUP BY i.id
-                ORDER BY report_date ASC,i.doc_number ASC
-            ";
-            $stmt = $pdo->prepare($invoiceQuery);
-            $stmt->execute([$startDate, $endDate, $activeOrgId, $activeOrgId]);
+            // Cash basis = net collected, the same rows as the Financial Overview; payments without an invoice get their own rows.
+            $invoices = payment_accounting_income_audit_rows(payment_accounting_collected_payments($pdo, $activeOrgId, $startDate, $endDate));
         } else {
         $invoiceQuery = "
             SELECT 
@@ -112,13 +100,12 @@ try {
         
         $stmt = $pdo->prepare($invoiceQuery);
         $stmt->execute([$startDate . ' 00:00:00', $endDate . ' 23:59:59', $activeOrgId, $activeOrgId]);
-        }
         $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if ($accountingBasis === 'accrual') {
-            foreach ($invoices as &$invoiceRow) {
-                $invoiceRow['amount_paid'] = (float)$invoiceRow['total'];
-            }
-            unset($invoiceRow);
+        foreach ($invoices as &$invoiceRow) {
+            $invoiceRow['gross'] = $invoiceRow['net'] = (float)$invoiceRow['total'];
+            $invoiceRow['fee'] = $invoiceRow['refunds'] = 0.0;
+        }
+        unset($invoiceRow);
         }
     }
 
@@ -204,25 +191,28 @@ try {
         fwrite($fp, "\xEF\xBB\xBF");
 
         // Headers
-        $headers = ['Date', 'Client', 'Doc Number', 'Document Type', 'Status', 'Tax %', 'Tax County', 'Amount Paid', 'Payment Method', 'Discount', 'Total', 'Running Total'];
+        $headers = ['Date', 'Client', 'Doc Number', 'Document Type', 'Status', 'Tax %', 'Tax County', 'Gross', 'Processor Fees', 'Refunds/Disputes', 'Net Collected', 'Payment Method', 'Discount', 'Total', 'Running Total'];
         csv_write_row($fp, $headers);
 
         $runningTotal = 0;
 
         // Write invoices
         foreach ($invoices as $inv) {
-            $amountPaid = (float)($inv['amount_paid'] ?? 0);
-            $runningTotal += $amountPaid;
-            
+            $runningTotal += (float)$inv['net'];
+            $hasInvoice = !empty($inv['id']);
+
             csv_write_row($fp, [
                 substr($inv['report_date'] ?? $inv['created_at'] ?? '', 0, 10),
                 $inv['client_name'] ?? '',
-                pa_invoice_label_from_row($inv),
-                'Invoice',
+                $hasInvoice ? pa_invoice_label_from_row($inv) : 'Payment #' . $inv['payment_id'],
+                $hasInvoice ? 'Invoice' : 'Payment (no invoice)',
                 ucfirst($inv['status'] ?? ''),
-                number_format((float)($inv['tax_percent'] ?? 0), 2) . '%',
+                $hasInvoice ? number_format((float)($inv['tax_percent'] ?? 0), 2) . '%' : '',
                 $inv['tax_county'] ?? '',
-                '$' . number_format($amountPaid, 2),
+                '$' . number_format((float)$inv['gross'], 2),
+                '$' . number_format((float)$inv['fee'], 2),
+                '$' . number_format((float)$inv['refunds'], 2),
+                '$' . number_format((float)$inv['net'], 2),
                 $inv['payment_methods'] ?? '',
                 '$' . number_format((float)($inv['discount_value'] ?? 0), 2),
                 '$' . number_format((float)($inv['total'] ?? 0), 2),
@@ -240,6 +230,9 @@ try {
                 $contract['doc_number'] ?? $contract['id'],
                 'Contract',
                 ucfirst($contract['status'] ?? ''),
+                '',
+                '',
+                '',
                 '',
                 '',
                 '',
@@ -265,20 +258,27 @@ try {
                 '',
                 '',
                 '',
+                '',
+                '',
+                '',
                 '$' . number_format($total, 2),
                 ''
             ]);
         }
 
         // Summary row
-        csv_write_row($fp, ['', '', '', '', '', '', '', '', '', '', '', '']);
-        csv_write_row($fp, ['SUMMARY', '', '', '', '', '', '', '', '', '', '', '']);
-        csv_write_row($fp, ['Total Invoices:', count($invoices), '', '', '', '', '', 'Total Collected:', '$' . number_format($runningTotal, 2), '', '', '']);
+        csv_write_row($fp, []);
+        csv_write_row($fp, ['SUMMARY']);
+        csv_write_row($fp, ['Total Rows:', count($invoices), '', '', '', '', 'Totals:',
+            '$' . number_format(array_sum(array_column($invoices, 'gross')), 2),
+            '$' . number_format(array_sum(array_column($invoices, 'fee')), 2),
+            '$' . number_format(array_sum(array_column($invoices, 'refunds')), 2),
+            '$' . number_format($runningTotal, 2)]);
         if ($includeContracts) {
-            csv_write_row($fp, ['Total Contracts:', count($contracts), '', '', '', '', '', '', '', '', '', '']);
+            csv_write_row($fp, ['Total Contracts:', count($contracts)]);
         }
         if ($includeQuotes) {
-            csv_write_row($fp, ['Total Quotes:', count($quotes), '', '', '', '', '', '', '', '', '', '']);
+            csv_write_row($fp, ['Total Quotes:', count($quotes)]);
         }
 
         fclose($fp);
@@ -304,8 +304,10 @@ try {
     if ($includeQuotes) {
         $manifest .= "- Total Quotes: " . count($quotes) . "\n";
     }
-    $totalCollected = array_sum(array_column($invoices, 'amount_paid'));
-    $manifest .= "- Total Collected: $" . number_format($totalCollected, 2) . "\n\n";
+    foreach (['gross' => 'Gross', 'fee' => 'Processor Fees', 'refunds' => 'Refunds/Disputes', 'net' => 'Net Collected'] as $col => $label) {
+        $manifest .= "- {$label}: $" . number_format(array_sum(array_column($invoices, $col)), 2) . "\n";
+    }
+    $manifest .= "\n";
     $manifest .= "FILES INCLUDED:\n";
     if ($generateCsv) {
         $manifest .= "- audit_report.csv: Detailed audit data\n";

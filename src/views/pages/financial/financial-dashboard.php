@@ -15,10 +15,9 @@ $end = !empty($_GET['end']) ? $_GET['end'] : $defaultEndDate;
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = $defaultStartDate;
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = $defaultEndDate;
 
-$incomeExpr = payment_accounting_net_income_expr('p');
-$incomeStmt = $pdo->prepare("SELECT COALESCE(SUM({$incomeExpr}),0) as total FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ?");
-$incomeStmt->execute([$orgId, $orgId, $start, $end]);
-$totalIncome = (float)$incomeStmt->fetchColumn();
+// Same rows as the income audit, so both show the same net collected figure.
+$incomePayments = payment_accounting_collected_payments($pdo, (int)$orgId, $start, $end);
+$totalIncome = round(array_sum(array_column($incomePayments, 'net')), 2);
 
 [$expenseScopeWhere, $expenseScopeParams] = finance_scope_clause($pdo, 'e', $userId, $orgId, 'created_by');
 [$mileageScopeWhere, $mileageScopeParams] = finance_scope_clause($pdo, 'm', $userId, $orgId, 'user_id');
@@ -90,16 +89,10 @@ $statusStmt = $pdo->prepare("
 $statusStmt->execute(array_merge($expenseScopeParams, [$start, $end]));
 $statusSummary = $statusStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$incomeTrendStmt = $pdo->prepare("
-    SELECT DATE_FORMAT(p.payment_date, '%Y-%m') as period, COALESCE(SUM({$incomeExpr}),0) as total
-    FROM payments p LEFT JOIN invoices i ON i.id=p.invoice_id
-    WHERE p.status='succeeded' AND (?=0 OR COALESCE(p.organization_id,i.organization_id,0)=?) AND p.payment_date BETWEEN ? AND ?
-    GROUP BY period
-");
-$incomeTrendStmt->execute([$orgId, $orgId, $start, $end]);
 $incomeByMonth = [];
-foreach ($incomeTrendStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $incomeByMonth[$row['period']] = (float)$row['total'];
+foreach ($incomePayments as $row) {
+    $period = substr((string)$row['payment_date'], 0, 7);
+    $incomeByMonth[$period] = ($incomeByMonth[$period] ?? 0) + (float)$row['net'];
 }
 
 $expenseTrendStmt = $pdo->prepare("
