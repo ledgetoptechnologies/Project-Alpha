@@ -31,7 +31,7 @@ function vendor_handler_finish(array $response, int $status = 200, string $fallb
     }
 
     if (!empty($response['success'])) {
-        $redirect = (string)($response['redirect'] ?? '/?page=financial/expenses-list&tab=vendors');
+        $redirect = (string)($response['redirect'] ?? '/?page=financial/setup&tab=vendors');
         $join = str_contains($redirect, '?') ? '&' : '?';
         header('Location: ' . $redirect . $join . 'success=' . rawurlencode((string)($response['message'] ?? 'Vendor saved')));
         exit;
@@ -54,7 +54,7 @@ $userId = (int)$_SESSION['user']['id'];
 $orgId  = request_client_org_id();
 if (!user_can($pdo, $userId, 'financial.manage', 0)) {
     $response['message'] = 'Permission denied';
-    vendor_handler_finish($response, 403, '/?page=financial/expenses-list&tab=vendors');
+    vendor_handler_finish($response, 403, '/?page=financial/setup&tab=vendors');
 }
 
 // CSRF required: accept legacy 'csrf' or Symfony '_token'

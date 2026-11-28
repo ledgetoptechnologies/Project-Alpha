@@ -493,8 +493,7 @@ body.nav-open{overflow:hidden}
 .tag-row{display:flex;gap:6px;flex-wrap:wrap}
 
 /* Financial workspace */
-.finance-dashboard,
-.expenses-hub{
+.finance-dashboard{
   width:100%;
   max-width:1600px;
   margin:0 auto;
@@ -514,14 +513,6 @@ body.nav-open{overflow:hidden}
   margin:0;
   font-size:26px;
   line-height:1.15;
-}
-.finance-eyebrow{
-  margin:0 0 6px;
-  color:var(--nav-accent);
-  font-size:12px;
-  font-weight:700;
-  text-transform:uppercase;
-  letter-spacing:.08em;
 }
 .finance-subtitle{
   margin:6px 0 0;
@@ -794,55 +785,7 @@ body.nav-open{overflow:hidden}
   border-radius:8px;
 }
 
-/* Expenses hub and ledger */
-.expenses-hub__tabs{
-  display:grid;
-  grid-template-columns:repeat(9,minmax(0,1fr));
-  gap:10px;
-  margin-bottom:18px;
-}
-.expenses-hub__tab{
-  display:grid;
-  grid-template-columns:1fr auto;
-  gap:2px 8px;
-  align-items:center;
-  min-width:0;
-  padding:12px;
-  color:var(--text);
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:8px;
-  box-shadow:0 1px 3px rgba(11,18,32,0.04);
-}
-.expenses-hub__tab:hover{
-  border-color:#cbd5e1;
-  background:#fbfcfd;
-}
-.expenses-hub__tab.active{
-  border-color:rgba(46,163,214,.55);
-  box-shadow:inset 0 3px 0 var(--nav-accent),0 1px 3px rgba(11,18,32,0.05);
-}
-.expenses-hub__tab span{
-  font-weight:800;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.expenses-hub__tab small{
-  grid-column:1 / -1;
-  color:var(--muted);
-  font-size:12px;
-}
-.expenses-hub__tab b{
-  justify-self:end;
-  padding:3px 8px;
-  border-radius:999px;
-  background:var(--surface-2);
-  color:var(--muted);
-  font-size:12px;
-}
-.expenses-hub__panel{display:none}
-.expenses-hub__panel.active{display:block}
+/* Expense ledger */
 .expense-ledger{
   display:grid;
   gap:18px;
@@ -855,42 +798,6 @@ body.nav-open{overflow:hidden}
   flex-wrap:wrap;
 }
 .expense-ledger__head p{margin:6px 0 0}
-.expenses-hub__panel .page-head{
-  align-items:flex-start;
-  margin-bottom:18px;
-}
-.finance-overview-grid{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:14px;
-}
-.finance-overview-card{
-  display:grid;
-  align-content:start;
-  gap:14px;
-  padding:18px;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  box-shadow:0 1px 3px rgba(11,18,32,0.04);
-}
-.finance-overview-card__head{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:12px;
-}
-.finance-overview-card__head > div{display:grid;gap:4px}
-.finance-overview-card__head span{color:var(--muted);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
-.finance-overview-card__head strong{font-size:26px;line-height:1.15}
-.finance-overview-card__head a{font-size:13px;font-weight:700}
-.finance-overview-card dl{display:grid;gap:9px;margin:0}
-.finance-overview-card dl div{display:flex;justify-content:space-between;gap:12px;padding-top:9px;border-top:1px solid var(--border)}
-.finance-overview-card dt{color:var(--muted)}
-.finance-overview-card dd{margin:0;font-weight:700;text-align:right}
-.finance-overview-card__note{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
-.finance-overview-link{color:inherit;text-decoration:none}
-.finance-overview-link:hover{border-color:rgba(46,163,214,.55);background:#fbfcfd}
 .expense-summary{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -1079,12 +986,10 @@ body.nav-open{overflow:hidden}
 
 @media (max-width:1300px){
   .finance-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .expenses-hub__tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
 }
 @media (max-width:1050px){
   .finance-grid--main,
   .finance-grid--details{grid-template-columns:1fr}
-  .finance-overview-grid{grid-template-columns:1fr}
   .expense-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .expense-filter-grid{grid-template-columns:repeat(2,minmax(150px,1fr))}
 }
@@ -1094,8 +999,7 @@ body.nav-open{overflow:hidden}
   .finance-actions{justify-content:flex-start}
   .finance-kpis,
   .expense-summary,
-  .expense-filter-grid,
-  .expenses-hub__tabs{grid-template-columns:1fr}
+  .expense-filter-grid{grid-template-columns:1fr}
   .asset-detail-list > div{grid-template-columns:1fr;gap:3px}
   .asset-form-actions .btn{flex:1 1 150px}
   .finance-filter label{width:100%}
@@ -1273,3 +1177,27 @@ a.doc-chain__step:hover{background:#f9fafb}
 .doc-chain__step.is-empty .doc-chain__val{color:var(--muted);font-weight:600}
 .doc-chain__sub{font-size:12px;color:var(--muted)}
 @media (max-width:700px){.doc-chain{grid-template-columns:repeat(2,minmax(0,1fr))}.doc-chain__step:nth-child(2){border-right:0}.doc-chain__step:nth-child(-n+2){border-bottom:1px solid var(--border)}.doc-chain__step::after{display:none}}
+
+/* Financial pages: Expenses, Assets, Reports and Setup (tabbed layout reuses .doc-tabs) */
+.fin-page,.asset-ledger{width:100%;max-width:1600px;margin:0 auto}
+.fin-page{display:grid;gap:16px}
+.fin-page > .page-head,.expense-ledger > .page-head{margin-bottom:0}
+.fin-page__panel{min-width:0}
+.fin-report{display:grid;gap:16px}
+.fin-form{display:grid;gap:14px;margin:0}
+.fin-form__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.fin-form__grid .field{display:flex;flex-direction:column;gap:4px;margin:0}
+.fin-form__actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.fin-presets{display:flex;gap:6px;flex-wrap:wrap}
+.fin-checks{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:8px}
+.fin-checks legend{padding:0 6px;font-size:13px;font-weight:600;color:var(--muted)}
+.fin-checks label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.fin-emails{display:grid;gap:8px;margin-bottom:8px}
+.fin-schedule > summary{cursor:pointer;font-weight:600}
+.fin-schedule[open] > summary{margin-bottom:14px}
+.fin-report__filters{margin-bottom:0}
+@media (max-width:720px){
+  .fin-form__actions .btn{flex:1 1 140px}
+  .fin-page .doc-tabs{flex-wrap:nowrap;overflow-x:auto}
+  .fin-page .doc-tabs a{white-space:nowrap}
+}

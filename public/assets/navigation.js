@@ -145,10 +145,11 @@ function updateActiveNavigation(page) {
     // Exact page first; otherwise the section that owns the page (detail, edit, create pages).
     const hasExact = links.some(link => link.dataset.page === normalizedPage);
     links.forEach(link => {
-        const prefix = link.dataset.match || '';
+        // data-match holds one or more space-separated page prefixes.
+        const prefixes = (link.dataset.match || '').split(/\s+/).filter(Boolean);
         const isActive = hasExact
             ? link.dataset.page === normalizedPage
-            : prefix !== '' && normalizedPage.startsWith(prefix);
+            : prefixes.some(prefix => normalizedPage.startsWith(prefix));
         link.classList.toggle('active', isActive);
         if (isActive) {
             link.setAttribute('aria-current', 'page');
@@ -507,11 +508,13 @@ function updatePageTitle(page) {
         'api-keys-new': 'New API Key',
         'api-keys-edit': 'Edit API Key',
         'settings': 'Settings',
-        'financial/financial-dashboard': 'Financial Dashboard',
-        'financial/expenses-list': 'Assets & Expenses',
+        'financial/financial-dashboard': 'Financial Overview',
+        'financial/expenses-list': 'Expenses',
+        'financial/assets-list': 'Assets',
         'financial/asset-form': 'Asset',
         'financial/asset-detail': 'Asset Details',
-        'financial/audit': 'Audit & Reports',
+        'financial/reports': 'Reports',
+        'financial/setup': 'Financial Setup',
         'account': 'My Account',
         'account-edit': 'Edit Account',
         'workforce/overview': 'Workforce Overview',

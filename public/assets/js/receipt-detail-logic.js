@@ -63,7 +63,7 @@ async function confirmDelete() {
         const result = await response.json();
 
         if (result.success) {
-            window.location.href = '/?page=financial/receipts-list';
+            window.location.href = '/?page=financial/expenses-list&tab=receipts';
         } else {
             alert(result.message || 'Failed to delete receipt');
         }

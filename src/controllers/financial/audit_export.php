@@ -33,75 +33,11 @@ $includeContracts = isset($_POST['include_contracts']) && $_POST['include_contra
 $includeQuotes = isset($_POST['include_quotes']) && $_POST['include_quotes'] === '1';
 $generateCsv = isset($_POST['generate_csv']) && $_POST['generate_csv'] === '1';
 $includePdfs = isset($_POST['include_pdfs']) && $_POST['include_pdfs'] === '1';
-$enableScheduling = isset($_POST['enable_scheduling']) && $_POST['enable_scheduling'] === '1';
 $activeOrgId = request_client_org_id();
-
-// Handle scheduling separately
-if ($enableScheduling) {
-    $scheduleEmails = array_filter($_POST['schedule_email'] ?? [], function($email) {
-        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-    });
-    $scheduleEmails = array_slice($scheduleEmails, 0, 5);
-    
-    if (!empty($scheduleEmails)) {
-        $frequency = $_POST['schedule_frequency'] ?? 'monthly';
-        $dateRangeType = $_POST['schedule_date_range'] ?? 'current_year';
-        
-        // Calculate next run date based on frequency
-        $nextRun = calculateNextRunDate($frequency);
-        
-        try {
-            // Ensure audit_schedules table exists
-            $pdo->exec("CREATE TABLE IF NOT EXISTS audit_schedules (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                frequency VARCHAR(50) NOT NULL,
-                date_range_type VARCHAR(50) NOT NULL,
-                accounting_basis ENUM('cash','accrual') NOT NULL DEFAULT 'cash',
-                email_addresses TEXT NOT NULL,
-                include_invoices TINYINT(1) DEFAULT 1,
-                include_unpaid_invoices TINYINT(1) DEFAULT 0,
-                include_contracts TINYINT(1) DEFAULT 0,
-                include_quotes TINYINT(1) DEFAULT 0,
-                generate_csv TINYINT(1) DEFAULT 1,
-                include_pdfs TINYINT(1) DEFAULT 0,
-                is_active TINYINT(1) DEFAULT 1,
-                next_run_at DATETIME,
-                last_run_at DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )");
-            
-            $stmt = $pdo->prepare("INSERT INTO audit_schedules 
-                (organization_id, frequency, date_range_type, accounting_basis, email_addresses, include_invoices, include_unpaid_invoices,
-                 include_contracts, include_quotes, generate_csv, include_pdfs, next_run_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $activeOrgId ?: null,
-                $frequency,
-                $dateRangeType,
-                $accountingBasis,
-                json_encode($scheduleEmails),
-                $includeInvoices ? 1 : 0,
-                $includeUnpaidInvoices ? 1 : 0,
-                $includeContracts ? 1 : 0,
-                $includeQuotes ? 1 : 0,
-                $generateCsv ? 1 : 0,
-                $includePdfs ? 1 : 0,
-                $nextRun
-            ]);
-            
-            header('Location: /?page=financial/audit&scheduled=1');
-            exit;
-        } catch (Throwable $e) {
-            error_log('Audit schedule error: ' . $e->getMessage());
-            header('Location: /?page=financial/audit&error=' . urlencode('Failed to create schedule: ' . $e->getMessage()));
-            exit;
-        }
-    }
-}
 
 // Validate dates
 if (!$startDate || !$endDate) {
-    header('Location: /?page=financial/audit&error=' . urlencode('Please select a valid date range.'));
+    header('Location: /?page=financial/reports&tab=income&error=' . urlencode('Please select a valid date range.'));
     exit;
 }
 
@@ -109,7 +45,7 @@ try {
     $start = new DateTime($startDate);
     $end = new DateTime($endDate);
 } catch (Exception $e) {
-    header('Location: /?page=financial/audit&error=' . urlencode('Invalid date format. Please use the date picker.'));
+    header('Location: /?page=financial/reports&tab=income&error=' . urlencode('Invalid date format. Please use the date picker.'));
     exit;
 }
 
@@ -244,7 +180,7 @@ try {
 
     // Check if we have any data
     if (empty($invoices) && empty($contracts) && empty($quotes)) {
-        header('Location: /?page=financial/audit&error=' . urlencode('No records found for the selected date range and options.'));
+        header('Location: /?page=financial/reports&tab=income&error=' . urlencode('No records found for the selected date range and options.'));
         exit;
     }
 
@@ -438,43 +374,6 @@ try {
         @rmdir($tmpDir);
     }
     
-    header('Location: /?page=financial/audit&error=' . urlencode('Failed to generate audit: ' . $e->getMessage()));
+    header('Location: /?page=financial/reports&tab=income&error=' . urlencode('Failed to generate audit: ' . $e->getMessage()));
     exit;
-}
-
-/**
- * Calculate next run date based on frequency
- */
-function calculateNextRunDate(string $frequency): string {
-    $now = new DateTime();
-    
-    switch ($frequency) {
-        case 'weekly':
-            // Next Monday
-            $next = new DateTime('next monday');
-            break;
-        case 'monthly':
-            // First day of next month
-            $next = new DateTime('first day of next month');
-            break;
-        case 'quarterly':
-            // First day of next quarter
-            $currentMonth = (int)$now->format('n');
-            $quarterStart = (int)ceil($currentMonth / 3) * 3 + 1;
-            if ($quarterStart > 12) {
-                $quarterStart = 1;
-                $next = new DateTime(($now->format('Y') + 1) . '-01-01');
-            } else {
-                $next = new DateTime($now->format('Y') . '-' . str_pad((string)$quarterStart, 2, '0', STR_PAD_LEFT) . '-01');
-            }
-            break;
-        case 'annually':
-            // January 1st next year
-            $next = new DateTime(($now->format('Y') + 1) . '-01-01');
-            break;
-        default:
-            $next = new DateTime('first day of next month');
-    }
-    
-    return $next->format('Y-m-d 06:00:00');
 }

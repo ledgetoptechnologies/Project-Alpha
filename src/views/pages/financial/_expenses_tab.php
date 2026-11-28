@@ -126,18 +126,6 @@ $paginationFilters = [
 ?>
 
 <section class="expense-ledger">
-  <div class="expense-ledger__head">
-    <div>
-      <h2>Expenses</h2>
-      <p class="muted">A scan-friendly ledger for business spending, reimbursement, and tax review.</p>
-    </div>
-    <div class="finance-actions">
-      <a href="/?page=financial/expense-report" class="btn">Reports</a>
-      <a href="/?page=financial/csv-import" class="btn">Import CSV</a>
-      <a href="/?page=financial/expense-create" class="btn btn-primary">Add Expense</a>
-    </div>
-  </div>
-
   <?php if (!empty($_GET['created'])): ?>
     <div class="alert alert-success">Expense created successfully.</div>
   <?php endif; ?>

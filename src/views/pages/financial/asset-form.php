@@ -20,7 +20,7 @@ if ($editId > 0) {
     $stmt->execute(array_merge([$editId], $assetScopeParams));
     $asset = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$asset) {
-        header('Location: /?page=financial/expenses-list&tab=assets');
+        header('Location: /?page=financial/assets-list');
         exit;
     }
 }
@@ -68,7 +68,7 @@ $selected = static function (string $key, string $value, string $default = '') u
       <h2><?php echo $editId > 0 ? 'Edit Asset' : 'Add Asset'; ?></h2>
       <p class="muted" style="margin:4px 0 0">Track purchase details, status, warranty, and depreciation.</p>
     </div>
-    <a href="/?page=financial/expenses-list&tab=assets" class="btn btn-sm">Back to Assets</a>
+    <a href="/?page=financial/assets-list" class="btn btn-sm">Back to Assets</a>
   </div>
 
   <form id="assetForm" method="post" action="/?page=financial/asset-handler" class="asset-form-grid">
@@ -241,7 +241,7 @@ $selected = static function (string $key, string $value, string $default = '') u
     </section>
 
     <div class="asset-form-actions">
-      <a href="/?page=financial/expenses-list&tab=assets" class="btn">Cancel</a>
+      <a href="/?page=financial/assets-list" class="btn">Cancel</a>
       <button type="submit" class="btn btn-primary"><?php echo $editId > 0 ? 'Update Asset' : 'Create Asset'; ?></button>
     </div>
   </form>

@@ -1,5 +1,5 @@
 <?php
-// src/views/pages/financial/vendors-list.php
+// src/views/pages/financial/_vendors_tab.php (Setup > Vendors)
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/csrf_sf.php';
@@ -28,16 +28,6 @@ $csrf = csrf_token();
 ?>
 
 <section>
-  <div class="expense-ledger__head">
-    <div>
-      <h2 style="margin:0">Vendors</h2>
-      <p class="muted" style="margin:4px 0 0">Manage expense vendors and suppliers</p>
-    </div>
-    <div class="flex">
-      <a href="/?page=financial/vendor-form" class="btn btn-primary">Add Vendor</a>
-    </div>
-  </div>
-
   <?php if (!empty($_GET['success'])): ?>
     <div class="alert alert-success"><?php echo htmlspecialchars($_GET['success']); ?></div>
   <?php elseif (!empty($_GET['error'])): ?>

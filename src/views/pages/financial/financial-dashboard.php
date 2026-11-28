@@ -150,15 +150,12 @@ $avgExpense = $expenseCount > 0 ? $totalExpenses / $expenseCount : 0;
 <section class="finance-dashboard">
   <div class="finance-page-head">
     <div>
-      <p class="finance-eyebrow">Financial workspace</p>
-      <h2>Financial Dashboard</h2>
+      <h2>Financial overview</h2>
       <p class="finance-subtitle"><?php echo finance_dashboard_date($start); ?> to <?php echo finance_dashboard_date($end); ?></p>
     </div>
     <div class="finance-actions">
-      <a href="/?page=financial/expenses-list" class="btn btn-primary">Assets &amp; Expenses</a>
-      <a href="/?page=financial/asset-form" class="btn">Add Asset</a>
-      <a href="/?page=financial/expense-create" class="btn">Add Expense</a>
-      <a href="/?page=financial/expense-report" class="btn">Reports</a>
+      <a href="/?page=financial/reports" class="btn">Reports</a>
+      <?php if (session_user_can($pdo, 'financial.manage')): ?><a href="/?page=financial/expense-create" class="btn btn-primary">+ Add expense</a><?php endif; ?>
     </div>
   </div>
 
@@ -276,7 +273,7 @@ $avgExpense = $expenseCount > 0 ? $totalExpenses / $expenseCount : 0;
     <div class="finance-panel finance-panel--wide">
       <div class="finance-panel__head">
         <h3 class="finance-panel__title">Spending by Category</h3>
-        <a href="/?page=financial/expenses-list&tab=categories" class="btn btn-sm">Manage Categories</a>
+        <a href="/?page=financial/setup&amp;tab=categories" class="btn btn-sm">Categories</a>
       </div>
       <?php if (empty($categories)): ?>
         <p class="dash-empty">No expenses for the selected period.</p>
@@ -304,7 +301,7 @@ $avgExpense = $expenseCount > 0 ? $totalExpenses / $expenseCount : 0;
     <div class="finance-panel">
       <div class="finance-panel__head">
         <h3 class="finance-panel__title">Top Vendors</h3>
-        <a href="/?page=financial/expenses-list&tab=vendors" class="btn btn-sm">Manage</a>
+        <a href="/?page=financial/setup&amp;tab=vendors" class="btn btn-sm">Vendors</a>
       </div>
       <?php if (empty($vendors)): ?>
         <p class="dash-empty">No vendor spending for the selected period.</p>
@@ -327,7 +324,7 @@ $avgExpense = $expenseCount > 0 ? $totalExpenses / $expenseCount : 0;
   <div class="finance-panel">
     <div class="finance-panel__head">
       <h3 class="finance-panel__title">Recent Expenses</h3>
-      <a href="/?page=financial/expenses-list&tab=expenses" class="btn btn-sm">View All</a>
+      <a href="/?page=financial/expenses-list" class="btn btn-sm">All expenses</a>
     </div>
     <?php if (empty($recentExpenses)): ?>
       <p class="dash-empty">No expenses for the selected period.</p>

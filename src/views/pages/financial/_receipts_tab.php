@@ -1,5 +1,5 @@
 <?php
-// src/views/pages/financial/receipts-list.php
+// src/views/pages/financial/_receipts_tab.php (Expenses > Receipts)
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/format.php';
 require_once __DIR__ . '/../../../utils/twig.php';
@@ -76,14 +76,6 @@ if (!in_array($currentYear, $years)) {
 ?>
 
 <section class="expense-ledger receipt-ledger">
-    <div class="expense-ledger__head">
-        <div>
-            <h2>Receipts</h2>
-            <p class="muted">Upload and connect supporting documents to expense records.</p>
-        </div>
-        <div class="finance-actions"><a href="/?page=financial/receipt-upload" class="btn btn-primary">Upload Receipt</a></div>
-    </div>
-
     <?php if (!empty($_GET['created'])): ?>
         <div class="alert alert-success" style="margin-bottom:16px">Receipt uploaded.</div>
     <?php elseif (!empty($_GET['deleted'])): ?>
@@ -113,7 +105,8 @@ if (!in_array($currentYear, $years)) {
     }
     
     $filterConfig = [
-        'page' => 'financial/receipts-list',
+        'page' => 'financial/expenses-list',
+        'hidden' => ['tab' => 'receipts'],
         'filters' => [
             'store' => [
                 'type' => 'select',

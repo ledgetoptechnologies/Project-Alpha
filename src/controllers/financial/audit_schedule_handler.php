@@ -5,8 +5,9 @@ require_once __DIR__ . '/../../utils/csrf.php';
 require_once __DIR__ . '/../../utils/acl.php';
 
 $requestedType = ($_POST['report_type'] ?? 'audit') === 'expense' ? 'expense' : 'audit';
-$redirectPage = $requestedType === 'expense' ? 'financial/expense-report' : 'financial/audit';
-csrf_verify_post_or_redirect($redirectPage);
+// Errors return to the report's tab; saved changes land on the shared Schedules list.
+$redirectPage = 'financial/reports&tab=' . ($requestedType === 'expense' ? 'expense' : 'income');
+csrf_verify_post_or_redirect('financial/reports');
 
 $action = (string)($_POST['action'] ?? 'create');
 $organizationId = request_client_org_id();
@@ -85,7 +86,7 @@ try {
             calculateNextRunTime($frequency),
         ]);
 
-        header('Location: /?page=' . $redirectPage . '&scheduled=1');
+        header('Location: /?page=financial/reports&tab=schedules&scheduled=1');
         exit;
     }
 
@@ -99,7 +100,7 @@ try {
     if ($storedType === false) {
         throw new RuntimeException('Schedule not found.');
     }
-    $redirectPage = $storedType === 'expense' ? 'financial/expense-report' : 'financial/audit';
+    $redirectPage = 'financial/reports&tab=schedules';
     // The posted report_type is only a hint; authorize against the stored schedule.
     $requireSchedulePermission((string)$storedType, $redirectPage);
 

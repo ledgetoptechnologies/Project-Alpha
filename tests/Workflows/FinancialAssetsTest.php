@@ -74,42 +74,51 @@ final class FinancialAssetsTest extends TestCase
         self::assertStringContainsString('category_id', $categoryHandler);
         self::assertStringContainsString("'name' => \$name", $categoryHandler);
 
-        $categories = $this->read('src/views/pages/financial/categories-list.php');
-        self::assertStringContainsString('onclick="createCategory()"', $categories);
+        $categories = $this->read('src/views/pages/financial/_categories_tab.php');
+        self::assertStringContainsString("'onclick' => 'createCategory()'", $this->read('src/views/pages/financial/setup.php'));
         self::assertStringContainsString('id="categoryAction"', $categories);
         self::assertStringContainsString('window.createCategory', $categories);
         self::assertStringNotContainsString('/?page=financial/vendor-form" class="btn btn-primary">+ Add Category', $categories);
     }
 
-    public function testAssetsAreExposedInFinancialHubUi(): void
+    public function testFinancialNavIsOverviewExpensesAssetsReportsSetup(): void
     {
-        $hub = $this->read('src/views/pages/financial/expenses-list.php');
-        $dashboard = $this->read('src/views/pages/financial/financial-dashboard.php');
         $nav = $this->read('src/views/partials/header.php');
-        $overview = $this->read('src/views/pages/financial/_overview_tab.php');
+        $labels = [];
+        preg_match_all('#<li><a href="/\?page=financial/[^"]+" data-page="[^"]+"(?: data-match="[^"]+")?>([^<]+)</a></li>#', $nav, $m);
+        self::assertSame(['Overview', 'Expenses', 'Assets', 'Reports', 'Setup', 'Forms &amp; Docs'], $m[1]);
+        self::assertStringContainsString('data-page="financial/assets-list" data-match="financial/asset"', $nav);
+        self::assertStringContainsString('data-page="financial/setup" data-match="financial/vendor financial/category"', $nav);
+        self::assertStringNotContainsString('Assets &amp; Expenses', $nav);
 
-        self::assertStringContainsString("'overview'   => ['label' => 'Overview'", $hub);
-        self::assertStringContainsString("'assets'     => ['label' => 'Assets'", $hub);
-        self::assertStringContainsString('Assets &amp; Expenses', $hub);
-        self::assertStringContainsString('financial_assets', $hub);
-        self::assertStringContainsString("\$active = \$_GET['tab'] ?? 'overview';", $hub);
-        self::assertStringContainsString("include __DIR__ . '/' . \$tabs[\$active]['file'];", $hub);
-        self::assertStringNotContainsString('foreach ($tabs as $id => $t): ?>' . PHP_EOL . '    <div class="expenses-hub__panel', $hub);
-        self::assertStringNotContainsString("asset_url('/assets/js/expenses-hub.js')", $hub);
-        self::assertStringContainsString('Financial hub tab', $hub);
-        self::assertStringContainsString('href="/?page=financial/expenses-list" class="btn btn-primary">Assets &amp; Expenses', $dashboard);
-        self::assertStringContainsString('href="/?page=financial/expenses-list" data-page="financial/expenses-list">Assets &amp; Expenses', $nav);
-        self::assertStringContainsString('asset_purchase_cost', $overview);
-        self::assertStringContainsString('expense_total', $overview);
-        self::assertStringContainsString('mileage_miles', $overview);
-        self::assertStringContainsString('Recurring schedules and receipts support the expense ledger', $overview);
+        $navigation = $this->read('public/assets/navigation.js');
+        self::assertStringContainsString("prefixes.some(prefix => normalizedPage.startsWith(prefix))", $navigation);
 
-        $tab = $this->read('src/views/pages/financial/_assets_tab.php');
-        self::assertStringContainsString('financial_asset_depreciation', $tab);
-        self::assertStringContainsString('Monthly Depreciation', $tab);
-        self::assertStringContainsString('Book Value', $tab);
+        $acl = $this->read('src/utils/acl_middleware.php');
+        foreach (['assets-list', 'reports', 'setup', 'mileage-export'] as $page) {
+            self::assertStringContainsString("'financial/{$page}'", $acl);
+        }
+    }
 
-        self::assertStringContainsString('Assets &amp; Expenses', $nav);
+    public function testTabbedFinancialPagesShareOneShell(): void
+    {
+        foreach (['expenses-list.php' => ['expenses', 'recurring', 'receipts', 'mileage'], 'reports.php' => ['income', 'expense', 'mileage', 'schedules'], 'setup.php' => ['vendors', 'categories', 'rates']] as $file => $tabs) {
+            $page = $this->read('src/views/pages/financial/' . $file);
+            self::assertStringContainsString("include __DIR__ . '/_tab_shell.php';", $page, $file);
+            foreach ($tabs as $tab) {
+                self::assertMatchesRegularExpression("#'{$tab}' => \[|\['{$tab}'\] = \[#", $page, $file . ' ' . $tab);
+            }
+        }
+        $shell = $this->read('src/views/pages/financial/_tab_shell.php');
+        self::assertStringContainsString('class="doc-tabs"', $shell);
+        self::assertStringContainsString('Financial tab', $shell);
+        self::assertStringNotContainsString('<b>', $shell);
+
+        $assets = $this->read('src/views/pages/financial/assets-list.php');
+        self::assertStringContainsString('financial_asset_depreciation', $assets);
+        self::assertStringContainsString('year_depreciation', $assets);
+        self::assertStringContainsString('Book Value', $assets);
+        self::assertStringContainsString('name="page" value="financial/assets-list"', $assets);
     }
 
     public function testAssetCreateAndDetailPagesIncludeLifecycleAndDepreciationControls(): void
@@ -179,33 +188,30 @@ final class FinancialAssetsTest extends TestCase
         self::assertStringContainsString('function finance_scope_clause', $acl);
 
         foreach ([
-            'src/views/pages/financial/expenses-list.php',
             'src/views/pages/financial/_expenses_tab.php',
-            'src/views/pages/financial/_assets_tab.php',
-            'src/views/pages/financial/_overview_tab.php',
+            'src/views/pages/financial/assets-list.php',
             'src/views/pages/financial/financial-dashboard.php',
-            'src/views/pages/financial/expense-report.php',
+            'src/views/pages/financial/_expense_report_tab.php',
             'src/controllers/financial/expense_export.php',
         ] as $path) {
             self::assertStringContainsString('finance_scope_clause', $this->read($path), $path);
         }
     }
 
-    public function testFinancialHubUsesOneConsistentActionHeaderPerTab(): void
+    public function testEachTabHasOneAddButtonInThePageHeader(): void
     {
-        $hub = $this->read('src/views/pages/financial/expenses-list.php');
-        self::assertStringNotContainsString('<div class="finance-actions">', $hub);
-
-        foreach ([
-            '_overview_tab.php', '_assets_tab.php', '_expenses_tab.php', '_recurring_expenses_tab.php',
-            'receipts-list.php', 'mileage-list.php', 'vendors-list.php', 'categories-list.php', 'audit.php',
-        ] as $file) {
-            self::assertStringContainsString('expense-ledger__head', $this->read('src/views/pages/financial/' . $file), $file);
+        $expenses = $this->read('src/views/pages/financial/expenses-list.php');
+        foreach (['+ Add expense', '+ Add recurring expense', '+ Upload receipt', '+ Log trip'] as $label) {
+            self::assertSame(1, substr_count($expenses, "'{$label}'"), $label);
         }
-        self::assertSame(1, substr_count($this->read('src/views/pages/financial/_assets_tab.php'), '>Add Asset</a>'));
-        self::assertSame(1, substr_count($this->read('src/views/pages/financial/_expenses_tab.php'), '>Add Expense</a>'));
-        self::assertSame(1, substr_count($this->read('src/views/pages/financial/_recurring_expenses_tab.php'), '>Add Recurring Expense</a>'));
-        self::assertSame(1, substr_count($this->read('src/views/pages/financial/receipts-list.php'), '>Upload Receipt</a>'));
+        foreach (['_expenses_tab.php', '_recurring_expenses_tab.php', '_receipts_tab.php', '_vendors_tab.php', '_categories_tab.php', '_mileage_rates_tab.php'] as $file) {
+            $source = $this->read('src/views/pages/financial/' . $file);
+            self::assertStringNotContainsString('expense-ledger__head', $source, $file);
+            self::assertStringNotContainsString('Back to Mileage', $source, $file);
+        }
+        foreach (['audit.php', 'expense-report.php', '_overview_tab.php', '_assets_tab.php', 'receipts-list.php', 'vendors-list.php', 'categories-list.php', 'mileage-settings.php'] as $retired) {
+            self::assertFileDoesNotExist($this->root . '/src/views/pages/financial/' . $retired);
+        }
     }
 
     private function read(string $relativePath): string

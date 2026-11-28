@@ -58,10 +58,10 @@ final class WorkerDocumentsAndMileageOwnershipTest extends TestCase
         $handler = $this->source('src/controllers/financial/mileage_handler.php');
         self::assertStringContainsString('recorded_by_user_id,traveler_user_id', $handler);
 
-        $list = $this->source('src/views/pages/financial/mileage-list.php');
-        self::assertStringContainsString("\$driver=(string)(\$_GET['driver']??'mine')", $list);
+        $list = $this->source('src/utils/mileage.php');
+        self::assertStringContainsString("\$driver = \$allDrivers ? (string)(\$filters['driver'] ?? 'mine') : 'mine';", $list);
         self::assertStringContainsString('traveler_user_id', $list);
-        self::assertStringContainsString('This page defaults to your mileage', $list);
+        self::assertStringContainsString("\$driverContext='My mileage';", $this->source('src/views/pages/financial/mileage-list.php'));
     }
 
     public function testGoogleEmailRemainsOutboundOnly(): void

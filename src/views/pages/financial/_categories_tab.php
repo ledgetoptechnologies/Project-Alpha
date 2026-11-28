@@ -1,5 +1,5 @@
 <?php
-// src/views/pages/financial/categories-list.php
+// src/views/pages/financial/_categories_tab.php (Setup > Categories)
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../../utils/csrf_sf.php';
@@ -24,16 +24,6 @@ $csrf = csrf_token();
 ?>
 
 <section>
-  <div class="expense-ledger__head">
-    <div>
-      <h2 style="margin:0">Expense Categories</h2>
-      <p class="muted" style="margin:4px 0 0">Manage expense categories and IRS Schedule C defaults</p>
-    </div>
-    <div class="flex">
-      <button type="button" class="btn btn-primary" onclick="createCategory()">Add Category</button>
-    </div>
-  </div>
-
   <?php if (!empty($_GET['success'])): ?>
     <div class="alert alert-success"><?php echo htmlspecialchars($_GET['success']); ?></div>
   <?php elseif (!empty($_GET['error'])): ?>

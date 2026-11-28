@@ -80,7 +80,7 @@ $payload=[
 <section class="mileage-editor" data-mileage-editor data-mileage-payload="<?php echo htmlspecialchars(json_encode($payload),ENT_QUOTES,'UTF-8'); ?>">
   <div class="page-head">
     <div><h2><?php echo $editMode?'Edit Mileage Entry':($trackingDraft?'Review GPS Trip':'Log Mileage'); ?></h2><p class="muted"><?php echo $trackingDraft?'Confirm the tracked distance and client charges before finalizing this trip.':'Record the physical trip once, then add a separate charge for each client served.'; ?></p></div>
-    <a href="/?page=financial/mileage-list" class="btn">Back to Mileage</a>
+    <a href="<?php echo htmlspecialchars(mileage_list_url($pdo,(int)($_SESSION['user']['id']??0))); ?>" class="btn">Back to Mileage</a>
   </div>
   <?php if(!empty($_GET['error'])): ?><div class="alert alert-danger"><?php echo htmlspecialchars((string)$_GET['error']); ?></div><?php endif; ?>
   <form id="mileageForm" method="post" action="/?page=financial/mileage-handler" style="display:grid;gap:18px;max-width:1050px">
@@ -117,7 +117,7 @@ $payload=[
       <div id="noMileageAllocations" class="muted" style="padding:18px;text-align:center">No client travel charges. Only the physical mileage will be recorded.</div>
       <div id="allocationGrandTotal" class="card card-tight" style="display:none;margin-top:14px"><span class="label-muted">Total client travel charges</span><strong style="font-size:22px">$<span>0.00</span></strong></div>
     </div><?php endif; ?>
-    <div style="display:flex;gap:10px"><button class="btn btn-primary" type="submit"><?php echo $editMode?'Update Mileage':'Save Mileage'; ?></button><a class="btn" href="/?page=financial/mileage-list">Cancel</a></div>
+    <div style="display:flex;gap:10px"><button class="btn btn-primary" type="submit"><?php echo $editMode?'Update Mileage':'Save Mileage'; ?></button><a class="btn" href="<?php echo htmlspecialchars(mileage_list_url($pdo,(int)($_SESSION['user']['id']??0))); ?>">Cancel</a></div>
   </form>
 </section>
 <script src="<?php echo htmlspecialchars(asset_url('/assets/js/mileage-editor.js'),ENT_QUOTES,'UTF-8'); ?>" defer></script>

@@ -10,7 +10,7 @@ $orgId = request_client_org_id();
 $userId = (int)($_SESSION['user']['id'] ?? 0);
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
-    header('Location: /?page=financial/expenses-list&tab=assets');
+    header('Location: /?page=financial/assets-list');
     exit;
 }
 
@@ -28,7 +28,7 @@ $stmt = $pdo->prepare('
 $stmt->execute(array_merge([$id], $assetScopeParams));
 $asset = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$asset) {
-    header('Location: /?page=financial/expenses-list&tab=assets');
+    header('Location: /?page=financial/assets-list');
     exit;
 }
 
@@ -48,7 +48,7 @@ $linkedExpenseTotal = (float)($asset['linked_expense_total'] ?? $asset['linked_e
     </div>
     <div class="finance-actions">
       <a href="/?page=financial/asset-form&id=<?php echo $id; ?>" class="btn btn-primary">Edit Asset</a>
-      <a href="/?page=financial/expenses-list&tab=assets" class="btn">Back to Assets</a>
+      <a href="/?page=financial/assets-list" class="btn">Back to Assets</a>
     </div>
   </div>
 

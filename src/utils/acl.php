@@ -145,6 +145,16 @@ function user_permissions(PDO $pdo, int $userId, ?int $organizationId = null): a
     return $permissions;
 }
 
+/** Permission check for the signed-in user; admins always pass (same rule as the nav). */
+function session_user_can(PDO $pdo, string $permission): bool
+{
+    if (($_SESSION['user']['role'] ?? '') === 'admin') {
+        return true;
+    }
+    $userId = (int)($_SESSION['user']['id'] ?? 0);
+    return $userId > 0 && user_can($pdo, $userId, $permission, 0);
+}
+
 function user_can(PDO $pdo, int $userId, string $permission, ?int $organizationId = null): bool
 {
     $perms = user_permissions($pdo, $userId, $organizationId);
