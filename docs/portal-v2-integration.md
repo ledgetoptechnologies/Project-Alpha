@@ -22,7 +22,9 @@ Project Alpha remains the authoritative source for organizations, departments, c
    client email becomes their portal login. A payer the payment-processor import
    created stays review-required (`imported_payer`, recorded in
    `client_creation_origins` by migration 0119) whatever its type, `consumer`
-   included. Clients created through the API-v2
+   included. This hold applies to clients with no organization; once staff link
+   a client to an organization, the organization root governs it. Clients
+   created through the API-v2
    directory create command are staff-driven (Operations staff create them and
    choose the type) and are treated like staff-added clients. Missing, invalid or duplicate emails, principal
    conflicts and manual revocations stay review-required or revoked. Project
