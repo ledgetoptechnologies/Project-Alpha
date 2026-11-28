@@ -126,7 +126,7 @@ final class ProcessorImportTest extends TestCase
         self::assertStringContainsString('function payment_accounting_net_income_expr', $helper);
         self::assertStringContainsString('processor_net_amount', $helper);
         self::assertStringContainsString('payment_accounting_net_income_expr', $home);
-        self::assertStringContainsString('payment_accounting_net_income_expr', $dashboard);
+        self::assertStringContainsString('payment_accounting_collected_payments', $dashboard);
         self::assertStringContainsString('payment_accounting_net_income_expr', $api);
         self::assertStringContainsString('payment_accounting_net_income_expr', $dashboardApi);
         self::assertStringContainsString('Net Received', $paymentsList);
