@@ -1201,3 +1201,42 @@ a.doc-chain__step:hover{background:#f9fafb}
   .fin-page .doc-tabs{flex-wrap:nowrap;overflow-x:auto}
   .fin-page .doc-tabs a{white-space:nowrap}
 }
+
+/* Billing redesign 3: one New form for quotes, contracts and invoices (document/new) */
+.doc-new{display:grid;gap:16px;max-width:960px}
+.doc-new [hidden]{display:none!important}
+.doc-new-form{display:grid;gap:16px;min-width:0}
+.doc-new-form .card-title{margin-bottom:12px}
+.doc-new-grid{display:grid;gap:0 12px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:start}
+.doc-new-end{justify-content:flex-end;align-self:end}
+.doc-new-kinds{display:grid;gap:10px;grid-template-columns:repeat(3,minmax(0,1fr))}
+.doc-new-kind{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid #ddd;border-radius:10px;background:#fff;color:inherit;text-decoration:none;cursor:pointer}
+.doc-new-kind input{position:absolute;opacity:0;pointer-events:none}
+.doc-new-kind span{font-size:13px;color:var(--muted)}
+.doc-new-kind:has(input:checked){border-color:var(--nav-accent);box-shadow:inset 0 0 0 1px var(--nav-accent);background:#f0f9ff}
+.doc-new-kind:has(input:focus-visible){outline:2px solid var(--nav-accent);outline-offset:2px}
+a.doc-new-kind{border-style:dashed}
+.doc-new-flow{margin:12px 0 0;font-size:14px}
+.doc-new-suggest{position:absolute;z-index:60;left:0;right:0;top:100%;background:#fff;border:1px solid #eee;border-radius:8px;max-height:220px;overflow:auto}
+.doc-new-suggest > div{padding:8px 10px;cursor:pointer}
+.doc-new-suggest > div:hover{background:#f9fafb}
+.doc-new-suggest small{display:block;color:var(--muted)}
+.doc-new-choice{border:0;padding:0;margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px 20px}
+.doc-new-choice legend{padding:0;margin-bottom:6px}
+.doc-new-choice label{display:flex;align-items:center;gap:6px;font-size:14px}
+.doc-new-item{display:grid;grid-template-columns:3fr 3fr 1fr 1fr 1fr auto;gap:8px;align-items:start}
+.doc-new-item textarea{resize:vertical;min-height:42px}
+.doc-new-signature{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center}
+.doc-new-signature label{display:flex;align-items:center;gap:6px;font-size:13px}
+.doc-new-more > summary{cursor:pointer;font-weight:600}
+.doc-new-more[open] > summary{margin-bottom:12px}
+.doc-new-check{flex-direction:row;align-items:center;gap:8px;align-self:end;font-size:14px}
+.doc-new-totals{display:grid;gap:6px;justify-content:end;font-variant-numeric:tabular-nums}
+.doc-new-totals > div{display:grid;grid-template-columns:140px 120px;gap:16px;text-align:right}
+.doc-new-totals > div > span:first-child{color:var(--muted)}
+.doc-new-totals .doc-new-grand{font-weight:700}
+.doc-new-totals .doc-new-grand > span:first-child{color:inherit}
+.doc-new-deposit{border-top:1px solid var(--border);padding-top:6px;font-weight:700;color:#059669}
+.doc-new-total-row{display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid #a7f3d0;border-radius:8px;background:#ecfdf5;color:#065f46;font-weight:600}
+.doc-new-actions{display:flex;gap:10px;flex-wrap:wrap}
+@media (max-width:700px){.doc-new-kinds{grid-template-columns:1fr}.doc-new-item{grid-template-columns:1fr 1fr;padding-bottom:8px;border-bottom:1px solid var(--border)}.doc-new-item > input:first-child,.doc-new-item textarea{grid-column:1/-1}.doc-new [id^="customFieldsRow"]{grid-template-columns:1fr!important}.doc-new-totals{justify-content:stretch}.doc-new-totals > div{grid-template-columns:1fr auto}}

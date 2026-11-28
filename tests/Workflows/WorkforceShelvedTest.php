@@ -32,8 +32,8 @@ final class WorkforceShelvedTest extends TestCase
 
     public function testDocumentClientAndHistoricalBillingRoutesRemainAvailable(): void
     {
-        foreach (['invoice/invoices-create', 'invoice/invoices-update', 'public-doc',
-            'quote/quotes-create', 'contract/contracts-create', 'project/projects-details',
+        foreach (['document/new', 'invoice/invoices-update', 'public-doc',
+            'project/projects-details',
             'api/financial-summary', 'client/clients-update', 'financial/mileage-tracking-api'] as $page) {
             self::assertFalse(pa_workforce_page_shelved($page), $page);
         }

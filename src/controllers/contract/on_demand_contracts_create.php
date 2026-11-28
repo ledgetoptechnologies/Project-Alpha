@@ -1,6 +1,7 @@
 <?php
 // src/controllers/contract/on_demand_contracts_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_new.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_selection.php';
 require_once __DIR__ . '/../../utils/contract_signatures.php';
@@ -13,6 +14,7 @@ require_once __DIR__ . '/../../services/DocumentRevisionService.php';
 require_once __DIR__ . '/../../services/ProjectContractEligibilityGuardService.php';
 
 @error_log('[on_demand_contracts_create] POST received', 0);
+$newDocumentUrl = document_new_url('contract', 'on_demand');
 
 $client_id = (int)($_POST['client_id'] ?? 0);
 $project_id = !empty($_POST['project_id']) ? (int)$_POST['project_id'] : null;
@@ -55,11 +57,11 @@ if ($client_id <= 0) {
 
 if ($client_id <= 0) {
     @error_log('[on_demand_contracts_create] invalid client_id', 0);
-    header('Location: /?page=contract/contracts-create&error=Please%20select%20a%20client');
+    header('Location: ' . $newDocumentUrl . '&error=Please%20select%20a%20client');
     exit;
 }
 if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
-    header('Location: /?page=contract/contracts-create&error=' . urlencode('Select an active or not-started project for this client or organization.'));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Select an active or not-started project for this client or organization.'));
     exit;
 }
 
@@ -69,11 +71,11 @@ $hasLineItems = $od_pricing_mode === 'items'
     && is_array($_POST['item'])
     && count(array_filter($_POST['item'], static fn($value) => trim((string)$value) !== '')) > 0;
 if ($od_pricing_mode === 'flat' && $price_per_invoice <= 0) {
-    header('Location: /?page=contract/contracts-create&error=Enter%20a%20flat%20contract%20amount');
+    header('Location: ' . $newDocumentUrl . '&error=Enter%20a%20flat%20contract%20amount');
     exit;
 }
 if (!$hasLineItems && $price_per_invoice <= 0) {
-    header('Location: /?page=contract/contracts-create&error=Please%20add%20items%20or%20enter%20a%20flat%20amount');
+    header('Location: ' . $newDocumentUrl . '&error=Please%20add%20items%20or%20enter%20a%20flat%20amount');
     exit;
 }
 
@@ -222,7 +224,7 @@ try{
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[on_demand_contracts_create] exception: '.$e->getMessage(), 0);
     $msg = substr($e->getMessage(), 0, 200);
-    header('Location: /?page=contract/contracts-create&error=' . urlencode($msg));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode($msg));
     exit;
 }
 

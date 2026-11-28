@@ -76,11 +76,9 @@ final class TaxImportBackendTest extends TestCase
     public function testTaxLookupWorkflowIsWiredIntoDocumentPages(): void
     {
         $pages = [
-            '/src/views/pages/quote/quotes-create.php',
+            '/src/views/pages/document/new.php',
             '/src/views/pages/quote/quotes-edit.php',
-            '/src/views/pages/invoice/invoices-create.php',
             '/src/views/pages/invoice/invoices-edit.php',
-            '/src/views/pages/contract/contracts-create.php',
             '/src/views/pages/contract/contracts-edit.php',
         ];
 

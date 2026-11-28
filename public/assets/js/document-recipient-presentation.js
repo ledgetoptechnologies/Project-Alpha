@@ -55,11 +55,9 @@
 
     if (window.ProjectAlpha && typeof window.ProjectAlpha.registerPage === 'function') {
         window.ProjectAlpha.registerPage([
-            'invoice/invoices-create',
+            'document/new',
             'invoice/invoices-edit',
-            'quote/quotes-create',
             'quote/quotes-edit',
-            'contract/contracts-create',
             'contract/contracts-edit'
         ], initDocumentRecipientPresentation);
     } else if (document.readyState === 'loading') {

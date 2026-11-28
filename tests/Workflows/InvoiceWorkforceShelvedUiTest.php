@@ -10,7 +10,7 @@ final class InvoiceWorkforceShelvedUiTest extends TestCase
 {
     public function testCreateDoesNotRenderNewTimeOrMileageImportsWhileShelved(): void
     {
-        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/src/views/pages/invoice/invoices-create.php');
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/src/views/pages/document/new.php');
         $guard = '<?php if (pa_workforce_enabled()): ?>';
         $buttonsStart = strpos($source, $guard);
         self::assertNotFalse($buttonsStart);

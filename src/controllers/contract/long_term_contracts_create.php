@@ -1,6 +1,7 @@
 <?php
 // src/controllers/contract/long_term_contracts_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_new.php';
 require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_selection.php';
@@ -15,6 +16,7 @@ require_once __DIR__ . '/../../services/DocumentRevisionService.php';
 require_once __DIR__ . '/../../services/ProjectContractEligibilityGuardService.php';
 
 @error_log('[long_term_contracts_create] POST received', 0);
+$newDocumentUrl = document_new_url('contract', 'long_term');
 
 $client_id = (int)($_POST['client_id'] ?? 0);
 $project_id = !empty($_POST['project_id']) ? (int)$_POST['project_id'] : null;
@@ -46,7 +48,7 @@ try {
     pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
     $price_per_invoice = $recurringRate['amount'];
 } catch (DomainException|InvalidArgumentException $e) {
-    header('Location: /?page=contract/contracts-create&error=' . rawurlencode($e->getMessage())); exit;
+    header('Location: ' . $newDocumentUrl . '&error=' . rawurlencode($e->getMessage())); exit;
 }
 $invoice_count_posted = ($pricing_type === 'fixed_total') ? max(1, (int)($_POST['invoice_count'] ?? 1)) : null;
 $scope = trim((string)($_POST['scope'] ?? ''));
@@ -92,16 +94,16 @@ if ($client_id <= 0) {
 
 if ($client_id <= 0) {
     @error_log('[long_term_contracts_create] invalid client_id', 0);
-    header('Location: /?page=contract/contracts-create&error=Please%20select%20a%20client');
+    header('Location: ' . $newDocumentUrl . '&error=Please%20select%20a%20client');
     exit;
 }
 if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
-    header('Location: /?page=contract/contracts-create&error=' . urlencode('Select an active or not-started project for this client or organization.'));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Select an active or not-started project for this client or organization.'));
     exit;
 }
 
 if (!$start_date) {
-    header('Location: /?page=contract/contracts-create&error=Start%20date%20is%20required%20for%20long-term%20contracts');
+    header('Location: ' . $newDocumentUrl . '&error=Start%20date%20is%20required%20for%20long-term%20contracts');
     exit;
 }
 
@@ -131,13 +133,13 @@ if ($pricing_type === 'fixed_total') {
         $items[] = ['i'=>$itm, 'd'=>$d, 'q'=>$q, 'p'=>$p, 't'=>$line, 'u'=>$unit,'catalog_id'=>max(0,(int)($catalogIds[$i]??0))];
     }
     if(!$items){
-        header('Location: /?page=contract/contracts-create&error=Add%20at%20least%20one%20item%20for%20fixed%20total%20pricing');
+        header('Location: ' . $newDocumentUrl . '&error=Add%20at%20least%20one%20item%20for%20fixed%20total%20pricing');
         exit;
     }
 } else {
     // Per invoice pricing - use price_per_invoice as subtotal
     if ($price_per_invoice <= 0) {
-        header('Location: /?page=contract/contracts-create&error=Price%20per%20invoice%20must%20be%20greater%20than%200');
+        header('Location: ' . $newDocumentUrl . '&error=Price%20per%20invoice%20must%20be%20greater%20than%200');
         exit;
     }
     $subtotal = $price_per_invoice;
@@ -262,7 +264,7 @@ try{
     if ($pdo->inTransaction()) $pdo->rollBack();
     @error_log('[long_term_contracts_create] exception: '.$e->getMessage(), 0);
     $msg = substr($e->getMessage(), 0, 200);
-    header('Location: /?page=contract/contracts-create&error=' . urlencode($msg));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode($msg));
     exit;
 }
 

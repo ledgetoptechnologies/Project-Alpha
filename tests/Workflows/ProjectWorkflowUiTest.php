@@ -377,7 +377,7 @@ final class ProjectWorkflowUiTest extends TestCase
 
     public function testInvoiceCreateCanSaveWithoutSendingOrSaveAndSend(): void
     {
-        $view = file_get_contents($this->root . '/src/views/pages/invoice/invoices-create.php');
+        $view = file_get_contents($this->root . '/src/views/pages/document/new.php');
         $controller = file_get_contents($this->root . '/src/controllers/invoice/invoices_create.php');
         $updateController = file_get_contents($this->root . '/src/controllers/invoice/invoices_update.php');
         $unbilledTime = file_get_contents($this->root . '/src/controllers/time-tracking/time_entries_unbilled.php');
@@ -400,7 +400,7 @@ final class ProjectWorkflowUiTest extends TestCase
     public function testDocumentsCanAttachToActiveOrNotStartedProjects(): void
     {
         $projectSelection = file_get_contents($this->root . '/src/utils/project_selection.php');
-        $contractCreate = file_get_contents($this->root . '/src/views/pages/contract/contracts-create.php');
+        $contractCreate = file_get_contents($this->root . '/src/views/pages/document/new.php');
         $contractEdit = file_get_contents($this->root . '/src/views/pages/contract/contracts-edit.php');
         $contractEditScript = file_get_contents($this->root . '/public/assets/js/contracts-edit-logic.js');
         $contractUpdate = file_get_contents($this->root . '/src/controllers/contract/contracts_update.php');
@@ -516,7 +516,7 @@ final class ProjectWorkflowUiTest extends TestCase
     {
         $baseline = file_get_contents($this->root . '/database/baseline.sql');
         $migration = file_get_contents($this->root . '/database/migrations/0010_long_term_billing_start_mode.sql');
-        $createView = file_get_contents($this->root . '/src/views/pages/contract/contracts-create.php');
+        $createView = file_get_contents($this->root . '/src/views/pages/document/new.php');
         $ltCreate = file_get_contents($this->root . '/src/controllers/contract/long_term_contracts_create.php');
         $sign = file_get_contents($this->root . '/src/controllers/public_view/public_contract_sign.php');
         $start = file_get_contents($this->root . '/src/controllers/contract/long_term_contract_start_billing.php');
@@ -541,7 +541,8 @@ final class ProjectWorkflowUiTest extends TestCase
 
         self::assertStringContainsString("billing_start_mode ENUM('on_upload','manual')", (string)$baseline);
         self::assertStringContainsString('ADD COLUMN billing_start_mode', (string)$migration);
-        self::assertStringContainsString('name="billing_start_mode" value="on_upload" checked', (string)$createView);
+        self::assertStringContainsString('<select class="input" name="billing_start_mode">
+            <option value="on_upload">', (string)$createView);
         self::assertStringContainsString('$next_invoice_date = null;', (string)$ltCreate);
         self::assertStringContainsString('pa_long_term_starts_billing_on_upload($contract)', (string)$sign);
         self::assertStringContainsString('generate_recurring_invoice($pdo, $contract, $appConfig)', (string)$start);

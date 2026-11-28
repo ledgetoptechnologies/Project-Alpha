@@ -1,6 +1,7 @@
 <?php
 // src/controllers/quotes_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_new.php';
 require_once __DIR__ . '/../../utils/document_recurring_rate.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/project_id.php';
@@ -40,6 +41,7 @@ $quote_type = in_array($doc_type, ['regular', 'long_term', 'on_demand'], true) ?
 $is_long_term = ($quote_type === 'long_term') ? 1 : 0;
 $is_on_demand = ($quote_type === 'on_demand') ? 1 : 0;
 $od_pricing_mode = 'items';
+$newDocumentUrl = document_new_url('quote', $quote_type);
 
 // Only process long-term/on-demand fields if not regular
 if ($is_long_term) {
@@ -81,7 +83,7 @@ if ($is_long_term) {
         pa_document_recurring_rate_validate_period($recurringRate, $billing_interval_count, $billing_interval_unit, $start_date, $end_date);
         $price_per_invoice = $recurringRate['amount'];
     } catch (DomainException|InvalidArgumentException $e) {
-        header('Location: /?page=quote/quotes-create&error=' . rawurlencode($e->getMessage())); exit;
+        header('Location: ' . $newDocumentUrl . '&error=' . rawurlencode($e->getMessage())); exit;
     }
 }
 $item = $_POST['item'] ?? [];
@@ -94,11 +96,11 @@ $travelRule = mileage_rule_from_post($_POST, ['rate'=>(float)($appConfig['defaul
 
 // Validate client_id
 if ($client_id <= 0) {
-    header('Location: /?page=quote/quotes-create&error=Please%20select%20a%20client');
+    header('Location: ' . $newDocumentUrl . '&error=Please%20select%20a%20client');
     exit;
 }
 if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
-    header('Location: /?page=quote/quotes-create&error=' . urlencode('Select an active or not-started project for this client or organization.'));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Select an active or not-started project for this client or organization.'));
     exit;
 }
 $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId);
@@ -112,7 +114,7 @@ $requires_items = !($is_long_term && $pricing_type === 'per_invoice')
                && !($is_on_demand && ($od_pricing_mode === 'flat' || $od_flat_amount > 0));
 
 if ($requires_items && empty($item)) {
-    header('Location: /?page=quote/quotes-create&error=Add%20at%20least%20one%20item');
+    header('Location: ' . $newDocumentUrl . '&error=Add%20at%20least%20one%20item');
     exit;
 }
 
@@ -125,7 +127,7 @@ if ($is_long_term && $pricing_type === 'per_invoice') {
 } elseif ($is_on_demand && $od_pricing_mode === 'flat') {
     $subtotal = $od_flat_amount;
     if ($subtotal <= 0) {
-        header('Location: /?page=quote/quotes-create&error=Enter%20a%20flat%20quote%20amount');
+        header('Location: ' . $newDocumentUrl . '&error=Enter%20a%20flat%20quote%20amount');
         exit;
     }
 } elseif ($is_on_demand) {
@@ -161,7 +163,7 @@ if ($is_long_term && $pricing_type === 'per_invoice') {
         $items[] = ['item' => $itm, 'description' => $d, 'quantity' => $q, 'unit_price' => $p, 'line_total' => $line, 'billing_unit' => $unit, 'catalog_id' => max(0,(int)($catalogIds[$i]??0))];
     }
     if (!$items) {
-        header('Location: /?page=quote/quotes-create&error=Add%20at%20least%20one%20item');
+        header('Location: ' . $newDocumentUrl . '&error=Add%20at%20least%20one%20item');
         exit;
     }
 }
@@ -239,7 +241,7 @@ try {
 
     error_log($e);
 
-    header('Location: /?page=quote/quotes-create&error=Failed%20to%20create%20quote');
+    header('Location: ' . $newDocumentUrl . '&error=Failed%20to%20create%20quote');
     exit;
 }
 

@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/contract_billing_start.php';
 require_once __DIR__ . '/../../components/document_list.php';
+require_once __DIR__ . '/../../../utils/document_new.php';
 
 $page = 'contract/contracts-list';
 $kind = doc_list_kind();
@@ -93,7 +94,7 @@ $hasAsNeeded = false;
   <?php doc_list_render_top([
       'title' => 'Contracts',
       'page' => $page,
-      'new_url' => $canCreate ? '/?page=contract/contracts-create' : null,
+      'new_url' => $canCreate ? document_new_url('contract', doc_list_kind()) : null,
       'new_label' => '+ New contract',
       'statuses' => $statuses,
       'status' => $status,

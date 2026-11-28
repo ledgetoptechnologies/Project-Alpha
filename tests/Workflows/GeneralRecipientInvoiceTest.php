@@ -74,7 +74,7 @@ final class GeneralRecipientInvoiceTest extends TestCase
     public function testNormalCreateFlowDoesNotExposeAnonymousRecipientMode(): void
     {
         $root = dirname(__DIR__, 2);
-        $view = (string)file_get_contents($root . '/src/views/pages/invoice/invoices-create.php');
+        $view = (string)file_get_contents($root . '/src/views/pages/document/new.php');
         $controller = (string)file_get_contents($root . '/src/controllers/invoice/invoices_create.php');
 
         self::assertStringNotContainsString('id="generalRecipientInvoice"', $view);
@@ -125,7 +125,7 @@ final class GeneralRecipientInvoiceTest extends TestCase
     public function testCreateScreenUsesOnlyNormalProjectSelectionWhileHistoricalGeneralInvoicesRemainSupported(): void
     {
         $root = dirname(__DIR__, 2);
-        $createView = (string)file_get_contents($root . '/src/views/pages/invoice/invoices-create.php');
+        $createView = (string)file_get_contents($root . '/src/views/pages/document/new.php');
         $createScript = (string)file_get_contents($root . '/public/assets/js/invoices-create-logic.js');
         $detailView = (string)file_get_contents($root . '/src/views/pages/invoice/invoice-details.php');
 

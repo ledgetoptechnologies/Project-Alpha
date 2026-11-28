@@ -1130,9 +1130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'project/project-work-handler',
         'project-notes-update',
 
+        // New quote, contract or invoice
+        'document/new',
+
         // Quotes
-        'quote/quotes-create',
-        'quotes-create',
         'quote/quotes-update',
         'quotes-update',
         'quote/quote-approve',
@@ -1141,8 +1142,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'quote/email-send',
 
         // Contracts
-        'contract/contracts-create',
-        'contracts-create',
         'contract/contracts-update',
         'contracts-update',
         'contract/contract-sign',
@@ -1151,8 +1150,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'contract/contract-deposit-received',
         'contract/contract-deny',
         'contract/email-send',
-        'long-term-contracts-create',
-        'contract/long-term-contracts-create',
         'long-term-contract-activate',
         'long-term-contract-pause',
         'long-term-contract-resume',
@@ -1164,8 +1161,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'on-demand-invoice-generate',
 
         // Invoices / payments
-        'invoice/invoices-create',
-        'invoices-create',
         'invoice/invoices-update',
         'invoices-update',
         'invoice/invoices-mark-paid',
@@ -1484,8 +1479,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_once __DIR__ . '/../src/controllers/project/projects_update_status.php';
         exit;
     }
-    if ($page === 'quote/quotes-create' || $page === 'quotes-create') {
-        require_once __DIR__ . '/../src/controllers/quote/quotes_create.php';
+    if ($page === 'document/new') {
+        // acl_middleware checked the create permission for this ?as= type.
+        require_once __DIR__ . '/../src/utils/document_new.php';
+        $documentNewAs = document_new_as($_GET['as'] ?? null);
+        require_once __DIR__ . '/../src/controllers/' . ['quote' => 'quote/quotes_create.php', 'contract' => 'contract/contracts_create.php', 'invoice' => 'invoice/invoices_create.php'][$documentNewAs];
         exit;
     }
     if ($page === 'quote/quote-approve') {
@@ -1648,20 +1646,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_once __DIR__ . '/../src/controllers/client/clients_purge.php';
         exit;
     }
-    if ($page === 'contract/contracts-create' || $page === 'contracts-create') {
-        require_once __DIR__ . '/../src/controllers/contract/contracts_create.php';
-        exit;
-    }
-    if ($page === 'long-term-contracts-create' || $page === 'contract/long-term-contracts-create') {
-        require_once __DIR__ . '/../src/controllers/contract/long_term_contracts_create.php';
-        exit;
-    }
     if ($page === 'contract/contracts-update' || $page === 'contracts-update') {
         require_once __DIR__ . '/../src/controllers/contract/contracts_update.php';
-        exit;
-    }
-    if ($page === 'invoice/invoices-create' || $page === 'invoices-create') {
-        require_once __DIR__ . '/../src/controllers/invoice/invoices_create.php';
         exit;
     }
     if ($page === 'invoice/invoices-update' || $page === 'invoices-update') {

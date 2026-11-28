@@ -88,7 +88,7 @@ function escapeClientDropdownValue(value) {
 initClientDropdown.pageInitializerId = 'client-selection-dropdown';
 
 if (window.ProjectAlpha && typeof window.ProjectAlpha.registerPage === 'function') {
-    window.ProjectAlpha.registerPage(['project/projects-create', 'quote/quotes-create'], initClientDropdown);
+    window.ProjectAlpha.registerPage(['project/projects-create'], initClientDropdown);
 } else if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initClientDropdown, { once: true });
 } else {

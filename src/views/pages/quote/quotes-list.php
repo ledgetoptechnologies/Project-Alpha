@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/document_organization.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../components/document_list.php';
+require_once __DIR__ . '/../../../utils/document_new.php';
 
 $page = 'quote/quotes-list';
 $kind = doc_list_kind();
@@ -79,7 +80,7 @@ $approveConfirm = [
   <?php doc_list_render_top([
       'title' => 'Quotes',
       'page' => $page,
-      'new_url' => $canCreate ? '/?page=quote/quotes-create' : null,
+      'new_url' => $canCreate ? document_new_url('quote', doc_list_kind()) : null,
       'new_label' => '+ New quote',
       'statuses' => $statuses,
       'status' => $status,

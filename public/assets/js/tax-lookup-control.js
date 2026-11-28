@@ -315,16 +315,11 @@
 
   if (window.ProjectAlpha && typeof window.ProjectAlpha.registerPage === 'function') {
     window.ProjectAlpha.registerPage([
-      'quote/quotes-create',
-      'quotes-create',
+      'document/new',
       'quote/quotes-edit',
       'quotes-edit',
-      'invoice/invoices-create',
-      'invoices-create',
       'invoice/invoices-edit',
       'invoices-edit',
-      'contract/contracts-create',
-      'contracts-create',
       'contract/contracts-edit',
       'contracts-edit'
     ], initTaxLookupPage);
