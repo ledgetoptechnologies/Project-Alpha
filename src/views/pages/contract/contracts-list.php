@@ -156,7 +156,8 @@ $hasAsNeeded = false;
             <td><?php echo doc_list_status_pill($rowStatus, $statuses[$rowStatus] ?? null); ?></td>
             <td class="doc-amount"><?php echo doc_list_e($amount); ?></td>
             <td><?php echo $r['created_at'] ? doc_list_e(date('M j, Y', strtotime((string)$r['created_at']))) : ''; ?></td>
-            <td>
+            <td class="doc-menu-cell">
+              <details class="doc-menu"><summary class="btn btn-sm">Actions</summary>
               <div class="doc-actions">
                 <?php if ($editable && $k !== 'as_needed'): ?>
                   <a class="btn btn-sm" href="/?page=contract/contracts-edit&amp;id=<?php echo $id; ?>"><?php echo $k === 'recurring' ? 'Edit Billing' : 'Edit'; ?></a>
@@ -207,7 +208,7 @@ $hasAsNeeded = false;
                   <?php if ($k === 'recurring' && in_array($rowStatus, ['pending', 'active', 'paused'], true)) echo doc_list_post_button('long-term-contract-terminate', 'Terminate', ['id' => $id], 'Terminate this long-term contract? This will stop future invoicing.', 'btn btn-sm btn-danger'); ?>
                   <?php if ($k === 'as_needed' && $editable) echo doc_list_post_button('on-demand-contract-terminate', 'Terminate', ['id' => $id], 'Terminate this on-demand contract?', 'btn btn-sm btn-danger'); ?>
                 <?php endif; ?>
-              </div>
+              </div></details>
             </td>
           </tr>
         <?php endforeach; ?>

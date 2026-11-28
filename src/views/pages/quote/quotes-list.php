@@ -113,7 +113,8 @@ $approveConfirm = [
             <td><?php echo doc_list_status_pill($rowStatus, $statuses[$rowStatus] ?? null); ?></td>
             <td class="doc-amount"><?php echo $amount; ?></td>
             <td><?php echo $r['created_at'] ? doc_list_e(date('M j, Y', strtotime((string)$r['created_at']))) : ''; ?></td>
-            <td>
+            <td class="doc-menu-cell">
+              <details class="doc-menu"><summary class="btn btn-sm">Actions</summary>
               <div class="doc-actions">
                 <?php if ($k === 'recurring'): ?>
                   <a class="btn btn-sm" href="/?page=quote/long-term-quote-pdf&amp;id=<?php echo $id; ?>" target="_blank" rel="noopener">PDF</a>
@@ -126,7 +127,7 @@ $approveConfirm = [
                   <?php echo doc_list_post_button('quote/quote-approve', 'Approve', ['id' => $id], $approveConfirm[$k], 'btn btn-sm btn-success'); ?>
                   <?php echo doc_list_post_button('quote/quote-reject', 'Deny', ['id' => $id], 'Deny this quote?', 'btn btn-sm btn-danger'); ?>
                 <?php endif; ?>
-              </div>
+              </div></details>
             </td>
           </tr>
         <?php endforeach; ?>

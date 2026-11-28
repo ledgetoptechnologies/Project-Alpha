@@ -163,7 +163,8 @@ $returnTo = (string)($_SERVER['REQUEST_URI'] ?? '/?page=invoice/invoices-list');
             <td><?php echo invoice_is_past_due($r) ? doc_list_status_pill('overdue', 'Overdue') : doc_list_status_pill($rowStatus); ?></td>
             <td class="doc-amount"><?php echo $amount; ?></td>
             <td><?php echo !empty($r['due_date']) ? doc_list_e(date('M j, Y', strtotime((string)$r['due_date']))) : ''; ?></td>
-            <td>
+            <td class="doc-menu-cell">
+              <details class="doc-menu"><summary class="btn btn-sm">Actions</summary>
               <div class="doc-actions">
                 <a class="btn btn-sm" href="/?page=invoice/invoice-details&amp;id=<?php echo $id; ?>">View</a>
                 <?php if (!in_array($rowStatus, ['void', 'cancelled'], true)): ?>
@@ -190,7 +191,7 @@ $returnTo = (string)($_SERVER['REQUEST_URI'] ?? '/?page=invoice/invoices-list');
                     </form>
                   </dialog>
                 <?php endif; ?>
-              </div>
+              </div></details>
             </td>
           </tr>
         <?php endforeach; ?>

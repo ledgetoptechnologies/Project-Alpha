@@ -721,3 +721,10 @@ if (document.readyState === 'loading') {
 } else {
     initialize();
 }
+
+// Close an open row Actions menu when clicking anywhere else.
+document.addEventListener('click', event => {
+    document.querySelectorAll('details.doc-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target)) menu.removeAttribute('open');
+    });
+});
