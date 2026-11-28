@@ -234,7 +234,7 @@ try {
             $subject = ucfirst($schedule['frequency']) . ' Audit Report — ' . $startDate . ' to ' . $endDate;
             $body = '<h2>Financial Audit Report</h2>';
             $body .= '<p><strong>Period:</strong> ' . $startDate . ' to ' . $endDate . '</p>';
-            $body .= '<p><strong>Invoices:</strong> ' . count($invoices) . ' | <strong>Net Collected:</strong> $' . number_format($runningTotal, 2) . '</p>';
+            $body .= '<p><strong>Income rows:</strong> ' . count($invoices) . ' | <strong>Net Collected:</strong> $' . number_format($runningTotal, 2) . '</p>';
             if ($includeContracts) $body .= '<p><strong>Contracts:</strong> ' . count($contracts) . '</p>';
             if ($includeQuotes) $body .= '<p><strong>Quotes:</strong> ' . count($quotes) . '</p>';
             $body .= '<p>The full CSV report is attached to this email.</p>';

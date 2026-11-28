@@ -297,7 +297,7 @@ try {
     $manifest .= "- Include Contracts: " . ($includeContracts ? 'Yes' : 'No') . "\n";
     $manifest .= "- Include Quotes: " . ($includeQuotes ? 'Yes' : 'No') . "\n\n";
     $manifest .= "REPORT SUMMARY:\n";
-    $manifest .= "- Total Invoices: " . count($invoices) . "\n";
+    $manifest .= "- Income Rows: " . count($invoices) . "\n";
     if ($includeContracts) {
         $manifest .= "- Total Contracts: " . count($contracts) . "\n";
     }
