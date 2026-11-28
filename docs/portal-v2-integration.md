@@ -18,12 +18,13 @@ Project Alpha remains the authoritative source for organizations, departments, c
 5. Verify the five payload fixtures plus the byte-pinned `portal-integration-wire-v1.json` transport fixture in `tests/fixtures` and the compatibility test.
 6. Reconcile active organization roots and standalone clients. A client with no
    organization is an individual client whatever its `client_type` says
-   (`unknown` is the default for clients staff add, and no screen changes it);
-   their own client email becomes their portal login. Only an explicit
-   `business` record without an organization stays review-required
-   (`non_human_record`), and so does a payer the payment-processor import
-   created (`imported_payer`, recorded in `client_creation_origins` by migration
-   0119) unless it is a `consumer` record. Clients created through the API-v2
+   (`business` included; `client_type` plays no part in eligibility); their own
+   client email becomes their portal login. A payer the payment-processor import
+   created stays review-required (`imported_payer`, recorded in
+   `client_creation_origins` by migration 0119) whatever its type, `consumer`
+   included. This hold applies to clients with no organization; once staff link
+   a client to an organization, the organization root governs it. Clients
+   created through the API-v2
    directory create command are staff-driven (Operations staff create them and
    choose the type) and are treated like staff-added clients. Missing, invalid or duplicate emails, principal
    conflicts and manual revocations stay review-required or revoked. Project

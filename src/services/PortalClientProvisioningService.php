@@ -20,8 +20,8 @@ final class PortalClientProvisioningService
 {
     public const DEFAULT_CAPABILITIES = ['workspace.view', 'directory.read', 'delivery.view'];
     private const BOUND_PROFILE_KEY = 'external_ops_client_portal_profile_id';
-    /** Raise when an eligibility rule changes; see backfillContractFingerprint(). 2: no-organisation clients are individuals; 3: except imported payers. */
-    private const ELIGIBILITY_POLICY_VERSION = 3;
+    /** Raise when an eligibility rule changes; see backfillContractFingerprint(). 2: no-organisation clients are individuals; 3: except imported payers; 4: client_type is ignored ('business' no-org clients get a login, imported 'consumer' payers are held). */
+    private const ELIGIBILITY_POLICY_VERSION = 4;
     /** Only these fixed sender codes may leave the diagnostics boundary. */
     private const SAFE_DELIVERY_ERROR_CODES = [
         'dns_no_public_address',
@@ -1091,15 +1091,13 @@ final class PortalClientProvisioningService
         if(!$active){$status='review_required';$reason='client_inactive';}
         elseif(!$rootActive){$status='revoked';$reason='root_revoked';}
         elseif($manual==='revoked'){$status='revoked';$reason='none';}
-        // A client with no organisation is an individual client: their own
-        // client email is their portal login, as for 'consumer'. Clients added
-        // by staff keep the default 'unknown' type and have no way to change it,
-        // so only an explicit 'business' record without an organisation still
-        // needs review. Email validity, uniqueness and conflicts apply below.
-        elseif(empty($client['organization_id'])&&(string)($client['client_type']??'unknown')==='business'){$status='review_required';$reason='non_human_record';}
-        // A payer the payment-processor import created is not a client staff
-        // added, so it gets no individual login unless it is a consumer record.
-        elseif(empty($client['organization_id'])&&(string)($client['client_type']??'unknown')!=='consumer'&&$this->importedPayer($pdo,$clientId)){$status='review_required';$reason='imported_payer';}
+        // A client with no organisation is an individual client whatever its
+        // client_type says ('business' included): their own client email is
+        // their portal login. A payer the payment-processor import created is
+        // not a client staff added, so it gets no individual login whatever its
+        // type ('consumer' included). Email validity, uniqueness and conflicts
+        // apply below.
+        elseif(empty($client['organization_id'])&&$this->importedPayer($pdo,$clientId)){$status='review_required';$reason='imported_payer';}
         elseif($email===''){$status='review_required';$reason='missing_email';}
         elseif(strlen($email)>254||!filter_var($email,FILTER_VALIDATE_EMAIL)){$status='review_required';$reason='invalid_email';}
         elseif($this->emailCount($pdo,$email,$currentReads)!==1){$status='review_required';$reason='duplicate_email';}
