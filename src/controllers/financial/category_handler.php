@@ -21,7 +21,7 @@ function category_handler_is_ajax(): bool
         || str_contains(strtolower((string)($_SERVER['HTTP_ACCEPT'] ?? '')), 'application/json');
 }
 
-function category_handler_finish(array $response, int $status = 200, string $fallback = '/?page=financial/expenses-list&tab=categories'): void
+function category_handler_finish(array $response, int $status = 200, string $fallback = '/?page=financial/setup&tab=categories'): void
 {
     if (category_handler_is_ajax()) {
         http_response_code($status);
@@ -31,7 +31,7 @@ function category_handler_finish(array $response, int $status = 200, string $fal
     }
 
     $base = !empty($response['success'])
-        ? (string)($response['redirect'] ?? '/?page=financial/expenses-list&tab=categories')
+        ? (string)($response['redirect'] ?? '/?page=financial/setup&tab=categories')
         : $fallback;
     $key = !empty($response['success']) ? 'success' : 'error';
     $message = (string)($response['message'] ?? (!empty($response['success']) ? 'Category saved' : 'Category request failed'));
@@ -40,7 +40,7 @@ function category_handler_finish(array $response, int $status = 200, string $fal
     exit;
 }
 
-function category_handler_safe_return_url(?string $url, string $default = '/?page=financial/expenses-list&tab=categories'): string
+function category_handler_safe_return_url(?string $url, string $default = '/?page=financial/setup&tab=categories'): string
 {
     $url = trim((string)$url);
     if ($url === '' || str_starts_with($url, '//') || preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:/', $url)) {

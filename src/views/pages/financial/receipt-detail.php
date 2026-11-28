@@ -14,7 +14,7 @@ $storeStmt->execute();
 $stores = $storeStmt->fetchAll(PDO::FETCH_COLUMN);
 
 if (!$receiptId) {
-    header('Location: /?page=financial/receipts-list');
+    header('Location: /?page=financial/expenses-list&tab=receipts');
     exit;
 }
 
@@ -30,7 +30,7 @@ $stmt->execute(array_merge([$receiptId], $receiptScopeParams));
 $receipt = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$receipt) {
-    header('Location: /?page=financial/receipts-list');
+    header('Location: /?page=financial/expenses-list&tab=receipts');
     exit;
 }
 
@@ -40,7 +40,7 @@ $isPdf = $fileExt === 'pdf';
 
 <div style="max-width:1200px;margin:0 auto;padding:24px">
     <div style="margin-bottom:24px">
-        <a href="/?page=financial/receipts-list" style="color:var(--nav-accent);text-decoration:none;font-size:14px">
+        <a href="/?page=financial/expenses-list&tab=receipts" style="color:var(--nav-accent);text-decoration:none;font-size:14px">
             ← Back to Receipts
         </a>
     </div>

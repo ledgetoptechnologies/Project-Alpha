@@ -117,7 +117,7 @@ final class MileageBillingTest extends TestCase
     public function testMileageScreensDoNotUseDeductionOrReimbursementLabels(): void
     {
         $root=dirname(__DIR__,2);
-        foreach(['src/views/pages/financial/mileage-create.php','src/views/pages/financial/mileage-list.php','src/views/pages/financial/_overview_tab.php'] as $file){
+        foreach(['src/views/pages/financial/mileage-create.php','src/views/pages/financial/mileage-list.php','src/views/pages/financial/_mileage_log_tab.php','src/controllers/financial/mileage_export.php'] as $file){
             $source=strtolower((string)file_get_contents($root.'/'.$file));
             self::assertStringNotContainsString('deduct',$source);
             self::assertStringNotContainsString('reimburse',$source);
@@ -128,11 +128,16 @@ final class MileageBillingTest extends TestCase
     {
         $root=dirname(__DIR__,2);
         $source=(string)file_get_contents($root.'/src/views/pages/financial/mileage-list.php');
-        self::assertStringContainsString('LEFT JOIN worker_profiles wp', $source);
-        self::assertStringNotContainsString('LEFT JOIN employee_profiles ep', $source);
-        self::assertStringContainsString('GROUP BY a.mileage_log_id', $source);
-        self::assertStringNotContainsString("GROUP BY m.id ORDER BY", $source);
-        self::assertStringContainsString('name="page" value="financial/expenses-list"', $source);
+        $query=(string)file_get_contents($root.'/src/utils/mileage.php');
+        self::assertStringContainsString('mileage_log_rows(', $source);
+        self::assertStringContainsString('LEFT JOIN worker_profiles wp', $query);
+        self::assertStringNotContainsString('LEFT JOIN employee_profiles ep', $query);
+        self::assertStringContainsString('GROUP BY a.mileage_log_id', $query);
+        self::assertStringNotContainsString("GROUP BY m.id ORDER BY", $query);
+        self::assertStringContainsString("'financial/expenses-list':'financial/mileage-list'", $source);
         self::assertStringContainsString('name="tab" value="mileage"', $source);
+        $export=(string)file_get_contents($root.'/src/controllers/financial/mileage_export.php');
+        self::assertStringContainsString("mileage_log_rows(\$pdo, \$userId, request_client_org_id(), \$filters, \$viewer['all_drivers'])", $export);
+        self::assertStringContainsString("\$page === 'financial/mileage-export'", (string)file_get_contents($root.'/public/index.php'));
     }
 }

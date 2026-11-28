@@ -14,7 +14,7 @@ $stores = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
 <div style="max-width:800px;margin:0 auto;padding:24px">
     <div style="margin-bottom:24px">
-        <a href="/?page=financial/receipts-list" style="color:var(--nav-accent);text-decoration:none;font-size:14px">
+        <a href="/?page=financial/expenses-list&tab=receipts" style="color:var(--nav-accent);text-decoration:none;font-size:14px">
             ← Back to Receipts
         </a>
     </div>
@@ -131,7 +131,7 @@ $stores = $stmt->fetchAll(PDO::FETCH_COLUMN);
                         style="flex:1;padding:12px;border-radius:8px;border:0;background:var(--nav-accent);color:#fff;font-weight:600;cursor:pointer">
                     Upload Receipt
                 </button>
-                <a href="/?page=financial/receipts-list" 
+                <a href="/?page=financial/expenses-list&tab=receipts" 
                    style="flex:1;padding:12px;border-radius:8px;border:1px solid #ddd;background:#fff;text-align:center;text-decoration:none;color:inherit;font-weight:600">
                     Cancel
                 </a>

@@ -39,11 +39,6 @@ foreach ($schedules as $schedule) {
 ?>
 
 <section class="expense-ledger">
-  <div class="expense-ledger__head">
-    <div><h2>Recurring Expenses</h2><p class="muted">Predictable vendor costs generate normal expense records automatically on their due dates.</p></div>
-    <div class="finance-actions"><a href="/?page=financial/recurring-expense-form" class="btn btn-primary">Add Recurring Expense</a></div>
-  </div>
-
   <?php if (!empty($_GET['saved'])): ?><div class="alert alert-success">Recurring expense schedule saved.</div><?php endif; ?>
   <?php if (!empty($_GET['generated_expense_id'])): ?><div class="alert alert-success">The first expense was generated. <a href="/?page=financial/expense-detail&id=<?php echo (int)$_GET['generated_expense_id']; ?>">View expense</a></div><?php endif; ?>
   <?php if (!empty($_GET['error'])): ?><div class="alert alert-danger"><?php echo htmlspecialchars((string)$_GET['error']); ?></div><?php endif; ?>

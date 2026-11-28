@@ -109,15 +109,23 @@ final class FinancialSchedulingTest extends TestCase
     {
         $audit = file_get_contents($this->root . '/public/assets/js/audit-logic.js');
         $organization = file_get_contents($this->root . '/public/assets/js/organization-view-logic.js');
-        self::assertStringContainsString("window.ProjectAlpha.registerPage('financial/audit'", (string)$audit);
+        self::assertStringContainsString("window.ProjectAlpha.registerPage('financial/reports'", (string)$audit);
         self::assertStringContainsString("window.ProjectAlpha.registerPage('organization/organization-view'", (string)$organization);
     }
 
     public function testAuditSchedulingIsASeparateVisibleAction(): void
     {
-        $auditPage = file_get_contents($this->root . '/src/views/pages/financial/audit.php');
-        self::assertStringContainsString('id="auditScheduleForm"', (string)$auditPage);
-        self::assertStringContainsString('Scheduled Audit Emails', (string)$auditPage);
-        self::assertStringContainsString('Save Schedule', (string)$auditPage);
+        $auditPage = (string)file_get_contents($this->root . '/src/views/pages/financial/_income_audit_tab.php');
+        self::assertStringContainsString('id="auditScheduleForm"', $auditPage);
+        self::assertStringContainsString('Schedule this report', $auditPage);
+        self::assertStringContainsString('Save schedule', $auditPage);
+
+        // Income and expense schedules share one list on Reports > Schedules.
+        $schedules = (string)file_get_contents($this->root . '/src/views/pages/financial/_report_schedules_tab.php');
+        self::assertStringContainsString('SELECT * FROM audit_schedules', $schedules);
+        self::assertStringNotContainsString('report_type="audit"', $schedules);
+        $handler = (string)file_get_contents($this->root . '/src/controllers/financial/audit_schedule_handler.php');
+        self::assertStringContainsString("/?page=financial/reports&tab=schedules&scheduled=1", $handler);
+        self::assertStringNotContainsString('financial/expense-report', $handler);
     }
 }

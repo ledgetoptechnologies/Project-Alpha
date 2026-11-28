@@ -182,12 +182,12 @@ function nav_can(string $permission): bool {
             <li class="nav-section">
               <div class="section-label">Financial</div>
               <ul>
-                <?php if (nav_can('financial.view')): ?>
-                <li><a href="/?page=financial/financial-dashboard" data-page="financial/financial-dashboard">Dashboard</a></li>
-                <?php if (nav_can('financial.audit')): ?><li><a href="/?page=financial/audit" data-page="financial/audit">Audit &amp; Reports</a></li><?php endif; ?>
-                <li><a href="/?page=financial/expenses-list" data-page="financial/expenses-list">Assets &amp; Expenses</a></li>
-                <li><a href="/?page=financial/forms-list" data-page="financial/forms-list">Forms &amp; Docs</a></li>
-                <?php endif; ?>
+                <li><a href="/?page=financial/financial-dashboard" data-page="financial/financial-dashboard">Overview</a></li>
+                <li><a href="/?page=financial/expenses-list" data-page="financial/expenses-list" data-match="financial/expense financial/recurring-expense financial/receipt financial/mileage financial/csv-import">Expenses</a></li>
+                <li><a href="/?page=financial/assets-list" data-page="financial/assets-list" data-match="financial/asset">Assets</a></li>
+                <li><a href="/?page=financial/reports" data-page="financial/reports">Reports</a></li>
+                <li><a href="/?page=financial/setup" data-page="financial/setup" data-match="financial/vendor financial/category">Setup</a></li>
+                <li><a href="/?page=financial/forms-list" data-page="financial/forms-list" data-match="financial/form financial/folder financial/document">Forms &amp; Docs</a></li>
               </ul>
             </li>
             <?php endif; ?>

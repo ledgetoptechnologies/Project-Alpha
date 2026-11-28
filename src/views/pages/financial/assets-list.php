@@ -1,5 +1,6 @@
 <?php
-// src/views/pages/financial/_assets_tab.php
+// src/views/pages/financial/assets-list.php
+// Assets: owned equipment with purchase cost, book value and this year's depreciation.
 require_once __DIR__ . '/../../../config/db.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/financial_assets.php';
@@ -59,14 +60,16 @@ $assetVendors = $vendorStmt->fetchAll(PDO::FETCH_ASSOC);
 $summary = [
     'purchase_cost' => 0.0,
     'book_value' => 0.0,
-    'monthly_depreciation' => 0.0,
+    'year_depreciation' => 0.0,
     'active_count' => 0,
 ];
+// This year's depreciation = accumulated as of today minus accumulated at last year end.
+$lastYearEnd = new DateTimeImmutable((date('Y') - 1) . '-12-31');
 foreach ($assets as $asset) {
     $depreciation = financial_asset_depreciation($asset);
     $summary['purchase_cost'] += (float)$asset['purchase_cost'];
     $summary['book_value'] += $depreciation['book_value'];
-    $summary['monthly_depreciation'] += $depreciation['monthly'];
+    $summary['year_depreciation'] += $depreciation['accumulated'] - financial_asset_depreciation($asset, $lastYearEnd)['accumulated'];
     if (in_array((string)$asset['status'], ['active', 'maintenance'], true)) {
         $summary['active_count']++;
     }
@@ -79,14 +82,11 @@ $statusOptions = ['planned' => 'Planned', 'active' => 'Active', 'maintenance' =>
 ?>
 
 <section class="expense-ledger asset-ledger">
-  <div class="expense-ledger__head">
-    <div>
-      <h2>Assets</h2>
-      <p class="muted">Track business assets, purchase details, warranty dates, and straight-line depreciation.</p>
-    </div>
-    <div class="finance-actions">
-      <a href="/?page=financial/asset-form" class="btn btn-primary">Add Asset</a>
-    </div>
+  <div class="page-head">
+    <h2>Assets</h2>
+    <?php if (session_user_can($pdo, 'financial.manage')): ?>
+      <a href="/?page=financial/asset-form" class="btn btn-primary">+ Add asset</a>
+    <?php endif; ?>
   </div>
 
   <?php if (!empty($_GET['disposed'])): ?>
@@ -110,9 +110,9 @@ $statusOptions = ['planned' => 'Planned', 'active' => 'Active', 'maintenance' =>
       <small>Calculated as of today</small>
     </div>
     <div class="expense-stat">
-      <span>Monthly Depreciation</span>
-      <strong><?php echo financial_asset_money($summary['monthly_depreciation']); ?></strong>
-      <small>Straight-line estimate</small>
+      <span>Depreciation, <?php echo date('Y'); ?></span>
+      <strong><?php echo financial_asset_money($summary['year_depreciation']); ?></strong>
+      <small>Straight-line, through today</small>
     </div>
   </div>
 
@@ -122,8 +122,7 @@ $statusOptions = ['planned' => 'Planned', 'active' => 'Active', 'maintenance' =>
       <span class="muted text-sm"><?php echo $assetFilterCount; ?> active</span>
     </div>
     <form method="get" action="/" class="expense-filter-grid">
-      <input type="hidden" name="page" value="financial/expenses-list">
-      <input type="hidden" name="tab" value="assets">
+      <input type="hidden" name="page" value="financial/assets-list">
       <label>
         <span class="label-muted">Search</span>
         <input type="search" name="asset_search" class="input" value="<?php echo htmlspecialchars($assetSearch); ?>" placeholder="Name, tag, serial, location">
@@ -157,7 +156,7 @@ $statusOptions = ['planned' => 'Planned', 'active' => 'Active', 'maintenance' =>
       </label>
       <div class="expense-filter-actions">
         <button type="submit" class="btn btn-primary">Apply</button>
-        <a href="/?page=financial/expenses-list&tab=assets" class="btn">Reset</a>
+        <a href="/?page=financial/assets-list" class="btn">Reset</a>
       </div>
     </form>
   </div>

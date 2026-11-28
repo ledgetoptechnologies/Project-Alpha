@@ -3,6 +3,7 @@
   
   Parameters:
   - page: The current page (used for form action)
+  - hidden: Optional extra query values kept on filter and reset, e.g. {tab: 'receipts'}
   - filters: Array of filter configurations, each with:
     - type: 'text', 'date', 'select', 'number', 'client_autocomplete'
     - label: Display label
@@ -112,6 +113,9 @@
     {% endif %}
 >
     <input type="hidden" name="page" value="{{ page }}">
+    {% for hiddenName, hiddenValue in hidden|default({}) %}
+        <input type="hidden" name="{{ hiddenName }}" value="{{ hiddenValue }}">
+    {% endfor %}
 
     {% for filterName, config in filters %}
         {% if loop.index <= primaryCount %}
@@ -127,7 +131,7 @@
             Filter
         </button>
         <a
-            href="/?page={{ page }}"
+            href="/?page={{ page }}{% for hiddenName, hiddenValue in hidden|default({}) %}&{{ hiddenName|url_encode }}={{ hiddenValue|url_encode }}{% endfor %}"
             style="padding:9px 16px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px;text-decoration:none;text-align:center;display:inline-block"
         >
             Reset

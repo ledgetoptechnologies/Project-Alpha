@@ -923,6 +923,10 @@ if ($page === 'financial/expense-export') {
     require_once __DIR__ . '/../src/controllers/financial/expense_export.php';
     exit;
 }
+if ($page === 'financial/mileage-export') {
+    require_once __DIR__ . '/../src/controllers/financial/mileage_export.php';
+    exit;
+}
 if ($page === 'settings/item-library-search') {
     require_once __DIR__ . '/../src/controllers/settings/item_library_search.php';
     exit;

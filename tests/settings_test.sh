@@ -85,7 +85,7 @@ echo ""
 echo "📋 Financial Pages"
 echo "----------------------------------------"
 test_page "Financial Dashboard" "/?page=financial-dashboard"
-test_page "Audit" "/?page=financial/audit"
+test_page "Reports" "/?page=financial/reports"
 
 echo ""
 echo "📋 Organization Pages"

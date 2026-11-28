@@ -25,7 +25,7 @@ function asset_redirect_with_message(string $url, string $key, string $message):
     exit;
 }
 
-function asset_handler_finish(array $response, int $status = 200, string $fallback = '/?page=financial/expenses-list&tab=assets'): void
+function asset_handler_finish(array $response, int $status = 200, string $fallback = '/?page=financial/assets-list'): void
 {
     if (asset_handler_is_ajax()) {
         http_response_code($status);
@@ -35,7 +35,7 @@ function asset_handler_finish(array $response, int $status = 200, string $fallba
     }
 
     if (!empty($response['success'])) {
-        header('Location: ' . (string)($response['redirect'] ?? '/?page=financial/expenses-list&tab=assets'));
+        header('Location: ' . (string)($response['redirect'] ?? '/?page=financial/assets-list'));
         exit;
     }
 
@@ -112,7 +112,7 @@ if ($userId <= 0) {
 
 $orgId = request_client_org_id();
 if (!user_can($pdo, $userId, 'financial.manage', 0)) {
-    asset_handler_finish(['success' => false, 'message' => 'Permission denied'], 403, '/?page=financial/expenses-list&tab=assets');
+    asset_handler_finish(['success' => false, 'message' => 'Permission denied'], 403, '/?page=financial/assets-list');
 }
 
 $submitted = $_POST['_token'] ?? '';
@@ -130,7 +130,7 @@ $assetHandlerTransaction = false;
 
 try {
     if ($action === 'delete') {
-        $fallback = '/?page=financial/expenses-list&tab=assets';
+        $fallback = '/?page=financial/assets-list';
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) {
             throw new RuntimeException('Invalid asset ID.');
@@ -139,7 +139,7 @@ try {
         $stmt = $pdo->prepare('UPDATE financial_assets a SET status = "disposed", disposed_on = COALESCE(disposed_on, CURDATE()) WHERE a.id = ? AND ' . $assetScopeWhere);
         $stmt->execute(array_merge([$id], $assetScopeParams));
         audit_log($pdo, 'asset.dispose', 'financial_asset', $id, ['organization_id' => $orgId]);
-        asset_json_response(true, 'Asset marked disposed.', ['redirect' => '/?page=financial/expenses-list&tab=assets&disposed=1']);
+        asset_json_response(true, 'Asset marked disposed.', ['redirect' => '/?page=financial/assets-list&disposed=1']);
     }
 
     if (!in_array($action, ['create', 'update'], true)) {

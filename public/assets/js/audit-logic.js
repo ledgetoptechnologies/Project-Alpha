@@ -61,8 +61,8 @@ function initAuditReportPage() {
             const newInput = document.createElement('input');
             newInput.type = 'email';
             newInput.name = 'schedule_email[]';
-            newInput.placeholder = 'email@example.com';
-            newInput.style.cssText = 'padding: 10px; border: 1px solid #ddd; border-radius: 8px;';
+            newInput.placeholder = 'name@example.com';
+            newInput.className = 'input';
             emailContainer.appendChild(newInput);
 
             // Update button visibility
@@ -72,7 +72,7 @@ function initAuditReportPage() {
 
     function updateAddEmailButton() {
         const emailInputs = emailContainer.querySelectorAll('input[type="email"]');
-        addEmailBtn.style.display = emailInputs.length >= 5 ? 'none' : 'block';
+        addEmailBtn.hidden = emailInputs.length >= 5;
     }
 
     // Allow removing empty email fields by clicking backspace on empty input
@@ -91,7 +91,7 @@ function initAuditReportPage() {
 initAuditReportPage.pageInitializerId = 'audit-report';
 
 if (window.ProjectAlpha && typeof window.ProjectAlpha.registerPage === 'function') {
-    window.ProjectAlpha.registerPage('financial/audit', initAuditReportPage);
+    window.ProjectAlpha.registerPage('financial/reports', initAuditReportPage);
 } else if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initAuditReportPage, { once: true });
 } else {

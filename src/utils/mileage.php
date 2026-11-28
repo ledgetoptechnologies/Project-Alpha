@@ -337,3 +337,83 @@ function mileage_copy_document_rule(PDO $pdo,int $quoteId,int $contractId,?int $
     $q=$pdo->prepare('SELECT * FROM travel_billing_rules WHERE scope_type="quote" AND quote_id=? ORDER BY id DESC LIMIT 1');$q->execute([$quoteId]);$rule=$q->fetch(PDO::FETCH_ASSOC);if(!$rule)return;
     mileage_save_document_rule($pdo,'contract',$contractId,$orgId,$clientId,$userId,$rule);
 }
+
+/**
+ * Who may see which mileage: the Expenses > Mileage tab, the standalone list,
+ * the Reports mileage log and its export all use this.
+ */
+function mileage_viewer(PDO $pdo, int $userId): array
+{
+    $isAdmin = ($_SESSION['user']['role'] ?? '') === 'admin';
+    $canManage = $isAdmin || user_can($pdo, $userId, 'financial.manage', 0);
+    $capabilities = (new \App\Services\WorkforceAccessService($pdo))->actor($userId)['capabilities'] ?? [];
+    return [
+        'can_manage' => $canManage,
+        'can_log' => $canManage || isset($capabilities['*']) || isset($capabilities['mileage.self']),
+        'all_drivers' => $canManage && ($isAdmin || acl_user_has_org_wide_scope($pdo, $userId, 0)),
+    ];
+}
+
+/** Where to send someone after saving mileage: the Expenses tab, or the standalone list. */
+function mileage_list_url(PDO $pdo, int $userId): string
+{
+    $canViewFinance = ($_SESSION['user']['role'] ?? '') === 'admin' || user_can($pdo, $userId, 'financial.view', 0);
+    return $canViewFinance ? '/?page=financial/expenses-list&tab=mileage' : '/?page=financial/mileage-list';
+}
+
+/**
+ * Mileage rows for one driver (default: the viewer) or, with all_drivers, everyone.
+ * Filters: driver (mine|all|user id), start, end, purpose, client_id, billable.
+ * Returns ['driver' => resolved driver filter, 'rows' => list].
+ */
+function mileage_log_rows(PDO $pdo, int $userId, int $orgId, array $filters, bool $allDrivers): array
+{
+    $driver = $allDrivers ? (string)($filters['driver'] ?? 'mine') : 'mine';
+    [$scope, $params] = finance_scope_clause($pdo, 'm', $userId, $orgId, 'user_id');
+    $where = [$scope];
+    if ($driver !== 'all') {
+        $driverId = $driver === 'mine' ? $userId : max(0, (int)$driver);
+        if ($driverId <= 0) {
+            $driverId = $userId;
+            $driver = 'mine';
+        }
+        $where[] = 'COALESCE(m.traveler_user_id,m.user_id)=?';
+        $params[] = $driverId;
+    }
+    $start = (string)($filters['start'] ?? '');
+    $end = (string)($filters['end'] ?? '');
+    $purpose = (string)($filters['purpose'] ?? '');
+    $clientId = max(0, (int)($filters['client_id'] ?? 0));
+    $billable = (string)($filters['billable'] ?? '');
+    if ($start !== '') { $where[] = 'm.trip_date>=?'; $params[] = $start; }
+    if ($end !== '') { $where[] = 'm.trip_date<=?'; $params[] = $end; }
+    if (in_array($purpose, ['business', 'medical', 'moving', 'charitable', 'personal'], true)) { $where[] = 'm.purpose=?'; $params[] = $purpose; }
+    if ($clientId > 0) { $where[] = 'EXISTS (SELECT 1 FROM mileage_charge_allocations af WHERE af.mileage_log_id=m.id AND af.client_id=?)'; $params[] = $clientId; }
+    if ($billable === '1') { $where[] = 'EXISTS (SELECT 1 FROM mileage_charge_allocations ab WHERE ab.mileage_log_id=m.id)'; }
+    if ($billable === '0') { $where[] = 'NOT EXISTS (SELECT 1 FROM mileage_charge_allocations ab WHERE ab.mileage_log_id=m.id)'; }
+
+    $stmt = $pdo->prepare('SELECT m.*,
+      COALESCE(m.logged_miles,m.miles*CASE WHEN m.round_trip=1 THEN 2 ELSE 1 END) canonical_logged_miles,
+      COALESCE(ma.client_billable_miles,0) client_billable_miles,COALESCE(ma.client_charge_total,0) client_charge_total,
+      COALESCE(ma.allocation_count,0) allocation_count,ma.client_names,
+      COALESCE(ma.billed_allocations,0) billed_allocations,
+      COALESCE(NULLIF(wp.display_name,""),NULLIF(u.username,""),u.email,"Former user") driver_name
+      FROM mileage_logs m LEFT JOIN users u ON u.id=COALESCE(m.traveler_user_id,m.user_id) LEFT JOIN worker_profiles wp ON wp.id=m.traveler_worker_id OR (m.traveler_worker_id IS NULL AND wp.user_id=u.id)
+      LEFT JOIN (
+        SELECT a.mileage_log_id,SUM(a.billable_miles) client_billable_miles,SUM(a.client_charge) client_charge_total,
+          COUNT(a.id) allocation_count,GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ", ") client_names,
+          SUM(CASE WHEN a.billed=1 THEN 1 ELSE 0 END) billed_allocations
+        FROM mileage_charge_allocations a LEFT JOIN clients c ON c.id=a.client_id GROUP BY a.mileage_log_id
+      ) ma ON ma.mileage_log_id=m.id
+      WHERE ' . implode(' AND ', $where) . ' ORDER BY m.trip_date DESC,m.id DESC');
+    $stmt->execute($params);
+    return ['driver' => $driver, 'rows' => $stmt->fetchAll(PDO::FETCH_ASSOC)];
+}
+
+/** Drivers the viewer can filter by (only when they may see all drivers). */
+function mileage_driver_options(PDO $pdo, int $userId): array
+{
+    $stmt = $pdo->prepare('SELECT u.id,COALESCE(NULLIF(wp.display_name,""),NULLIF(u.username,""),u.email) name FROM users u LEFT JOIN worker_profiles wp ON wp.user_id=u.id WHERE u.deleted_at IS NULL AND (u.id=? OR EXISTS (SELECT 1 FROM mileage_logs md WHERE COALESCE(md.traveler_user_id,md.user_id)=u.id)) ORDER BY name');
+    $stmt->execute([$userId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}

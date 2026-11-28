@@ -36,11 +36,8 @@ $csrf = csrf_token();
 
 <section>
   <div class="page-head">
-    <div>
-      <h2 style="margin:0"><?php echo htmlspecialchars($title); ?></h2>
-      <p class="muted" style="margin:4px 0 0"><?php echo $isEdit ? 'Update vendor details.' : 'Create a new expense vendor.'; ?></p>
-    </div>
-    <a href="/?page=financial/vendors-list" class="btn">← Back to Vendors</a>
+    <h2><?php echo htmlspecialchars($title); ?></h2>
+    <a href="/?page=financial/setup&amp;tab=vendors" class="btn">Back to Vendors</a>
   </div>
 
   <?php if (!empty($_GET['error'])): ?>

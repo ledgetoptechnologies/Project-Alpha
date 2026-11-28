@@ -24,5 +24,5 @@ try{
   $owned=$pdo->prepare('SELECT id FROM clients WHERE id=? AND archived=0');$owned->execute([$clientId]);if(!$owned->fetchColumn())throw new RuntimeException('Client not found.');
   mileage_save_client_rule($pdo,$orgId?:null,$clientId,$userId,mileage_rule_from_post($_POST));
  }else throw new InvalidArgumentException('Invalid mileage setup action.');
- header('Location: /?page=financial/mileage-settings&saved=1');
-}catch(Throwable $e){header('Location: /?page=financial/mileage-settings&error='.urlencode($e->getMessage()));}exit;
+ header('Location: /?page=financial/setup&tab=rates&saved=1');
+}catch(Throwable $e){header('Location: /?page=financial/setup&tab=rates&error='.urlencode($e->getMessage()));}exit;

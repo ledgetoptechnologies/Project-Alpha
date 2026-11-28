@@ -54,13 +54,20 @@ class PagePermissionCoverageTest extends TestCase
         $this->assertStringContainsString("\$page === 'financial/expense-export'", $front);
     }
 
-    public function testAuditLinkAndTabRequireAuditPermission(): void
+    public function testIncomeAuditTabRequiresAuditPermission(): void
     {
         $root = dirname(__DIR__, 2);
-        $this->assertSame('financial.audit', page_permission_map()['financial/audit']);
-        $header = (string)file_get_contents($root . '/src/views/partials/header.php');
-        $this->assertMatchesRegularExpression("#nav_can\('financial\.audit'\)\): \?><li><a href=\"/\?page=financial/audit\"#", $header);
-        $hub = (string)file_get_contents($root . '/src/views/pages/financial/expenses-list.php');
-        $this->assertStringContainsString("unset(\$tabs['audit'])", $hub);
+        $map = page_permission_map();
+        $this->assertSame('financial.view', $map['financial/reports']);
+        foreach (['financial/audit', 'financial/expense-report', 'financial/vendors-list', 'financial/receipts-list', 'financial/mileage-settings'] as $retired) {
+            $this->assertArrayNotHasKey($retired, $map, $retired);
+        }
+        $reports = (string)file_get_contents($root . '/src/views/pages/financial/reports.php');
+        $this->assertStringContainsString("\$canAudit = session_user_can(\$pdo, 'financial.audit');", $reports);
+        $this->assertMatchesRegularExpression('#if \(\$canAudit\) \{\s+\$shellTabs\[.income.\]#', $reports);
+        $schedules = (string)file_get_contents($root . '/src/views/pages/financial/_report_schedules_tab.php');
+        $this->assertStringContainsString("(\$canAudit ? '' : \" AND report_type='expense'\")", $schedules);
+        $setup = (string)file_get_contents($root . '/src/views/pages/financial/setup.php');
+        $this->assertMatchesRegularExpression('#if \(\$canManageFinance\) \{\s+\$shellTabs\[.rates.\]#', $setup);
     }
 }

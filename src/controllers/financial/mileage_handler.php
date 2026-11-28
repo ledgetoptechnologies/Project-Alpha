@@ -70,7 +70,7 @@ try {
         if (!$row || (int)$row['billed_allocations'] > 0 || (!$canManageMileage && (int)$row['allocation_count'] > 0)) throw new RuntimeException('Mileage entry not found or it has protected client charges.');
         $pdo->prepare('DELETE FROM mileage_logs WHERE id=?')->execute([$id]);
         audit_log($pdo, 'mileage.delete', 'mileage_log', $id, ['organization_id' => $orgId]);
-        mileage_handler_finish(true, 'Mileage entry deleted.', '/?page=financial/mileage-list&deleted=1');
+        mileage_handler_finish(true, 'Mileage entry deleted.', mileage_list_url($pdo, $userId) . '&deleted=1');
     }
 
     if (!in_array($action, ['create', 'update'], true)) throw new InvalidArgumentException('Invalid action.');
@@ -153,7 +153,7 @@ try {
         'client_charge_total' => array_sum(array_column($allocations, 'client_charge')),
     ]);
     $pdo->commit();
-    mileage_handler_finish(true, $action === 'create' ? 'Mileage entry logged.' : 'Mileage entry updated.', '/?page=financial/mileage-list&' . ($action === 'create' ? 'created' : 'updated') . '=1', 200, ['id' => $id]);
+    mileage_handler_finish(true, $action === 'create' ? 'Mileage entry logged.' : 'Mileage entry updated.', mileage_list_url($pdo, $userId) . '&' . ($action === 'create' ? 'created' : 'updated') . '=1', 200, ['id' => $id]);
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     error_log('[mileage_handler] ' . $e->getMessage());
