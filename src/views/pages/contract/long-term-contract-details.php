@@ -121,6 +121,7 @@ $showDepositInfo = $depositType !== 'none' && $depositCalc > 0;
 $isOngoing = empty($contract['end_date']);
 ?>
 <section>
+  <?php require_once __DIR__ . '/../../components/document_chain.php'; doc_chain_render($pdo, 'contract', $id); ?>
   <div class="doc-type" style="text-align:center;font-weight:700;font-size:22px;margin-bottom:6px">Long-term Service Contract</div>
   <div style="text-align:center;color:#6b7280;margin-bottom:16px;font-size:13px">Recurring Billing Agreement</div>
   

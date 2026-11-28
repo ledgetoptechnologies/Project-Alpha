@@ -85,6 +85,7 @@ $showDepositInfo = $depositType !== 'none' && $depositCalc > 0;
 $isOngoing = empty($quote['end_date']);
 ?>
 <section>
+  <?php require_once __DIR__ . '/../../components/document_chain.php'; doc_chain_render($pdo, 'quote', $id); ?>
   <div class="doc-type" style="text-align:center;font-weight:700;font-size:22px;margin-bottom:6px">Long-term Service Quote</div>
   <div style="text-align:center;color:#6b7280;margin-bottom:16px;font-size:13px">Recurring Billing Proposal</div>
   <div style="text-align:center;color:#6b7280;margin-bottom:6px;font-size:13px">Valid for <?php echo (int)($appConfig['documents_valid_days'] ?? 14); ?> days</div>

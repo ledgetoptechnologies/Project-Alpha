@@ -90,6 +90,7 @@ $showInvoiceDueDate = !array_key_exists('invoice_show_due_date', $appConfig) || 
 $showInvoiceTerms = !array_key_exists('invoice_show_terms', $appConfig) || !empty($appConfig['invoice_show_terms']);
 ?>
 <section>
+  <?php require_once __DIR__ . '/../../components/document_chain.php'; doc_chain_render($pdo, 'invoice', $id); ?>
   <?php if (strtolower((string)($inv['status'] ?? '')) === 'void'): ?>
     <div style="margin:0 0 12px;padding:10px 14px;border:3px solid #6b7280;color:#4b5563;text-align:center;font-size:28px;font-weight:800;letter-spacing:8px">VOID</div>
   <?php endif; ?>

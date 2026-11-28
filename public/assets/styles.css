@@ -1260,3 +1260,16 @@ body.nav-open{overflow:hidden}
 .doc-menu > summary::after{content:"\25BE";font-size:11px}
 .doc-menu[open] > .doc-actions{position:absolute;right:0;top:calc(100% + 4px);z-index:20;flex-direction:column;align-items:stretch;min-width:180px;padding:8px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(11,18,32,.12)}
 .doc-menu .doc-actions .btn,.doc-menu .doc-actions button{width:100%;justify-content:flex-start}
+
+/* Document chain: quote -> contract -> invoices -> payments on every detail page */
+.doc-chain{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 3px rgba(11,18,32,.06);overflow:hidden;margin-bottom:16px}
+.doc-chain__step{display:grid;gap:2px;padding:12px 16px;border-right:1px solid var(--border);color:var(--text);position:relative;min-width:0}
+.doc-chain__step:last-child{border-right:0}
+.doc-chain__step:not(:last-child)::after{content:"\203A";position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:12px;text-align:center;color:var(--muted);background:#fff;font-size:16px;line-height:1;z-index:1}
+a.doc-chain__step:hover{background:#f9fafb}
+.doc-chain__step.is-here{background:#eff6ff;box-shadow:inset 0 -3px 0 var(--nav-accent)}
+.doc-chain__lab{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.doc-chain__val{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-chain__step.is-empty .doc-chain__val{color:var(--muted);font-weight:600}
+.doc-chain__sub{font-size:12px;color:var(--muted)}
+@media (max-width:700px){.doc-chain{grid-template-columns:repeat(2,minmax(0,1fr))}.doc-chain__step:nth-child(2){border-right:0}.doc-chain__step:nth-child(-n+2){border-bottom:1px solid var(--border)}.doc-chain__step::after{display:none}}
