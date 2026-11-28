@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS client_creation_origins (
  client_id INT NOT NULL PRIMARY KEY,
  origin ENUM('payment_import') NOT NULL,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Existing imported payers carry the import's fixed note.
 INSERT IGNORE INTO client_creation_origins(client_id, origin)
