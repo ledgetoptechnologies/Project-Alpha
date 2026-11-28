@@ -73,14 +73,14 @@ SQL);
         self::assertSame(0, (int)$this->pdo->query('SELECT COUNT(*) FROM portal_identity_bindings')->fetchColumn(), 'Project Alpha must not bind an external identity.');
     }
 
-    public function testDuplicateAndExplicitBusinessStandaloneRecordsFailClosedForReview(): void
+    public function testDuplicateEmailsFailClosedAndNoOrganizationClientsAreIndividualsWhateverTheirType(): void
     {
         $this->pdo->exec("INSERT INTO organizations VALUES(10,'org-a','Example Organization');
             INSERT INTO clients VALUES
               (20,'client-a','First Person','same@example.test',10,'unknown',0,NULL,'a'),
               (21,'client-b','Second Person','SAME@example.test',10,'consumer',0,NULL,'b'),
               (22,'client-c','Unclassified Person','office@example.test',NULL,'unknown',0,NULL,'c'),
-              (23,'client-d','Business Record','owner@example.test',NULL,'business',0,NULL,'d')");
+              (23,'client-d','Business Typed Person','owner@example.test',NULL,'business',0,NULL,'d')");
         $scopes=[
             ['root_type'=>'organization','root_public_id'=>'org-a'],
             ['root_type'=>'standalone_client','root_public_id'=>'client-c'],
@@ -91,12 +91,66 @@ SQL);
         $summary=$this->service->ensureScopes($this->pdo,$scopes,7,['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1]);
         $this->pdo->commit();
 
-        // A client with no organisation is an individual whatever its default
-        // type says; only an explicit business record without one is held.
-        self::assertSame(3,$summary['review_required']);
-        self::assertSame(1,$summary['eligible']);
-        self::assertSame(['office@example.test'],$this->pdo->query('SELECT email_hint FROM portal_principals')->fetchAll(PDO::FETCH_COLUMN));
-        self::assertSame(['duplicate_email','duplicate_email','none','non_human_record'],$this->pdo->query('SELECT review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_COLUMN));
+        // A client with no organisation is an individual whatever its type
+        // says, 'business' included. Duplicate emails are still held.
+        self::assertSame(2,$summary['review_required']);
+        self::assertSame(2,$summary['eligible']);
+        self::assertSame(['office@example.test','owner@example.test'],$this->pdo->query('SELECT email_hint FROM portal_principals ORDER BY email_hint')->fetchAll(PDO::FETCH_COLUMN));
+        self::assertSame(['duplicate_email','duplicate_email','none','none'],$this->pdo->query('SELECT review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testBusinessTypedClientWithoutOrganizationGetsLoginOnlyWhenEmailIsSafe(): void
+    {
+        $this->pdo->exec("INSERT INTO clients VALUES
+              (50,'client-biz','Business Typed','biz@example.test',NULL,'business',0,NULL,'a'),
+              (51,'client-biz-dup-a','Shared A','shared-biz@example.test',NULL,'business',0,NULL,'b'),
+              (52,'client-biz-dup-b','Shared B','SHARED-BIZ@example.test',NULL,'unknown',0,NULL,'c'),
+              (53,'client-biz-bad','Bad Email','not-an-email',NULL,'business',0,NULL,'d'),
+              (54,'client-biz-revoked','Revoked','revoked-biz@example.test',NULL,'business',0,NULL,'e'),
+              (55,'client-biz-archived','Archived','archived-biz@example.test',NULL,'business',1,NULL,'f'),
+              (56,'client-biz-conflict','Conflict','conflict-biz@example.test',NULL,'business',0,NULL,'g')");
+        $this->pdo->exec("INSERT INTO portal_client_login_eligibility(client_id,manual_state,eligibility_status) VALUES(54,'revoked','revoked')");
+        // An unrelated enabled principal already owns this email: a conflict, never a takeover.
+        $this->pdo->exec("INSERT INTO portal_principals(email_hint,enabled) VALUES('conflict-biz@example.test',1)");
+        $scopes=array_map(fn(string $id)=>['root_type'=>'standalone_client','root_public_id'=>$id],['client-biz','client-biz-dup-a','client-biz-dup-b','client-biz-bad','client-biz-revoked','client-biz-archived','client-biz-conflict']);
+
+        $this->pdo->beginTransaction();
+        $this->service->ensureScopes($this->pdo,$scopes,7,['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1]);
+        $this->pdo->commit();
+
+        $rows=array_map(fn(array $row)=>[(int)$row['client_id'],$row['eligibility_status'],$row['review_reason']],
+            $this->pdo->query('SELECT client_id,eligibility_status,review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame([
+            [50,'eligible','none'],
+            [51,'review_required','duplicate_email'],
+            [52,'review_required','duplicate_email'],
+            [53,'review_required','invalid_email'],
+            [54,'revoked','none'],
+            [55,'review_required','client_inactive'],
+            [56,'review_required','principal_conflict'],
+        ],$rows);
+        self::assertSame(['delivery.view','directory.read','workspace.view'],$this->pdo->query("SELECT capability FROM portal_v2_entitlements WHERE active=1 AND scope_public_id='client-biz' ORDER BY capability")->fetchAll(PDO::FETCH_COLUMN));
+        self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE active=1 AND scope_public_id<>'client-biz'")->fetchColumn());
+    }
+
+    public function testOrganizationLinkedClientsStayOnTheOrganizationContactPath(): void
+    {
+        $this->pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+        $this->pdo->exec("INSERT INTO organizations VALUES(10,'org-a','Example Organization');
+            INSERT INTO clients VALUES
+              (60,'client-org-biz','Org Business Contact','org-biz@example.test',10,'business',0,NULL,'a'),
+              (61,'client-org-import','Org Imported Contact','org-import@example.test',10,'consumer',0,NULL,'b')");
+        $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(61,'payment_import')");
+
+        $this->pdo->beginTransaction();
+        $this->service->ensureScopes($this->pdo,[['root_type'=>'organization','root_public_id'=>'org-a']],7,['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1]);
+        $this->pdo->commit();
+
+        // Organization contacts are governed by their organization root, not by the individual rules.
+        $rows=array_map(fn(array $row)=>[(int)$row['client_id'],$row['eligibility_status'],$row['review_reason']],
+            $this->pdo->query('SELECT client_id,eligibility_status,review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC));
+        self::assertSame([[60,'eligible','none'],[61,'eligible','none']],$rows);
+        self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE scope_type='standalone_client'")->fetchColumn());
     }
 
     public function testIndividualClientWithDefaultTypeGetsPortalLoginFromOwnEmailOnlyWhenSafe(): void
@@ -1046,7 +1100,7 @@ SQL);
             $profileId=(int)$this->pdo->query('SELECT id FROM portal_integration_profiles')->fetchColumn();
             // Matches backfillContractFingerprint(): key, route and eligibility policy version.
             // Raise this with ELIGIBILITY_POLICY_VERSION.
-            $fingerprint=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events',3],JSON_THROW_ON_ERROR));
+            $fingerprint=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events',4],JSON_THROW_ON_ERROR));
             $this->pdo->exec("INSERT INTO clients VALUES(20,'client-failed','Failed Person','failed@example.test',NULL,'consumer',0,NULL,'v1')");
             $insert=$this->pdo->prepare("INSERT INTO portal_client_provisioning_backfill VALUES(?,? ,?,?, 'failed',5,NULL,'projection_failure:abc',NULL)");
             $insert->execute([$profileId,'standalone_client','client-failed',$fingerprint]);
@@ -1188,28 +1242,50 @@ SQL);
         });
     }
 
-    public function testImportedPayerGetsNoIndividualLoginButStaffAndConsumerClientsDo(): void
+    public function testImportedPayerGetsNoIndividualLoginWhateverItsTypeButStaffAddedClientsDo(): void
     {
         $this->pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
         $this->pdo->exec("INSERT INTO clients VALUES
               (40,'client-payer','Imported Payer','payer@example.test',NULL,'unknown',0,NULL,'a'),
               (41,'client-payer-consumer','Imported Consumer','consumer-payer@example.test',NULL,'consumer',0,NULL,'b'),
               (42,'client-staff','Staff Added','staff@example.test',NULL,'unknown',0,NULL,'c'),
-              (43,'client-api','Directory Created','api@example.test',NULL,'unknown',0,NULL,'d')");
-        $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(40,'payment_import'),(41,'payment_import')");
-        $scopes=array_map(fn(string $id)=>['root_type'=>'standalone_client','root_public_id'=>$id],['client-payer','client-payer-consumer','client-staff','client-api']);
+              (43,'client-api','Directory Created','api@example.test',NULL,'unknown',0,NULL,'d'),
+              (44,'client-payer-business','Imported Business','business-payer@example.test',NULL,'business',0,NULL,'e')");
+        $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(40,'payment_import'),(41,'payment_import'),(44,'payment_import')");
+        $scopes=array_map(fn(string $id)=>['root_type'=>'standalone_client','root_public_id'=>$id],['client-payer','client-payer-consumer','client-staff','client-api','client-payer-business']);
 
         $this->pdo->beginTransaction();
         $this->service->ensureScopes($this->pdo,$scopes,7,['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1]);
         $this->pdo->commit();
 
-        // Payment import: held. A consumer record keeps its login. Staff-added and API-v2 directory-created
+        // Payment import: held whatever the type, 'consumer' included. Staff-added and API-v2 directory-created
         // clients (staff create them from Operations, choosing the type) have no origin row: individuals.
         $rows=array_map(fn(array $row)=>[(int)$row['client_id'],$row['eligibility_status'],$row['review_reason']],
             $this->pdo->query('SELECT client_id,eligibility_status,review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC));
-        self::assertSame([[40,'review_required','imported_payer'],[41,'eligible','none'],[42,'eligible','none'],[43,'eligible','none']],$rows);
-        self::assertSame(['api@example.test','consumer-payer@example.test','staff@example.test'],
+        self::assertSame([[40,'review_required','imported_payer'],[41,'review_required','imported_payer'],[42,'eligible','none'],[43,'eligible','none'],[44,'review_required','imported_payer']],$rows);
+        self::assertSame(['api@example.test','staff@example.test'],
             $this->pdo->query('SELECT email_hint FROM portal_principals ORDER BY email_hint')->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testImportedConsumerWithAnExistingLoginLosesItOnReconcile(): void
+    {
+        $this->pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+        $this->pdo->exec("INSERT INTO clients VALUES(45,'client-payer-consumer','Imported Consumer','consumer-payer@example.test',NULL,'consumer',0,NULL,'a')");
+        $scopes=[['root_type'=>'standalone_client','root_public_id'=>'client-payer-consumer']];
+        $profile=['id'=>1,'enabled'=>1,'portal_projection_enabled'=>1];
+        // Before the origin is known (as under the previous policy) the consumer got a login.
+        $this->pdo->beginTransaction();
+        $this->service->ensureScopes($this->pdo,$scopes,7,$profile);
+        $this->pdo->commit();
+        self::assertSame('eligible',$this->pdo->query('SELECT eligibility_status FROM portal_client_login_eligibility WHERE client_id=45')->fetchColumn());
+
+        $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(45,'payment_import')");
+        $this->pdo->beginTransaction();
+        $this->service->ensureScopes($this->pdo,$scopes,7,$profile);
+        $this->pdo->commit();
+
+        self::assertSame(['review_required','imported_payer'],array_values($this->pdo->query('SELECT eligibility_status,review_reason FROM portal_client_login_eligibility WHERE client_id=45')->fetch(PDO::FETCH_ASSOC)));
+        self::assertSame(0,(int)$this->pdo->query("SELECT COUNT(*) FROM portal_v2_entitlements WHERE active=1 AND scope_public_id='client-payer-consumer'")->fetchColumn());
     }
 
     public function testEligibilityPolicyChangeReconcilesCompletedRootsOnce(): void
@@ -1224,6 +1300,32 @@ SQL);
             self::assertSame(1,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
             self::assertSame('eligible',$this->pdo->query('SELECT eligibility_status FROM portal_client_login_eligibility WHERE client_id=20')->fetchColumn());
             self::assertSame(['a@example.test'],$this->pdo->query('SELECT email_hint FROM portal_principals')->fetchAll(PDO::FETCH_COLUMN));
+            self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed'],'The new contract runs once per root.');
+        });
+    }
+
+    public function testPolicyVersionFourReconcilesRootsCompletedUnderVersionThreeOnce(): void
+    {
+        $this->withPortalCapabilities(['generic_operations'=>['portal'=>['keyId'=>'portal-v1','current'=>str_repeat('p',32)]]],function():void{
+            $this->prepareHistoricalBackfill();
+            $this->pdo->exec("CREATE TABLE client_creation_origins(client_id INTEGER PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+            $this->pdo->exec("INSERT INTO clients VALUES
+                (20,'client-biz','Business Typed','biz@example.test',NULL,'business',0,NULL,'v1'),
+                (21,'client-payer-consumer','Imported Consumer','consumer-payer@example.test',NULL,'consumer',0,NULL,'v1')");
+            $this->pdo->exec("INSERT INTO client_creation_origins(client_id,origin) VALUES(21,'payment_import')");
+            // Both roots completed under the exact version-3 contract.
+            $v3=hash('sha256',json_encode(['generic_operations','https://operations.example.test/events',3],JSON_THROW_ON_ERROR));
+            $insert=$this->pdo->prepare("INSERT INTO portal_client_provisioning_backfill(integration_profile_id,root_type,root_public_id,contract_fingerprint,state,completed_at)
+                SELECT id,'standalone_client',?,?,'complete',CURRENT_TIMESTAMP FROM portal_integration_profiles");
+            $insert->execute(['client-biz',$v3]);
+            $insert->execute(['client-payer-consumer',$v3]);
+            $this->pdo->exec("INSERT INTO portal_client_login_eligibility(client_id,manual_state,eligibility_status,review_reason) VALUES(20,'automatic','review_required','non_human_record')");
+
+            self::assertSame(2,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed']);
+            $rows=array_map(fn(array $row)=>[(int)$row['client_id'],$row['eligibility_status'],$row['review_reason']],
+                $this->pdo->query('SELECT client_id,eligibility_status,review_reason FROM portal_client_login_eligibility ORDER BY client_id')->fetchAll(PDO::FETCH_ASSOC));
+            self::assertSame([[20,'eligible','none'],[21,'review_required','imported_payer']],$rows);
+            self::assertSame(['biz@example.test'],$this->pdo->query('SELECT email_hint FROM portal_principals')->fetchAll(PDO::FETCH_COLUMN));
             self::assertSame(0,$this->service->reconcileHistoricalBatch($this->pdo,'generic_operations')['completed'],'The new contract runs once per root.');
         });
     }
