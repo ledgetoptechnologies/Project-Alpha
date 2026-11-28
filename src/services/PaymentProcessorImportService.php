@@ -313,6 +313,9 @@ class PaymentProcessorImportService
                 portal_projection_source_version(),
             ]);
             $clientId=(int)$pdo->lastInsertId();
+            // An imported payer is not a client staff added: no individual portal login.
+            if (\App\Services\PortalClientProvisioningService::creationOriginsAvailable($pdo))
+                $pdo->prepare("INSERT INTO client_creation_origins(client_id,origin) VALUES(?,'payment_import')")->execute([$clientId]);
             api_v2_directory_record($pdo, 'client', $clientId);
             $projection=new \App\Services\PortalProjectionMutationService();$projection->afterMutation($pdo,$projection->clientScopes($pdo,$clientId));if($owns)$pdo->commit();return$clientId;
         } catch (Throwable$error) {if($owns&&$pdo->inTransaction())$pdo->rollBack();throw$error;}

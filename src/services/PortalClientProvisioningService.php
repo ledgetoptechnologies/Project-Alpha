@@ -20,6 +20,8 @@ final class PortalClientProvisioningService
 {
     public const DEFAULT_CAPABILITIES = ['workspace.view', 'directory.read', 'delivery.view'];
     private const BOUND_PROFILE_KEY = 'external_ops_client_portal_profile_id';
+    /** Raise when an eligibility rule changes; see backfillContractFingerprint(). 2: no-organisation clients are individuals; 3: except imported payers. */
+    private const ELIGIBILITY_POLICY_VERSION = 3;
     /** Only these fixed sender codes may leave the diagnostics boundary. */
     private const SAFE_DELIVERY_ERROR_CODES = [
         'dns_no_public_address',
@@ -746,7 +748,10 @@ final class PortalClientProvisioningService
     /** @param array<string,mixed> $profile */
     private function backfillContractFingerprint(array $profile): string
     {
-        return hash('sha256', json_encode([(string)$profile['application_key'],(string)$profile['portal_route']], JSON_THROW_ON_ERROR));
+        // The policy version is part of the contract: raising it re-reconciles
+        // every completed root once, so an eligibility rule change reaches
+        // existing clients without a manual run.
+        return hash('sha256', json_encode([(string)$profile['application_key'],(string)$profile['portal_route'],self::ELIGIBILITY_POLICY_VERSION], JSON_THROW_ON_ERROR));
     }
 
     /** A missing person is not permission to revisit existing people or roots.
@@ -1086,7 +1091,15 @@ final class PortalClientProvisioningService
         if(!$active){$status='review_required';$reason='client_inactive';}
         elseif(!$rootActive){$status='revoked';$reason='root_revoked';}
         elseif($manual==='revoked'){$status='revoked';$reason='none';}
-        elseif(empty($client['organization_id'])&&!in_array((string)($client['client_type']??'unknown'),['consumer'],true)){$status='review_required';$reason='non_human_record';}
+        // A client with no organisation is an individual client: their own
+        // client email is their portal login, as for 'consumer'. Clients added
+        // by staff keep the default 'unknown' type and have no way to change it,
+        // so only an explicit 'business' record without an organisation still
+        // needs review. Email validity, uniqueness and conflicts apply below.
+        elseif(empty($client['organization_id'])&&(string)($client['client_type']??'unknown')==='business'){$status='review_required';$reason='non_human_record';}
+        // A payer the payment-processor import created is not a client staff
+        // added, so it gets no individual login unless it is a consumer record.
+        elseif(empty($client['organization_id'])&&(string)($client['client_type']??'unknown')!=='consumer'&&$this->importedPayer($pdo,$clientId)){$status='review_required';$reason='imported_payer';}
         elseif($email===''){$status='review_required';$reason='missing_email';}
         elseif(strlen($email)>254||!filter_var($email,FILTER_VALIDATE_EMAIL)){$status='review_required';$reason='invalid_email';}
         elseif($this->emailCount($pdo,$email,$currentReads)!==1){$status='review_required';$reason='duplicate_email';}
@@ -1166,6 +1179,18 @@ final class PortalClientProvisioningService
             $s=$pdo->prepare($sql);$s->execute([$email]);return count($s->fetchAll(PDO::FETCH_COLUMN));
         }
         $s=$pdo->prepare($sql);$s->execute([$email]);return(int)$s->fetchColumn();
+    }
+    public static function creationOriginsAvailable(PDO $pdo): bool
+    {
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite')
+            return (bool)$pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='client_creation_origins'")->fetchColumn();
+        return (bool)$pdo->query("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='client_creation_origins'")->fetchColumn();
+    }
+    private function importedPayer(PDO $pdo, int $clientId): bool
+    {
+        if (!self::creationOriginsAvailable($pdo)) return false;
+        $s=$pdo->prepare("SELECT 1 FROM client_creation_origins WHERE client_id=? AND origin='payment_import'");$s->execute([$clientId]);
+        return (bool)$s->fetchColumn();
     }
     private function eligibility(PDO$pdo,int$clientId):array|false{$s=$pdo->prepare('SELECT * FROM portal_client_login_eligibility WHERE client_id=?');$s->execute([$clientId]);return$s->fetch(PDO::FETCH_ASSOC);}
     private function rootControl(PDO$pdo,string$type,string$id):array|false{$s=$pdo->prepare('SELECT * FROM portal_client_access_roots WHERE root_type=? AND root_public_id=?');$s->execute([$type,$id]);return$s->fetch(PDO::FETCH_ASSOC);}

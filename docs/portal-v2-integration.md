@@ -16,10 +16,21 @@ Project Alpha remains the authoritative source for organizations, departments, c
    optional receiver-authorization values are encrypted with
    `APP_ENCRYPTION_KEY`; they are never displayed again or written to logs.
 5. Verify the five payload fixtures plus the byte-pinned `portal-integration-wire-v1.json` transport fixture in `tests/fixtures` and the compatibility test.
-6. Reconcile active organization roots and standalone consumer clients. Project
+6. Reconcile active organization roots and standalone clients. A client with no
+   organization is an individual client whatever its `client_type` says
+   (`unknown` is the default for clients staff add, and no screen changes it);
+   their own client email becomes their portal login. Only an explicit
+   `business` record without an organization stays review-required
+   (`non_human_record`), and so does a payer the payment-processor import
+   created (`imported_payer`, recorded in `client_creation_origins` by migration
+   0119) unless it is a `consumer` record. Clients created through the API-v2
+   directory create command are staff-driven (Operations staff create them and
+   choose the type) and are treated like staff-added clients. Missing, invalid or duplicate emails, principal
+   conflicts and manual revocations stay review-required or revoked. Project
    Alpha creates the exact profile/workspace link and login-eligibility intent;
    ambiguous records remain review-required. Contacts and public links do not
-   bind an external identity or grant content.
+   bind an external identity or grant content. Raising
+   `ELIGIBILITY_POLICY_VERSION` re-reconciles every completed root once.
 7. Preflight receiver authentication and the exact application key while its inbox remains disabled. After a separately approved receiver window is open, enable only the required profile capabilities, the profile delivery switch, scoped authoritative hooks, and finally outbound delivery. Queue the portal and Service Library snapshots from Projection recovery, run delivery, and verify every page and activation before enabling consumer reads.
 
 The command endpoints have separate exact-string environment opt-ins:

@@ -339,7 +339,7 @@ SQL);
         self::assertSame(0, (int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
     }
 
-    public function testLegacyArchiveRestoresTheRecordButDoesNotInferPortalAccess(): void
+    public function testLegacyArchiveRestoreGrantsPortalAccessOnlyThroughReconciliation(): void
     {
         $this->pdo->exec("INSERT INTO archived_clients(client_id,name,email,country,created_at) VALUES(40,'Legacy Client','legacy@example.test','US','2025-01-01 00:00:00')");
         $this->pdo->beginTransaction();
@@ -355,9 +355,11 @@ SQL);
         $scope = [['root_type'=>'standalone_client','root_public_id'=>(string)$client['public_id']]];
         $this->reconcile($scope);
         $eligibility = $this->pdo->query("SELECT eligibility_status,review_reason FROM portal_client_login_eligibility WHERE client_id={$clientId}")->fetch(PDO::FETCH_ASSOC);
-        self::assertSame('review_required', $eligibility['eligibility_status']);
-        self::assertSame('non_human_record', $eligibility['review_reason']);
-        self::assertSame(0, (int)$this->pdo->query('SELECT COUNT(*) FROM portal_principals')->fetchColumn());
+        // A restored client with no organisation is an individual: the normal
+        // reconciliation, not the restore itself, gives them their own login.
+        self::assertSame('eligible', $eligibility['eligibility_status']);
+        self::assertSame('none', $eligibility['review_reason']);
+        self::assertSame(['legacy@example.test'], $this->pdo->query('SELECT email_hint FROM portal_principals')->fetchAll(PDO::FETCH_COLUMN));
 
         $this->pdo->beginTransaction();
         try {
