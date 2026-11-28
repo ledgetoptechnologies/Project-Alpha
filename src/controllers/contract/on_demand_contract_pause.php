@@ -4,14 +4,14 @@ require_once __DIR__ . '/../../config/db.php';
 
 $id = (int)($_POST['id'] ?? 0);
 if ($id <= 0) {
-    header('Location: /?page=contract/on-demand-contracts-list&error=Invalid%20ID');
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=Invalid%20ID');
     exit;
 }
 
 try {
     $pdo->prepare('UPDATE contracts SET status=? WHERE id=? AND contract_type="on_demand"')->execute(['paused', $id]);
-    header('Location: /?page=contract/on-demand-contracts-list');
+    header('Location: /?page=contract/contracts-list&kind=as_needed');
 } catch (Throwable $e) {
-    header('Location: /?page=contract/on-demand-contracts-list&error=' . urlencode($e->getMessage()));
+    header('Location: /?page=contract/contracts-list&kind=as_needed&error=' . urlencode($e->getMessage()));
 }
 exit;

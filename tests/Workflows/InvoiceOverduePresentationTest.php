@@ -31,13 +31,14 @@ final class InvoiceOverduePresentationTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $regular = (string) file_get_contents($root . '/src/views/pages/invoice/invoices-list.php');
-        $onDemand = (string) file_get_contents($root . '/src/views/pages/invoice/on-demand-invoices-list.php');
-        $contractOnDemand = (string) file_get_contents($root . '/src/views/pages/contract/on-demand-invoices-list.php');
 
+        // One list serves every invoice kind, so the shared guard covers one-time,
+        // recurring and as-needed rows alike.
+        self::assertFileDoesNotExist($root . '/src/views/pages/invoice/on-demand-invoices-list.php');
+        self::assertFileDoesNotExist($root . '/src/views/pages/contract/on-demand-invoices-list.php');
         self::assertStringContainsString('invoice_is_past_due($r)', $regular);
         self::assertStringNotContainsString("strtotime('+'.\$netDays.' days', strtotime(\$r['created_at']))", $regular);
-        self::assertStringContainsString('invoice_is_past_due($r)', $onDemand);
-        self::assertStringContainsString('invoice_is_past_due($r)', $contractOnDemand);
+        self::assertStringContainsString("doc_list_kind_condition(\$kind, 'i.invoice_type')", $regular);
 
         $dashboard = (string) file_get_contents($root . '/src/views/pages/home.php');
         self::assertStringContainsString("COALESCE(collection_mode, 'direct') = 'direct'", $dashboard);

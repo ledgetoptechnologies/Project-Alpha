@@ -141,8 +141,14 @@ window.ProjectAlpha.cleanupPage = runPageCleanups;
 */
 function updateActiveNavigation(page) {
     const normalizedPage = normalizePageName(page);
-    document.querySelectorAll('.side-nav [data-page]').forEach(link => {
-        const isActive = link.dataset.page === normalizedPage;
+    const links = Array.from(document.querySelectorAll('.side-nav [data-page]'));
+    // Exact page first; otherwise the section that owns the page (detail, edit, create pages).
+    const hasExact = links.some(link => link.dataset.page === normalizedPage);
+    links.forEach(link => {
+        const prefix = link.dataset.match || '';
+        const isActive = hasExact
+            ? link.dataset.page === normalizedPage
+            : prefix !== '' && normalizedPage.startsWith(prefix);
         link.classList.toggle('active', isActive);
         if (isActive) {
             link.setAttribute('aria-current', 'page');
@@ -715,3 +721,10 @@ if (document.readyState === 'loading') {
 } else {
     initialize();
 }
+
+// Close an open row Actions menu when clicking anywhere else.
+document.addEventListener('click', event => {
+    document.querySelectorAll('details.doc-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target)) menu.removeAttribute('open');
+    });
+});

@@ -22,8 +22,8 @@ if (!$contractMeta) {
 }
 $contractType = (string)($contractMeta['contract_type'] ?: 'regular');
 $listPage = match ($contractType) {
-  'long_term' => 'contract/long-term-contracts-list',
-  'on_demand' => 'contract/on-demand-contracts-list',
+  'long_term' => 'contract/contracts-list&kind=recurring',
+  'on_demand' => 'contract/contracts-list&kind=as_needed',
   default => 'contract/contracts-list',
 };
 $redirectError = static function (string $message) use ($listPage): never {

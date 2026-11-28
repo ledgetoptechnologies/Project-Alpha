@@ -27,11 +27,11 @@ $backPage = 'quote/quotes-list';
 $quoteTypeLabel = 'Quote';
 $approveConfirm = 'Approve this quote and generate contract + invoice?';
 if ($quoteType === 'long_term') {
-    $backPage = 'quote/long-term-quotes-list';
+    $backPage = 'quote/quotes-list&kind=recurring';
     $quoteTypeLabel = 'Long-Term Quote';
     $approveConfirm = 'Approve this long-term quote and generate contract?';
 } elseif ($quoteType === 'on_demand') {
-    $backPage = 'quote/on-demand-quotes-list';
+    $backPage = 'quote/quotes-list&kind=as_needed';
     $quoteTypeLabel = 'On-Demand Quote';
     $approveConfirm = 'Approve this on-demand quote and generate contract?';
 }
