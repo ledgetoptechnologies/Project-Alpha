@@ -190,22 +190,12 @@ const cases = [
     },
   },
   {
-    name: 'Quote',
-    script: 'public/assets/js/quotes-create-logic.js',
+    name: 'Quote and contract',
+    script: 'public/assets/js/document-new.js',
     recalc: 'recalc',
     ids: {
       discountType: 'discountType', discountValue: 'discountValue', taxPercent: 'taxPercent',
       subtotal: 'subtotalVal', discount: 'discountVal', tax: 'taxVal', total: 'totalVal',
-      invoiceAmountRow: 'invoiceAmountRow',
-    },
-  },
-  {
-    name: 'Contract',
-    script: 'public/assets/js/contracts-create-logic.js',
-    recalc: 'recalcCo',
-    ids: {
-      discountType: 'discountTypeCo', discountValue: 'discountValueCo', taxPercent: 'taxPercentCo',
-      subtotal: 'subtotalValCo', discount: 'discountValCo', tax: 'taxValCo', total: 'totalValCo',
       invoiceAmountRow: 'invoiceAmountRow',
     },
   },

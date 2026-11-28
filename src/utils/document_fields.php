@@ -9,9 +9,10 @@
  * @param string $documentType 'regular', 'long_term', or 'on_demand'
  * @param array $existingValues Optional array of existing field values (for edit mode)
  * @param string $idSuffix Optional suffix for field IDs to avoid conflicts (e.g., 'Co' for contracts)
+ * @param string[] $exceptKeys Field keys rendered elsewhere on the page
  * @return string HTML for custom fields
  */
-function renderDocumentCustomFields($pdo, $documentType, $existingValues = [], $idSuffix = '')
+function renderDocumentCustomFields($pdo, $documentType, $existingValues = [], $idSuffix = '', array $exceptKeys = [])
 {
     // Fetch enabled fields for this document type
     $stmt = $pdo->prepare('
@@ -22,6 +23,7 @@ function renderDocumentCustomFields($pdo, $documentType, $existingValues = [], $
     
     $stmt->execute([$documentType]);
     $fields = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $fields = array_values(array_filter($fields, static fn (array $field): bool => !in_array($field['field_key'], $exceptKeys, true)));
 
     if (empty($fields)) {
         return '';

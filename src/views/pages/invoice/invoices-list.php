@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../../utils/invoice_lifecycle.php';
 require_once __DIR__ . '/../../../utils/acl.php';
 require_once __DIR__ . '/../../../utils/csrf.php';
 require_once __DIR__ . '/../../components/document_list.php';
+require_once __DIR__ . '/../../../utils/document_new.php';
 
 $page = 'invoice/invoices-list';
 $kind = doc_list_kind();
@@ -119,7 +120,7 @@ $returnTo = (string)($_SERVER['REQUEST_URI'] ?? '/?page=invoice/invoices-list');
   <?php doc_list_render_top([
       'title' => 'Invoices',
       'page' => $page,
-      'new_url' => $canCreate ? '/?page=invoice/invoices-create' : null,
+      'new_url' => $canCreate ? document_new_url('invoice', doc_list_kind()) : null,
       'new_label' => '+ New invoice',
       'statuses' => $statuses,
       'status' => $status,

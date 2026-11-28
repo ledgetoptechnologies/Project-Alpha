@@ -1,6 +1,7 @@
 <?php
 // src/controllers/contracts_create.php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_new.php';
 require_once __DIR__ . '/../../config/app.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_billing.php';
@@ -35,6 +36,7 @@ if ($doc_type === 'on_demand') {
 
 // Regular contract creation continues below
 @error_log('[contracts_create] POST received - regular contract', 0);
+$newDocumentUrl = document_new_url('contract', 'regular');
 
 $client_id = (int)($_POST['client_id'] ?? 0);
 $project_id = !empty($_POST['project_id']) ? (int)$_POST['project_id'] : null;
@@ -77,11 +79,11 @@ if ($client_id <= 0) {
 }
 if ($client_id <= 0) {
     @error_log('[contracts_create] invalid client_id', 0);
-    header('Location: /?page=contract/contracts-create&error=Please%20select%20a%20client%20from%20suggestions');
+    header('Location: ' . $newDocumentUrl . '&error=Please%20select%20a%20client%20from%20suggestions');
     exit;
 }
 if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
-    header('Location: /?page=contract/contracts-create&error=' . urlencode('Select an active or not-started project for this client or organization.'));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Select an active or not-started project for this client or organization.'));
     exit;
 }
 $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId);
@@ -94,7 +96,7 @@ for($i=0;$i<count($item);$i++){
 }
 if(!$items){
     @error_log('[contracts_create] no valid items', 0);
-    header('Location: /?page=contract/contracts-create&error=Add%20at%20least%20one%20item');
+    header('Location: ' . $newDocumentUrl . '&error=Add%20at%20least%20one%20item');
     exit;
 }
 $travelItem=mileage_document_travel_item($travelRule);
@@ -201,7 +203,7 @@ try{
   if ($pdo->inTransaction()) $pdo->rollBack();
   @error_log('[contracts_create] exception: '.$e->getMessage(), 0);
   $msg = substr($e->getMessage(), 0, 200);
-  header('Location: /?page=contract/contracts-create&error=' . urlencode($msg));
+  header('Location: ' . $newDocumentUrl . '&error=' . urlencode($msg));
   exit;
 }
 if ($return_to_project > 0) {

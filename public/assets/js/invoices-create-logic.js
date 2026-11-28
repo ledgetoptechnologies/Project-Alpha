@@ -166,7 +166,7 @@ function initInvoiceClientDropdown() {
 initInvoiceClientDropdown.pageInitializerId = 'invoice-create-client-dropdown';
 
 if (window.ProjectAlpha && typeof window.ProjectAlpha.registerPage === 'function') {
-    window.ProjectAlpha.registerPage('invoice/invoices-create', initInvoiceClientDropdown);
+    window.ProjectAlpha.registerPage('document/new', initInvoiceClientDropdown);
 } else {
     initInvoiceClientDropdown();
 }
@@ -219,7 +219,7 @@ function syncInvoiceProjectBillingPresentation() {
     help.hidden = !isMonthly;
 }
 
-const invoiceProjectSelect = document.getElementById('projectSelectInv');
+var invoiceProjectSelect = document.getElementById('projectSelectInv');
 if (invoiceProjectSelect) {
     invoiceProjectSelect.addEventListener('change', syncInvoiceProjectBillingPresentation);
     syncInvoiceProjectBillingPresentation();

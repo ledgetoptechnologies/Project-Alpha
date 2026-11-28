@@ -165,7 +165,7 @@ function createHarness(mode) {
 
   vm.runInContext(`${extractFunction(source, 'initInvoiceClientDropdown')}\n${bootstrapSource()}`, context);
   if (mode === 'soft') {
-    assert.equal(registeredPage, 'invoice/invoices-create');
+    assert.equal(registeredPage, 'document/new');
     assert.equal(typeof registeredInitializer, 'function');
     registeredInitializer();
     registeredInitializer();

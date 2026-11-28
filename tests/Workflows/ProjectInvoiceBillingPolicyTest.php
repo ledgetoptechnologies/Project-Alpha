@@ -142,7 +142,7 @@ final class ProjectInvoiceBillingPolicyTest extends TestCase
 
     public function testMonthlyChildInvoiceActionsDescribeProjectBillingInsteadOfDirectEmail(): void
     {
-        $createView = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoices-create.php');
+        $createView = (string)file_get_contents($this->root . '/src/views/pages/document/new.php');
         $createScript = (string)file_get_contents($this->root . '/public/assets/js/invoices-create-logic.js');
         $projectSearch = (string)file_get_contents($this->root . '/src/controllers/project/projects_search.php');
         $details = (string)file_get_contents($this->root . '/src/views/pages/invoice/invoice-details.php');

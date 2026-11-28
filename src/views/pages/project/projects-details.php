@@ -1078,15 +1078,15 @@ $renderProjectFileRow = static function (array $file, int $projectId): void {
                     <?php endif; ?>
                     <a href="/?page=project/project-invoices-list&project_id=<?php echo $projectId; ?>" class="btn btn-sm project-action-wide">View Project Invoices</a>
                     <div class="project-sidebar-title project-action-wide" style="margin:10px 0 0">Create Document</div>
-                    <a href="/?page=quote/quotes-create&project_id=<?php echo $projectId; ?>" 
+                    <a href="/?page=document/new&as=quote&project_id=<?php echo $projectId; ?>" 
                        style="display:block;padding:10px;border-radius:6px;background:#f9fafb;border:1px solid #e5e7eb;text-align:center;text-decoration:none;color:inherit;font-weight:600">
                         📄 Create Quote
                     </a>
-                    <a href="/?page=contract/contracts-create&project_id=<?php echo $projectId; ?>" 
+                    <a href="/?page=document/new&as=contract&project_id=<?php echo $projectId; ?>" 
                        style="display:block;padding:10px;border-radius:6px;background:#f9fafb;border:1px solid #e5e7eb;text-align:center;text-decoration:none;color:inherit;font-weight:600">
                         📋 Create Contract
                     </a>
-                    <a href="/?page=invoice/invoices-create&project_id=<?php echo $projectId; ?>" 
+                    <a href="/?page=document/new&as=invoice&project_id=<?php echo $projectId; ?>" 
                        style="display:block;padding:10px;border-radius:6px;background:#f9fafb;border:1px solid #e5e7eb;text-align:center;text-decoration:none;color:inherit;font-weight:600">
                         💰 Create Invoice
                     </a>

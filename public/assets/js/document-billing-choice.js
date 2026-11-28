@@ -1,28 +1,4 @@
 (() => {
-  document.querySelectorAll('[data-agreement-choice]').forEach(root => {
-    if (root.dataset.ready) return;
-    root.dataset.ready = '1';
-    const kind = root.querySelector('[data-agreement-kind]');
-    const billing = root.querySelector('[data-agreement-billing]');
-    const syncFromRadio = () => {
-      const selected = root.querySelector('[name="doc_type"]:checked').value;
-      kind.value = selected === 'regular' ? 'one_time' : 'ongoing';
-      if (selected !== 'regular') billing.value = selected;
-      root.querySelector('[data-agreement-billing-field]').hidden = selected === 'regular';
-    };
-    const sync = () => {
-      const selected = kind.value === 'one_time' ? 'regular' : billing.value;
-      root.querySelector(`[name="doc_type"][value="${selected}"]`).checked = true;
-      root.querySelector('[data-agreement-billing-field]').hidden = selected === 'regular';
-      if (typeof toggleDocTypeFields === 'function') toggleDocTypeFields();
-    };
-    kind.addEventListener('change', sync);
-    billing.addEventListener('change', sync);
-    syncFromRadio();
-    root.querySelector('[data-agreement-controls]').hidden = false;
-    root.querySelector('[data-agreement-fallback]').hidden = true;
-  });
-
   document.querySelectorAll('[data-monthly-rate]').forEach(root => {
     if (root.dataset.ready) return;
     root.dataset.ready = '1';

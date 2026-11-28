@@ -105,9 +105,11 @@ function page_permission_map(): array
         'api-keys-revoke'   => 'api_keys.manage',
         'api-clients-search' => 'api_keys.view',
 
+        // New quote, contract or invoice; acl_middleware checks the ?as= type's create permission.
+        'document/new'        => 'quotes.create',
+
         // Quotes module
         'quote/quotes-list'   => 'quotes.view',
-        'quote/quotes-create' => 'quotes.create',
         'quote/quotes-edit'   => 'quotes.edit',
         'quote/quotes-edit-public' => 'quotes.edit',
         'quote/quotes-update' => 'quotes.edit',
@@ -122,7 +124,6 @@ function page_permission_map(): array
         'quote/quote-clone'   => 'quotes.create',
         'quote/email-send'    => 'quotes.send',
         'quote-reject'        => 'quotes.reject',
-        'quotes-create'       => 'quotes.create',
         'quotes-edit'         => 'quotes.edit',
         'quotes-update'       => 'quotes.edit',
 
@@ -132,7 +133,6 @@ function page_permission_map(): array
 
         // Contracts module
         'contract/contracts-list'   => 'contracts.view',
-        'contract/contracts-create' => 'contracts.create',
         'contract/contracts-edit'   => 'contracts.edit',
         'contract/contract-details' => 'contracts.view',
         'contract/long-term-contract-details' => 'contracts.view',
@@ -147,9 +147,6 @@ function page_permission_map(): array
         'contract/contract-void'    => 'contracts.void',
         'contract/contracts-update' => 'contracts.edit',
         'contract/email-send'       => 'contracts.send',
-        'contract/long-term-contracts-create' => 'contracts.create',
-        'long-term-contracts-create'          => 'contracts.create',
-        'contracts-create'          => 'contracts.create',
         'contracts-edit'            => 'contracts.edit',
         'contracts-update'          => 'contracts.edit',
         'contract-void'           => 'contracts.void',
@@ -171,7 +168,6 @@ function page_permission_map(): array
 
         // Invoices module
         'invoice/invoices-list'     => 'invoices.view',
-        'invoice/invoices-create'   => 'invoices.create',
         'invoice/invoices-edit'     => 'invoices.edit',
         'invoice/invoices-update'   => 'invoices.edit',
         'invoice/invoice-details'   => 'invoices.view',
@@ -186,7 +182,6 @@ function page_permission_map(): array
         'invoice/invoice-void'      => 'invoices.void',
         'invoice/invoice-reenable'  => 'invoices.void',
         'invoice/email-send'        => 'invoices.send',
-        'invoices-create'           => 'invoices.create',
         'invoice-autopay-preview'   => ['invoices.create', 'invoices.edit'],
         'invoices-edit'             => 'invoices.edit',
         'invoices-update'           => 'invoices.edit',
@@ -393,6 +388,11 @@ function acl_middleware(PDO $pdo, string $page): void
 
     $map = page_permission_map();
     $perm = $map[$page] ?? null;
+    if ($page === 'document/new') {
+        // One New page; the permission follows ?as= (see src/utils/document_new.php).
+        $as = is_string($_GET['as'] ?? null) ? $_GET['as'] : '';
+        $perm = ['contract' => 'contracts.create', 'invoice' => 'invoices.create'][$as] ?? 'quotes.create';
+    }
 
     // null permission = authenticated users only, no specific permission needed
     if ($perm === null) {

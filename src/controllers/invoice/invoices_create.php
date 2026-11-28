@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../utils/workforce_availability.php';
 pa_workforce_require_no_invoice_imports($_POST);
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../utils/document_new.php';
 require_once __DIR__ . '/../../utils/project_id.php';
 require_once __DIR__ . '/../../utils/project_billing.php';
 require_once __DIR__ . '/../../config/app.php';
@@ -25,6 +26,7 @@ use App\Services\WorkTimeBillingContextService;
 $__orgId = request_client_org_id() ?: null;
 $__creator = (int)($_SESSION['user']['id'] ?? 0) ?: null;
 
+$newDocumentUrl = document_new_url('invoice');
 $client_id = (int)($_POST['client_id'] ?? 0);
 $project_id = !empty($_POST['project_id']) ? (int)$_POST['project_id'] : null;
 $requestedServiceLocationId = !empty($_POST['service_location_id']) ? (int)$_POST['service_location_id'] : null;
@@ -60,23 +62,23 @@ $legacyTimeEntryIds = $_POST['time_entry_id'] ?? [];
 $mileageAllocationIdsByRow = $_POST['mileage_allocation_ids'] ?? [];
 
 if ($client_id <= 0 || empty($item)) {
-    header('Location: /?page=invoice/invoices-create&error=Invalid%20input');
+    header('Location: ' . $newDocumentUrl . '&error=Invalid%20input');
     exit;
 }
 if ($recipientPresentationMode === PA_GENERAL_RECIPIENT_MODE) {
     // This is intentionally not a client-less invoice: the selected client remains
     // the internal accounting owner, but no recipient data may leave the system.
     if ($project_id || $requestedServiceLocationId || !empty($timeEntryIdsByRow) || !empty($legacyTimeEntryIds) || !empty($mileageAllocationIdsByRow)) {
-        header('Location: /?page=invoice/invoices-create&error=' . urlencode('General-recipient invoices must be one-off direct invoices without project, tracked-time, mileage, or service-location links.'));
+        header('Location: ' . $newDocumentUrl . '&error=' . urlencode('General-recipient invoices must be one-off direct invoices without project, tracked-time, mileage, or service-location links.'));
         exit;
     }
     if ($finalizeAndSend) {
-        header('Location: /?page=invoice/invoices-create&error=' . urlencode('General-recipient invoices cannot be emailed automatically. Finalize it, then create its manual public link.'));
+        header('Location: ' . $newDocumentUrl . '&error=' . urlencode('General-recipient invoices cannot be emailed automatically. Finalize it, then create its manual public link.'));
         exit;
     }
 }
 if ($project_id && !pa_project_is_active_for_client($pdo, $project_id, $client_id, (int)($_SESSION['user']['id'] ?? 0))) {
-    header('Location: /?page=invoice/invoices-create&error=' . urlencode('Select an active or not-started project for this client or organization.'));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Select an active or not-started project for this client or organization.'));
     exit;
 }
 $__orgId = resolve_client_context_org_id($pdo, $client_id, $project_id, $__orgId);
@@ -98,7 +100,7 @@ for ($i=0; $i<count($item); $i++) {
     $parentKey = (string)($_POST['item_parent_key'][$i] ?? '');
     if (($key !== '' && isset($rowKeys[$key]))
         || ($parentKey !== '' && ($key === '' || ($rowKeys[$parentKey] ?? false) !== true))) {
-        header('Location: /?page=invoice/invoices-create&error=' . urlencode('Each sub-item must have an item above it.'));
+        header('Location: ' . $newDocumentUrl . '&error=' . urlencode('Each sub-item must have an item above it.'));
         exit;
     }
     if ($key !== '') {
@@ -124,7 +126,7 @@ for ($i=0; $i<count($item); $i++) {
     ];
 }
 if (!$items) {
-    header('Location: /?page=invoice/invoices-create&error=Add%20at%20least%20one%20item');
+    header('Location: ' . $newDocumentUrl . '&error=Add%20at%20least%20one%20item');
     exit;
 }
 
@@ -433,7 +435,7 @@ try {
         ? $e->getMessage()
         : 'Failed to create invoice.';
     @error_log('[invoices_create] ' . $e->getMessage());
-    header('Location: /?page=invoice/invoices-create&error=' . urlencode($message));
+    header('Location: ' . $newDocumentUrl . '&error=' . urlencode($message));
     exit;
 }
 
