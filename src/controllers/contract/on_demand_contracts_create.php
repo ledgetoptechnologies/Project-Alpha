@@ -24,7 +24,7 @@ $discount_type = in_array(($_POST['discount_type'] ?? 'none'), ['none','percent'
 $discount_value = (float)($_POST['discount_value'] ?? 0);
 $tax_percent = (float)($_POST['tax_percent'] ?? 0);
 $billing_mode = ($_POST['billing_mode'] ?? 'fixed') === 'hourly' ? 'hourly' : 'fixed';
-$deposit_type = in_array(($_POST['deposit_type'] ?? 'none'), ['none','percent','fixed']) ? $_POST['deposit_type'] : 'none';
+$deposit_type = in_array(($_POST['deposit_type'] ?? 'none'), ['percent','fixed'], true) ? $_POST['deposit_type'] : 'none';
 $deposit_value = (float)($_POST['deposit_value'] ?? 0);
 
 // On-demand contract specific fields - accepts both prefixed (od_) and non-prefixed field names

@@ -52,8 +52,8 @@ function addItem(item, desc, qty, price, billingUnit) {
 // Billing periods between two dates; mirrors long_term_contracts_create.php.
 function calcInvoiceCountFromDates(startDate, endDate, intervalCount, intervalUnit) {
     if (!startDate || !endDate) return 0;
-    var start = new Date(startDate);
-    var end = new Date(endDate);
+    var start = new Date(startDate + 'T00:00:00');
+    var end = new Date(endDate + 'T00:00:00');
     if (isNaN(start) || isNaN(end) || end <= start) return 0;
     var periods = 0;
     var cursor = new Date(start);
@@ -233,6 +233,10 @@ function togglePricingFields() {
     setItemsRequired(itemsShown);
     showFields(['depositTypeLabel', 'depositValueLabel'], depositShown);
     showFields(['fulfillment_dateLabel', 'fulfillmentDateLabel'], fulfillmentShown);
+    var terms = document.getElementById('termsCard');
+    if (terms) {
+        terms.hidden = !Array.from(terms.querySelectorAll('#customFieldsRow > label')).some(function (label) { return label.style.display !== 'none'; });
+    }
     recalc();
 }
 

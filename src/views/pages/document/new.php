@@ -245,7 +245,7 @@ if ($isInvoice) {
     <?php endif; ?>
 
     <?php if ($isInvoice || $customFieldsHtml !== ''): ?>
-    <div class="card">
+    <div class="card" id="termsCard<?php echo $sfx; ?>">
       <h3 class="card-title">Dates and terms</h3>
       <?php if ($isInvoice): ?>
         <div class="doc-new-grid">
