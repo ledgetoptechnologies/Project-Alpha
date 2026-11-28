@@ -99,7 +99,8 @@ function doc_chain_html(array $chain): string
 
     $c = $chain['contract'];
     $contractPage = ($c['contract_type'] ?? '') === 'long_term' ? 'contract/long-term-contract-details' : 'contract/contract-details';
-    $cells[] = ['Contract', $c ? doc_chain_contract_label($c) : 'Not yet', $c ? $status($c['status']) : ($q && $q['status'] === 'pending' ? 'After approval' : ''),
+    $awaitingApproval = $q && $q['status'] === 'pending';
+    $cells[] = ['Contract', $c ? doc_chain_contract_label($c) : ($awaitingApproval ? 'Not yet' : 'None'), $c ? $status($c['status']) : ($awaitingApproval ? 'After approval' : ''),
         $c ? '/?page=' . $contractPage . '&id=' . (int)$c['id'] : null, $chain['current'] === 'contract'];
 
     $invoices = $chain['invoices'];

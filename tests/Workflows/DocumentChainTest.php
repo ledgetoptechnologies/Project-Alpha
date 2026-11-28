@@ -63,6 +63,7 @@ final class DocumentChainTest extends TestCase
         ]));
 
         self::assertStringContainsString('Created directly', $html);
+        self::assertStringNotContainsString('Not yet', $html, 'A standalone invoice never gets a contract.');
         self::assertStringContainsString('I-4', $html);
         self::assertStringNotContainsString('page=invoice/invoice-details', $html);
     }
