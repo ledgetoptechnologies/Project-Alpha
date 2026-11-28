@@ -541,8 +541,7 @@ final class ProjectWorkflowUiTest extends TestCase
 
         self::assertStringContainsString("billing_start_mode ENUM('on_upload','manual')", (string)$baseline);
         self::assertStringContainsString('ADD COLUMN billing_start_mode', (string)$migration);
-        self::assertStringContainsString('<select class="input" name="billing_start_mode">
-            <option value="on_upload">', (string)$createView);
+        self::assertStringContainsString('<option value="manual">When I start it</option>', (string)$createView);
         self::assertStringContainsString('$next_invoice_date = null;', (string)$ltCreate);
         self::assertStringContainsString('pa_long_term_starts_billing_on_upload($contract)', (string)$sign);
         self::assertStringContainsString('generate_recurring_invoice($pdo, $contract, $appConfig)', (string)$start);

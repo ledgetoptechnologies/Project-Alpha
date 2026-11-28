@@ -4,7 +4,6 @@
 
 require_once __DIR__ . '/acl.php';
 require_once __DIR__ . '/audit.php';
-require_once __DIR__ . '/document_new.php';
 
 function page_permission_map(): array
 {
@@ -388,7 +387,12 @@ function acl_middleware(PDO $pdo, string $page): void
     }
 
     $map = page_permission_map();
-    $perm = $page === 'document/new' ? document_new_permission($_GET['as'] ?? null) : ($map[$page] ?? null);
+    $perm = $map[$page] ?? null;
+    if ($page === 'document/new') {
+        // One New page; the permission follows ?as= (see src/utils/document_new.php).
+        $as = is_string($_GET['as'] ?? null) ? $_GET['as'] : '';
+        $perm = ['contract' => 'contracts.create', 'invoice' => 'invoices.create'][$as] ?? 'quotes.create';
+    }
 
     // null permission = authenticated users only, no specific permission needed
     if ($perm === null) {

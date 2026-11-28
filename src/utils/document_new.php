@@ -24,12 +24,6 @@ function document_new_as(mixed $as): string
     return is_string($as) && isset(DOC_NEW_TYPES[$as]) ? $as : 'quote';
 }
 
-/** Permission needed to open or submit document/new for ?as=. */
-function document_new_permission(mixed $as): string
-{
-    return DOC_NEW_TYPES[document_new_as($as)];
-}
-
 /**
  * URL of the New page. $kind is a list kind key or a stored *_type value;
  * 'all', '' and unknown values leave the kind unset.
